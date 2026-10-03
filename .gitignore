@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Directorios de compilación
+/build/
+/bin/
+
+# Archivos generados por el compilador de C
+*.o
+*.d
+*.out
+/pipoc
+
+# Salidas predeterminadas de Flex
+lex.yy.c
+
+# Salidas predeterminadas de Bison/Yacc
+parser.tab.c
+parser.tab.h
+parser.output
+y.tab.c
+y.tab.h
+y.output
+
+# Registros y archivos temporales
+*.log
+*~
