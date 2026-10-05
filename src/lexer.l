@@ -19,7 +19,7 @@ static char *lexer_strdup_unquoted(const char *text, int length);
 #define YY_USER_ACTION lexer_update_location(yytext, yyleng);
 %}
 
-/*--- Expresiones Regulares para Patrones Basicos ---*/
+/*--- Expresiones regulares para patrones basicos ---*/
 DIGIT       [0-9]
 IDENTIFIER  [A-Za-z_][A-Za-z0-9_]*
 FILE_PATH   \"[A-Za-z0-9_./-]+\.rwt\"
@@ -43,7 +43,7 @@ WHITESPACE  [ \t\r\n]+
 
 <BLOCK_COMMENT><<EOF>>  {
     fprintf(stderr,
-            "%d:%d: error léxico: comentario de bloque sin cerrar\n",
+            "%d:%d: [!ERROR] (lexer.l): comentario de bloque sin cerrar\n",
             yylloc.first_line, yylloc.first_column);
     return TOK_INVALID;
 }
@@ -136,7 +136,7 @@ WHITESPACE  [ \t\r\n]+
 
     if (errno == ERANGE || endptr == yytext || *endptr != '\0') {
         fprintf(stderr,
-                "%d:%d: error léxico: entero fuera de rango '%s'\n",
+                "%d:%d: [!ERROR] (lexer.l): entero fuera de rango '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
         return TOK_INVALID;
     }
@@ -156,7 +156,7 @@ WHITESPACE  [ \t\r\n]+
 
 . {
     fprintf(stderr,
-            "%d:%d: error léxico: carácter no reconocido '%s'\n",
+            "%d:%d: [!ERROR] (lexer.l): carácter no reconocido '%s'\n",
             yylloc.first_line, yylloc.first_column, yytext);
     yylval.text = NULL;
     return TOK_INVALID;
@@ -166,7 +166,47 @@ WHITESPACE  [ \t\r\n]+
 
 %%
 
-/*
- * TODO(lexer-memory): añadir una función que copie yytext. Su resultado debe
- * pasar al parser; nunca se debe guardar el puntero de yytext directamente.
- */
+/* ============================================================
+ * Definicion de funciones auxiliares
+ * ============================================================ */
+
+static void lexer_update_location(const char *text, int length)
+{
+    int i;
+
+    yylloc.first_line   = yylloc.last_line;
+    yylloc.first_column = yylloc.last_column;
+
+    for (i = 0; i < length; i++) {
+        if (text[i] == '\n') {
+            yylloc.last_line++;
+            yylloc.last_column = 1;
+        } else {
+            yylloc.last_column++;
+        }
+    }
+}
+
+static char *lexer_strdup(const char *text)
+{
+    size_t len = strlen(text);
+    char *copy = (char *)malloc(len + 1);
+    if (copy == NULL) {
+        fprintf(stderr, "[!ERROR] (lexer.l): sin memoria para copiar lexema\n");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(copy, text, len + 1);
+    return copy;
+}
+
+static char *lexer_strdup_unquoted(const char *text, int length)
+{
+    char *copy = (char *)malloc((size_t)length - 1);
+    if (copy == NULL) {
+        fprintf(stderr, "[!ERROR] (lexer.l): sin memoria para copiar lexema\n");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(copy, text + 1, (size_t)length - 2);
+    copy[length - 2] = '\0';
+    return copy;
+}
