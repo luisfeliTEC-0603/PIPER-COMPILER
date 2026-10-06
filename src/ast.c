@@ -90,6 +90,25 @@ struct AstNode {
             AstNode *target;
             AstNode *value;
         } assignment;
+
+        struct {
+            AstNode *condition;
+            AstNode *then_block;
+            AstNode *fallback_block;
+        } when_statement;
+
+        struct {
+            AstNode *condition;
+            AstNode *body;
+        } alwhen_statement;
+
+        struct {
+            char *control_name;
+            AstNode *begin;
+            AstNode *end;
+            AstNode *step;
+            AstNode *body;
+        } loop_statement;
     } data;
 };
 
@@ -455,7 +474,91 @@ AstNode *ast_new_assignment(AstNode *target, AstNode *value,
     return node;
 }
 
-/* TODO(ast-control): implementar when, alwhen, loop y break. */
+AstNode *ast_new_when(AstNode *condition, AstNode *then_block,
+                      AstNode *fallback_block, SourceLocation location)
+{
+    if (condition == NULL || then_block == NULL) {
+        ast_free(condition);
+        ast_free(then_block);
+        ast_free(fallback_block);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_WHEN_STATEMENT, location);
+    if (node == NULL) {
+        ast_free(condition);
+        ast_free(then_block);
+        ast_free(fallback_block);
+        return NULL;
+    }
+
+    node->data.when_statement.condition = condition;
+    node->data.when_statement.then_block = then_block;
+    node->data.when_statement.fallback_block = fallback_block;
+
+    return node;
+}
+
+AstNode *ast_new_alwhen(AstNode *condition, AstNode *body,
+                        SourceLocation location)
+{
+    if (condition == NULL || body == NULL) {
+        ast_free(condition);
+        ast_free(body);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_ALWHEN_STATEMENT, location);
+    if (node == NULL) {
+        ast_free(condition);
+        ast_free(body);
+        return NULL;
+    }
+
+    node->data.alwhen_statement.condition = condition;
+    node->data.alwhen_statement.body = body;
+
+    return node;
+}
+
+AstNode *ast_new_break(SourceLocation location)
+{
+    /* El kind representa por completo a la instrucción break. */
+    return ast_node_create(AST_BREAK_STATEMENT, location);
+}
+
+AstNode *ast_new_loop(char *control_name, AstNode *begin, AstNode *end,
+                      AstNode *step, AstNode *body,
+                      SourceLocation location)
+{
+    if (control_name == NULL || begin == NULL || end == NULL
+        || step == NULL || body == NULL) {
+        free(control_name);
+        ast_free(begin);
+        ast_free(end);
+        ast_free(step);
+        ast_free(body);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_LOOP_STATEMENT, location);
+    if (node == NULL) {
+        free(control_name);
+        ast_free(begin);
+        ast_free(end);
+        ast_free(step);
+        ast_free(body);
+        return NULL;
+    }
+
+    node->data.loop_statement.control_name = control_name;
+    node->data.loop_statement.begin = begin;
+    node->data.loop_statement.end = end;
+    node->data.loop_statement.step = step;
+    node->data.loop_statement.body = body;
+
+    return node;
+}
 
 /* TODO(ast-composites): implementar arreglos, índices e importaciones. */
 
@@ -509,6 +612,28 @@ void ast_free(AstNode *node)
     case AST_ASSIGNMENT:
         ast_free(node->data.assignment.target);
         ast_free(node->data.assignment.value);
+        break;
+
+    case AST_WHEN_STATEMENT:
+        ast_free(node->data.when_statement.condition);
+        ast_free(node->data.when_statement.then_block);
+        ast_free(node->data.when_statement.fallback_block);
+        break;
+
+    case AST_ALWHEN_STATEMENT:
+        ast_free(node->data.alwhen_statement.condition);
+        ast_free(node->data.alwhen_statement.body);
+        break;
+
+    case AST_BREAK_STATEMENT:
+        break;
+
+    case AST_LOOP_STATEMENT:
+        free(node->data.loop_statement.control_name);
+        ast_free(node->data.loop_statement.begin);
+        ast_free(node->data.loop_statement.end);
+        ast_free(node->data.loop_statement.step);
+        ast_free(node->data.loop_statement.body);
         break;
 
     case AST_UNARY_EXPRESSION:
