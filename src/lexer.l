@@ -1,17 +1,38 @@
 %option noyywrap nounput noinput never-interactive nodefault
 
-%x BLOCK_COMMENT
+/* noyywrap:            no llamar yywrap() al llegar a EOF (se asume un solo archivo de entrada)
+ * nounput:             no generar yyunput() (no devolver caracteres)
+ * noinput:             no generar yyinput() (no leer caracteres sueltos)
+ * never-interactive:   leer siempre en bloques (entrada es archivo)
+ * nodefault:           no agregar regla por defecto; exigir regla para todo */
+
+/* Declaracion de estado(s) exclusivo(s) */
+%x BLOCK_COMMENT 
 
 %{
+
+/* ast.h define AstNode, PiperType, AstOperator, AstNodeList.
+ * Debe ir ANTES de parser.h porque YYSTYPE (definido en parser.h)
+ * usa esos tipos en su unión */
 #include "ast.h"
+
+/* parser.h (generado por Bison) define los tokens (TOK_*),
+ * YYSTYPE, YYLTYPE y declara yylex() */
 #include "parser.h"
 
+/* stddef.h: size_t, NULL */
 #include <stddef.h>
+
+/* stdlib.h: malloc, free, exit, strtoull */
 #include <stdlib.h>
+
+/* string.h: strlen, memcpy */
 #include <string.h>
+
+/* errno.h: errno, ERANGE (para detectar overflow en strtoull) */
 #include <errno.h>
 
-/* Prototipos de funciones auxiliares. */
+/* Prototipos de funciones auxiliares */
 static void lexer_update_location(const char *text, int length);
 static char *lexer_strdup(const char *text);
 static char *lexer_strdup_unquoted(const char *text, int length);
@@ -19,7 +40,7 @@ static char *lexer_strdup_unquoted(const char *text, int length);
 #define YY_USER_ACTION lexer_update_location(yytext, yyleng);
 %}
 
-/*--- Expresiones regulares para patrones basicos ---*/
+/* Expresiones regulares para patrones basicos */
 DIGIT       [0-9]
 IDENTIFIER  [A-Za-z_][A-Za-z0-9_]*
 FILE_PATH   \"[A-Za-z0-9_./-]+\.rwt\"
