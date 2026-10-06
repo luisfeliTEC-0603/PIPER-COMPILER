@@ -16,6 +16,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Convierte una ubicación de Bison al tipo público utilizado por el AST. */
+#define AST_LOCATION(location)                                             \
+    source_location_make((location).first_line, (location).first_column,   \
+                         (location).last_line, (location).last_column)
+
 /*
  * yylex() será generado por Flex. El parser lo llama cada vez que necesita
  * obtener el siguiente token de la entrada.
@@ -26,8 +31,14 @@ int yylex(void);
  * Bison llama a yyerror() cuando la secuencia de tokens no coincide con
  * ninguna producción válida de la gramática.
  */
-void yyerror(const char *message);
+void yyerror(AstNode **result, const char *message);
 %}
+
+/* parser.h debe conocer los tipos usados por YYSTYPE sin depender del orden
+ * de includes de sus consumidores. */
+%code requires {
+#include "ast.h"
+}
 
 /*
  * Habilita el seguimiento de ubicaciones mediante yylloc: línea y columna
@@ -35,6 +46,9 @@ void yyerror(const char *message);
  * datos y el AST podrá conservarlos para reportar errores útiles.
  */
 %locations
+
+/* yyparse() entrega la raíz construida mediante el puntero del llamador. */
+%parse-param { AstNode **result }
 
 /*
  * Además de su categoría, algunos tokens transportan un valor.
@@ -132,10 +146,28 @@ void yyerror(const char *message);
 %token TOK_UB32
 
 /*
- * En Bison 2.3 los destructores se asocian a símbolos concretos. Si uno de
- * estos tokens se descarta durante un error, el parser libera su copia.
+ * Precedencia de menor a mayor. Las operaciones aritméticas son asociativas
+ * a la izquierda, salvo la potencia, que es asociativa a la derecha. Las
+ * comparaciones no se pueden encadenar sin una construcción explícita.
+ *
  */
-%destructor { free($$); } TOK_IDENTIFIER TOK_FILE_PATH TOK_INVALID
+%left TOK_OR
+%left TOK_XOR
+%left TOK_AND
+%nonassoc TOK_EQUAL TOK_NOT_EQUAL TOK_LESS TOK_LESS_EQUAL TOK_GREATER TOK_GREATER_EQUAL
+%left TOK_PLUS TOK_MINUS
+%left TOK_STAR TOK_SLASH TOK_PERCENT
+%right TOK_CARET
+%precedence UNARY
+
+/* Recursos que Bison debe liberar al descartar símbolos durante un error. */
+%destructor { free($$); } <text>
+%destructor { ast_free($$); } <node>
+%destructor { ast_node_list_free($$); } <node_list>
+
+%type <node> program statement declaration assignment block expression
+%type <node_list> statement_list
+%type <type> type
 
 /* Cualquier conflicto nuevo debe fallar la generación y ser investigado. */
 %expect 0
@@ -147,39 +179,349 @@ void yyerror(const char *message);
 %%
 
 /*
- * Regla temporal para que Bison pueda generar parser.c y parser.h antes de
- * implementar la gramática real. Por ahora solo acepta una entrada vacía.
- *
- * Blueprint de no terminales para completar por incrementos:
- *
- * input
- *   -> program y fin de archivo implícito
- *
- * program
- *   -> lista ordenada de elementos de nivel superior
- *
- * top_level
- *   -> import_declaration | routine_declaration | declaration (si se aprueba)
- *
- * block
- *   -> TOK_LBRACE statement_list TOK_RBRACE
- *
- * statement
- *   -> declaration | assignment | when_statement | alwhen_statement
- *    | loop_statement | break_statement | output_statement | block
- *
- * expression
- *   -> literales | identificadores | llamadas | índices
- *    | expresiones unarias | expresiones binarias
- *
- * Listas que deben admitir cero, uno o varios elementos según el contexto:
- * parámetros, argumentos, instrucciones, dimensiones e inicializadores.
- *
- * Cada incremento debe declarar sus %type, construir AST en sus acciones y
- * añadir destructores para nodos/listas que puedan descartarse en errores.
+ * Bison exige implícitamente el fin de archivo después del símbolo inicial.
+ * La acción transfiere la raíz al parámetro recibido por yyparse().
  */
 input:
-    /* vacío */
+    program
+    {
+        *result = $1;
+        $1 = NULL;
+    }
+;
+
+program:
+    statement_list
+    {
+        $$ = ast_new_program($1, AST_LOCATION(@$));
+        $1 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* El programa y los bloques pueden estar vacíos. */
+statement_list:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | statement_list statement
+    {
+        if (!ast_node_list_append($1, $2)) {
+            ast_node_list_free($1);
+            ast_free($2);
+            $1 = NULL;
+            $2 = NULL;
+            YYNOMEM;
+        }
+
+        $$ = $1;
+        $1 = NULL;
+        $2 = NULL;
+    }
+;
+
+/* Las instrucciones simples requieren punto; un bloque se cierra con }. */
+statement:
+    declaration TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | assignment TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | block
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+;
+
+declaration:
+    TOK_CREATE type TOK_IDENTIFIER
+    {
+        AstNodeList *dimensions = ast_node_list_create();
+
+        if (dimensions == NULL) {
+            YYNOMEM;
+        }
+
+        $$ = ast_new_variable_declaration($2, $3, dimensions,
+                                          AST_LOCATION(@$));
+        $3 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+type:
+    TOK_BOOL { $$ = PIPER_TYPE_BOOL; }
+  | TOK_B8   { $$ = PIPER_TYPE_B8; }
+  | TOK_UB8  { $$ = PIPER_TYPE_UB8; }
+  | TOK_B16  { $$ = PIPER_TYPE_B16; }
+  | TOK_UB16 { $$ = PIPER_TYPE_UB16; }
+  | TOK_B32  { $$ = PIPER_TYPE_B32; }
+  | TOK_UB32 { $$ = PIPER_TYPE_UB32; }
+;
+
+/* En este alcance el destino de store se restringe a un identificador. */
+assignment:
+    TOK_IDENTIFIER TOK_STORE expression
+    {
+        AstNode *target = ast_new_identifier($1, AST_LOCATION(@1));
+        $1 = NULL;
+
+        if (target == NULL) {
+            YYNOMEM;
+        }
+
+        $$ = ast_new_assignment(target, $3, AST_LOCATION(@$));
+        $3 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+block:
+    TOK_LBRACE statement_list TOK_RBRACE
+    {
+        $$ = ast_new_block($2, AST_LOCATION(@$));
+        $2 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+expression:
+    TOK_CONST_INT
+    {
+        $$ = ast_new_integer_literal($1, AST_LOCATION(@1));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_TRUE
+    {
+        $$ = ast_new_boolean_literal(true, AST_LOCATION(@1));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_FALSE
+    {
+        $$ = ast_new_boolean_literal(false, AST_LOCATION(@1));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_IDENTIFIER
+    {
+        $$ = ast_new_identifier($1, AST_LOCATION(@1));
+        $1 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_MINUS expression %prec UNARY
+    {
+        $$ = ast_new_unary_expression(AST_OP_NEGATE, $2, AST_LOCATION(@$));
+        $2 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_NOT expression %prec UNARY
+    {
+        $$ = ast_new_unary_expression(AST_OP_LOGICAL_NOT, $2,
+                                      AST_LOCATION(@$));
+        $2 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_INCREMENT expression %prec UNARY
+    {
+        $$ = ast_new_unary_expression(AST_OP_INCREMENT, $2,
+                                      AST_LOCATION(@$));
+        $2 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_DECREMENT expression %prec UNARY
+    {
+        $$ = ast_new_unary_expression(AST_OP_DECREMENT, $2,
+                                      AST_LOCATION(@$));
+        $2 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_PLUS expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_ADD, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_MINUS expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_SUBTRACT, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_STAR expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_MULTIPLY, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_SLASH expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_DIVIDE, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_PERCENT expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_REMAINDER, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_CARET expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_POWER, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_EQUAL expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_EQUAL, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_NOT_EQUAL expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_NOT_EQUAL, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_LESS expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_LESS, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_LESS_EQUAL expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_LESS_EQUAL, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_GREATER expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_GREATER, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_GREATER_EQUAL expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_GREATER_EQUAL, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_AND expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_LOGICAL_AND, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_OR expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_LOGICAL_OR, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression TOK_XOR expression
+    {
+        $$ = ast_new_binary_expression(AST_OP_LOGICAL_XOR, $1, $3,
+                                       AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
 ;
 
 /* Fin de la gramática e inicio del código C auxiliar. */
@@ -189,8 +531,9 @@ input:
  * Implementación mínima del manejador de errores requerido por Bison.
  * El lexer será responsable de mantener yylloc actualizado.
  */
-void yyerror(const char *message)
+void yyerror(AstNode **result, const char *message)
 {
+    (void)result;
     fprintf(stderr, "%d:%d: error sintáctico: %s\n",
             yylloc.first_line, yylloc.first_column, message);
 }

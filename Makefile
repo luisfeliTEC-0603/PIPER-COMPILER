@@ -5,6 +5,7 @@ BISON ?= bison
 CPPFLAGS = -Iinclude -Ibuild
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic
 
+.DELETE_ON_ERROR:
 .PHONY: all generate conflicts clean
 
 all: bin/pipoc
@@ -33,7 +34,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h
 build/ast.o: src/ast.c include/ast.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/ast.c -o $@
 
-build/main.o: src/main.c
+build/main.o: src/main.c build/parser.h include/ast.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/main.c -o $@
 
 bin/pipoc: build/parser.o build/lexer.o build/ast.o build/main.o
