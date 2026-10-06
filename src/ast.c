@@ -28,6 +28,42 @@ struct AstNode {
 
     union {
         struct {
+            AstNodeList *elements;
+        } program;
+
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } variable_declaration;
+
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } parameter;
+
+        struct {
+            PiperType return_type;
+            char *name;
+            AstNodeList *parameters;
+            AstNode *body;
+        } routine_declaration;
+
+        struct {
+            AstNodeList *statements;
+        } block;
+
+        struct {
+            AstNode *value;
+        } output_statement;
+
+        struct {
+            char *routine_name;
+            AstNodeList *arguments;
+        } call_expression;
+
+        struct {
             unsigned long long value;
         } integer_literal;
 
@@ -151,6 +187,155 @@ void ast_node_list_free(AstNodeList *list)
     free(list);
 }
 
+/* Constructores de la estructura general, declaraciones y rutinas. */
+AstNode *ast_new_program(AstNodeList *elements, SourceLocation location)
+{
+    if (elements == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_PROGRAM, location);
+    if (node == NULL) {
+        ast_node_list_free(elements);
+        return NULL;
+    }
+
+    node->data.program.elements = elements;
+
+    return node;
+}
+
+AstNode *ast_new_variable_declaration(PiperType type, char *name,
+                                      AstNodeList *dimensions,
+                                      SourceLocation location)
+{
+    if (name == NULL || dimensions == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_VARIABLE_DECLARATION, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    node->data.variable_declaration.type = type;
+    node->data.variable_declaration.name = name;
+    node->data.variable_declaration.dimensions = dimensions;
+
+    return node;
+}
+
+AstNode *ast_new_parameter(PiperType type, char *name,
+                           AstNodeList *dimensions,
+                           SourceLocation location)
+{
+    if (name == NULL || dimensions == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_PARAMETER, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    node->data.parameter.type = type;
+    node->data.parameter.name = name;
+    node->data.parameter.dimensions = dimensions;
+
+    return node;
+}
+
+AstNode *ast_new_routine_declaration(PiperType return_type, char *name,
+                                     AstNodeList *parameters, AstNode *body,
+                                     SourceLocation location)
+{
+    if (name == NULL || parameters == NULL || body == NULL) {
+        free(name);
+        ast_node_list_free(parameters);
+        ast_free(body);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_ROUTINE_DECLARATION, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(parameters);
+        ast_free(body);
+        return NULL;
+    }
+
+    node->data.routine_declaration.return_type = return_type;
+    node->data.routine_declaration.name = name;
+    node->data.routine_declaration.parameters = parameters;
+    node->data.routine_declaration.body = body;
+
+    return node;
+}
+
+AstNode *ast_new_block(AstNodeList *statements, SourceLocation location)
+{
+    if (statements == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_BLOCK, location);
+    if (node == NULL) {
+        ast_node_list_free(statements);
+        return NULL;
+    }
+
+    node->data.block.statements = statements;
+
+    return node;
+}
+
+AstNode *ast_new_output(AstNode *value, SourceLocation location)
+{
+    if (value == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_OUTPUT_STATEMENT, location);
+    if (node == NULL) {
+        ast_free(value);
+        return NULL;
+    }
+
+    node->data.output_statement.value = value;
+
+    return node;
+}
+
+AstNode *ast_new_call(char *routine_name, AstNodeList *arguments,
+                      SourceLocation location)
+{
+    if (routine_name == NULL || arguments == NULL) {
+        free(routine_name);
+        ast_node_list_free(arguments);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_CALL_EXPRESSION, location);
+    if (node == NULL) {
+        free(routine_name);
+        ast_node_list_free(arguments);
+        return NULL;
+    }
+
+    node->data.call_expression.routine_name = routine_name;
+    node->data.call_expression.arguments = arguments;
+
+    return node;
+}
+
 /*
  * Constructores de expresiones. Cada constructor adquiere incondicionalmente
  * sus argumentos que sean punteros.
@@ -272,8 +457,6 @@ AstNode *ast_new_assignment(AstNode *target, AstNode *value,
 
 /* TODO(ast-control): implementar when, alwhen, loop y break. */
 
-/* TODO(ast-routines): implementar parámetros, rutinas, llamadas y output. */
-
 /* TODO(ast-composites): implementar arreglos, índices e importaciones. */
 
 /* TODO(ast-print): implementar impresión indentada para todas las variantes. */
@@ -286,6 +469,39 @@ void ast_free(AstNode *node)
     }
 
     switch (node->kind) {
+    case AST_PROGRAM:
+        ast_node_list_free(node->data.program.elements);
+        break;
+
+    case AST_VARIABLE_DECLARATION:
+        free(node->data.variable_declaration.name);
+        ast_node_list_free(node->data.variable_declaration.dimensions);
+        break;
+
+    case AST_PARAMETER:
+        free(node->data.parameter.name);
+        ast_node_list_free(node->data.parameter.dimensions);
+        break;
+
+    case AST_ROUTINE_DECLARATION:
+        free(node->data.routine_declaration.name);
+        ast_node_list_free(node->data.routine_declaration.parameters);
+        ast_free(node->data.routine_declaration.body);
+        break;
+
+    case AST_BLOCK:
+        ast_node_list_free(node->data.block.statements);
+        break;
+
+    case AST_OUTPUT_STATEMENT:
+        ast_free(node->data.output_statement.value);
+        break;
+
+    case AST_CALL_EXPRESSION:
+        free(node->data.call_expression.routine_name);
+        ast_node_list_free(node->data.call_expression.arguments);
+        break;
+
     case AST_IDENTIFIER_EXPRESSION:
         free(node->data.identifier.name);
         break;
