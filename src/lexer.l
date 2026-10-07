@@ -37,7 +37,15 @@ static void lexer_update_location(const char *text, int length);
 static char *lexer_strdup(const char *text);
 static char *lexer_strdup_unquoted(const char *text, int length);
 
+/* Macro para cada regla */
 #define YY_USER_ACTION lexer_update_location(yytext, yyleng);
+
+/* Inicializacion de bases de las columna */   
+#define YY_USER_INIT \
+    do { \
+        yylloc.first_line = yylloc.last_line = 1; \
+        yylloc.first_column = yylloc.last_column = 1; \
+    } while (0)
 %}
 
 /* Expresiones regulares para patrones basicos */
