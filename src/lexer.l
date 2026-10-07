@@ -48,9 +48,9 @@ WHITESPACE  [ \t\r\n]+
 
 %%
 
-/* ============================================================
- * Comentarios
- * ============================================================ */
+    /* ============================================================
+     * Comentarios
+     * ============================================================ */
 
 "~~"[^\n]*              { /* comentario de una línea: ignorar */ }
 
@@ -69,15 +69,15 @@ WHITESPACE  [ \t\r\n]+
     return TOK_INVALID;
 }
 
-/* ============================================================
- * Espacios en blanco
- * ============================================================ */
+    /* ============================================================
+     * Espacios en blanco
+     * ============================================================ */
 
 {WHITESPACE}            { /* ignorar */ }
 
-/* ============================================================
- * Palabras reservadas y tipos
- * ============================================================ */
+    /* ============================================================
+     * Palabras reservadas y tipos
+     * ============================================================ */
 
 "create"                { return TOK_CREATE; }
 "routine"               { return TOK_ROUTINE; }
@@ -102,9 +102,9 @@ WHITESPACE  [ \t\r\n]+
 "B32"                   { return TOK_B32; }
 "uB32"                  { return TOK_UB32; }
 
-/* ============================================================
- * Operadores 
- * ============================================================ */
+    /* ============================================================
+     * Operadores 
+     * ============================================================ */
 
 "++"                    { return TOK_INCREMENT; }
 "--"                    { return TOK_DECREMENT; }
@@ -128,9 +128,9 @@ WHITESPACE  [ \t\r\n]+
 "or"                    { return TOK_OR; }
 "xor"                   { return TOK_XOR; }
 
-/* ============================================================
- * Delimitadores
- * ============================================================ */
+    /* ============================================================
+     * Delimitadores
+     * ============================================================ */
 
 "{"                     { return TOK_LBRACE; }
 "}"                     { return TOK_RBRACE; }
@@ -141,22 +141,22 @@ WHITESPACE  [ \t\r\n]+
 "&"                     { return TOK_AMPERSAND; }
 "|"                     { return TOK_PIPE; }
 
-/* ============================================================
- * Valores: rutas, enteros e identificadores
- * ============================================================ */
+    /* ============================================================
+     * Valores: rutas, enteros e identificadores
+     * ============================================================ */
 
-/* FILE_PATH: ruta .rwt entre comillas
- * yylval.text recibe la copia sin comillas
- * lexer_strdup_unquoted copia a memoria dinámica porque yytext
- * se sobrescribe en el siguiente token */
+    /* FILE_PATH: ruta .rwt entre comillas
+     * yylval.text recibe la copia sin comillas
+     * lexer_strdup_unquoted copia a memoria dinámica porque yytext
+     * se sobrescribe en el siguiente token */
 {FILE_PATH} {
     yylval.text = lexer_strdup_unquoted(yytext, yyleng);
     return TOK_FILE_PATH;
 }
 
-/* Entero: uno o más dígitos
- * Se convierte con strtoull y se detecta overflow con errno
- * yylval.integer_value recibe el valor */
+    /* Entero: uno o más dígitos
+     * Se convierte con strtoull y se detecta overflow con errno
+     * yylval.integer_value recibe el valor */
 {DIGIT}+ {
     /* Resetear errno antes de strtoull para detectar ERANGE */
     errno = 0;
@@ -180,18 +180,18 @@ WHITESPACE  [ \t\r\n]+
     return TOK_CONST_INT;
 }
 
-/* Identificador: nombre de variable, función o etiqueta
- * yylval.text recibe copia a memoria dinámica */
+    /* Identificador: nombre de variable, función o etiqueta
+     * yylval.text recibe copia a memoria dinámica */
 {IDENTIFIER} {
     yylval.text = lexer_strdup(yytext);
     return TOK_IDENTIFIER;
 }
 
-/* ============================================================
- * Otros
- * ============================================================ */
+    /* ============================================================
+     * Otros
+     * ============================================================ */
 
-/* Cualquier otro carácter no reconocido: error léxico */ 
+    /* Cualquier otro carácter no reconocido: error léxico */ 
 . {
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): carácter no reconocido '%s'\n",
