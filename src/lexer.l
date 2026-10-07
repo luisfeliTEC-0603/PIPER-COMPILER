@@ -182,7 +182,7 @@ WHITESPACE  [ \t\r\n]+
                 "%d:%d: [!ERROR] (lexer.l): entero fuera de rango '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
 
-        text = NULL; 
+        yylval.text = NULL; 
         return TOK_INVALID;
     }
 
