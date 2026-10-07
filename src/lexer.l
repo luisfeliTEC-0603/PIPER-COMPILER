@@ -66,6 +66,7 @@ WHITESPACE  [ \t\r\n]+
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): comentario de bloque sin cerrar\n",
             yylloc.first_line, yylloc.first_column);
+    yylval.text = NULL; 
     return TOK_INVALID;
 }
 
@@ -171,6 +172,8 @@ WHITESPACE  [ \t\r\n]+
         fprintf(stderr,
                 "%d:%d: [!ERROR] (lexer.l): entero fuera de rango '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
+
+        text = NULL; 
         return TOK_INVALID;
     }
 
