@@ -264,6 +264,11 @@ statement:
         $$ = $1;
         $1 = NULL;
     }
+  | expression TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
   | when_statement
     {
         $$ = $1;
@@ -711,6 +716,65 @@ expression:
         if ($$ == NULL) {
             YYNOMEM;
         }
+    }
+  | call_expression
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+;
+
+/* ------------------------------------------------------------
+ * Call expression
+ * ------------------------------------------------------------ */
+
+call_expression:
+    TOK_IDENTIFIER TOK_LBRACKET argument_list TOK_RBRACKET
+    {
+        $$ = ast_new_call($1, $3, AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+argument_list:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | argument_list TOK_COMMA expression
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
     }
 ;
 
