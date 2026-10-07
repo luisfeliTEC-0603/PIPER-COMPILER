@@ -67,7 +67,6 @@ WHITESPACE  [ \t\r\n]+
             "%d:%d: [!ERROR] (lexer.l): comentario de bloque sin cerrar\n",
             yylloc.first_line, yylloc.first_column);
     yylval.text = NULL; 
-    BEGIN(INITIAL)
     return TOK_INVALID;
 }
 
