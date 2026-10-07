@@ -1,15 +1,18 @@
 #include "ast.h"
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 
 /*
  * Implementación del AST de Piper.
  *
- * Este archivo queda deliberadamente como skeleton. El responsable del AST
- * implementará aquí las estructuras opacas declaradas en ast.h y garantizará
- * que cada constructor respete el contrato de propiedad documentado.
+ * El archivo se organiza en representación privada, utilidades comunes,
+ * constructores por familia, inspección, impresión y liberación recursiva.
+ * Las estructuras permanecen opacas fuera de este módulo.
  */
+
+/* Representación privada del árbol y de las listas que poseen sus nodos. */
 
 /* Arreglo dinámico que posee todos los nodos agregados exitosamente. */
 struct AstNodeList {
@@ -30,6 +33,11 @@ struct AstNode {
         struct {
             AstNodeList *elements;
         } program;
+
+        struct {
+            char *symbol;
+            char *file_path;
+        } import_declaration;
 
         struct {
             PiperType type;
@@ -72,6 +80,15 @@ struct AstNode {
         } boolean_literal;
 
         struct {
+            AstNodeList *elements;
+        } array_literal;
+
+        struct {
+            AstNode *base;
+            AstNodeList *indices;
+        } index_expression;
+
+        struct {
             char *name;
         } identifier;
 
@@ -112,7 +129,7 @@ struct AstNode {
     } data;
 };
 
-/* Reserva un nodo e inicializa únicamente sus campos comunes. */
+/* Reserva e inicialización de los campos comunes a todos los nodos. */
 static AstNode *ast_node_create(AstKind kind, SourceLocation location)
 {
     AstNode *node = malloc(sizeof(*node));
@@ -125,6 +142,8 @@ static AstNode *ast_node_create(AstKind kind, SourceLocation location)
 
     return node;
 }
+
+/* Construcción de intervalos de ubicación en el código fuente. */
 
 /* Construye una ubicación sin interpretar ni validar sus coordenadas. */
 SourceLocation source_location_make(int first_line, int first_column,
@@ -139,6 +158,8 @@ SourceLocation source_location_make(int first_line, int first_column,
 
     return location;
 }
+
+/* Administración de listas dinámicas que poseen sus nodos. */
 
 AstNodeList *ast_node_list_create(void)
 {
@@ -206,7 +227,8 @@ void ast_node_list_free(AstNodeList *list)
     free(list);
 }
 
-/* Constructores de la estructura general, declaraciones y rutinas. */
+/* Constructores para la raíz del programa y sus importaciones. */
+
 AstNode *ast_new_program(AstNodeList *elements, SourceLocation location)
 {
     if (elements == NULL) {
@@ -223,6 +245,30 @@ AstNode *ast_new_program(AstNodeList *elements, SourceLocation location)
 
     return node;
 }
+
+AstNode *ast_new_import_declaration(char *symbol, char *file_path,
+                                    SourceLocation location)
+{
+    if (symbol == NULL || file_path == NULL) {
+        free(symbol);
+        free(file_path);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_IMPORT_DECLARATION, location);
+    if (node == NULL) {
+        free(symbol);
+        free(file_path);
+        return NULL;
+    }
+
+    node->data.import_declaration.symbol = symbol;
+    node->data.import_declaration.file_path = file_path;
+
+    return node;
+}
+
+/* Constructores para declaraciones, parámetros, rutinas y bloques. */
 
 AstNode *ast_new_variable_declaration(PiperType type, char *name,
                                       AstNodeList *dimensions,
@@ -316,6 +362,8 @@ AstNode *ast_new_block(AstNodeList *statements, SourceLocation location)
     return node;
 }
 
+/* Constructores para retornos y llamadas a rutinas. */
+
 AstNode *ast_new_output(AstNode *value, SourceLocation location)
 {
     if (value == NULL) {
@@ -355,10 +403,8 @@ AstNode *ast_new_call(char *routine_name, AstNodeList *arguments,
     return node;
 }
 
-/*
- * Constructores de expresiones. Cada constructor adquiere incondicionalmente
- * sus argumentos que sean punteros.
- */
+/* Constructores para literales y expresiones. */
+
 AstNode *ast_new_integer_literal(unsigned long long value,
                                  SourceLocation location)
 {
@@ -388,6 +434,46 @@ AstNode *ast_new_none_literal(SourceLocation location)
 {
     /* El kind representa por completo al literal none. */
     return ast_node_create(AST_NONE_LITERAL, location);
+}
+
+AstNode *ast_new_array_literal(AstNodeList *elements,
+                               SourceLocation location)
+{
+    if (elements == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_ARRAY_LITERAL, location);
+    if (node == NULL) {
+        ast_node_list_free(elements);
+        return NULL;
+    }
+
+    node->data.array_literal.elements = elements;
+
+    return node;
+}
+
+AstNode *ast_new_index_expression(AstNode *base, AstNodeList *indices,
+                                  SourceLocation location)
+{
+    if (base == NULL || indices == NULL) {
+        ast_free(base);
+        ast_node_list_free(indices);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_INDEX_EXPRESSION, location);
+    if (node == NULL) {
+        ast_free(base);
+        ast_node_list_free(indices);
+        return NULL;
+    }
+
+    node->data.index_expression.base = base;
+    node->data.index_expression.indices = indices;
+
+    return node;
 }
 
 AstNode *ast_new_identifier(char *name, SourceLocation location)
@@ -451,7 +537,8 @@ AstNode *ast_new_binary_expression(AstOperator operator, AstNode *left,
     return node;
 }
 
-/* Constructores de instrucciones. */
+/* Constructores para instrucciones y estructuras de control. */
+
 AstNode *ast_new_assignment(AstNode *target, AstNode *value,
                             SourceLocation location)
 {
@@ -560,11 +647,95 @@ AstNode *ast_new_loop(char *control_name, AstNode *begin, AstNode *end,
     return node;
 }
 
-/* TODO(ast-composites): implementar arreglos, índices e importaciones. */
+/* Consultas de solo lectura y nombres legibles para los enums públicos. */
+
+AstKind ast_node_kind(const AstNode *node)
+{
+    assert(node != NULL);
+    return node->kind;
+}
+
+SourceLocation ast_node_location(const AstNode *node)
+{
+    assert(node != NULL);
+    return node->location;
+}
+
+const char *piper_type_name(PiperType type)
+{
+    switch (type) {
+    case PIPER_TYPE_BOOL:
+        return "bool";
+    case PIPER_TYPE_B8:
+        return "B8";
+    case PIPER_TYPE_UB8:
+        return "uB8";
+    case PIPER_TYPE_B16:
+        return "B16";
+    case PIPER_TYPE_UB16:
+        return "uB16";
+    case PIPER_TYPE_B32:
+        return "B32";
+    case PIPER_TYPE_UB32:
+        return "uB32";
+    case PIPER_TYPE_NONE:
+        return "none";
+    default:
+        return "<invalid-type>";
+    }
+}
+
+const char *ast_operator_name(AstOperator operator)
+{
+    switch (operator) {
+    case AST_OP_ADD:
+        return "add";
+    case AST_OP_SUBTRACT:
+        return "subtract";
+    case AST_OP_MULTIPLY:
+        return "multiply";
+    case AST_OP_DIVIDE:
+        return "divide";
+    case AST_OP_REMAINDER:
+        return "remainder";
+    case AST_OP_POWER:
+        return "power";
+    case AST_OP_INCREMENT:
+        return "increment";
+    case AST_OP_DECREMENT:
+        return "decrement";
+    case AST_OP_EQUAL:
+        return "equal";
+    case AST_OP_NOT_EQUAL:
+        return "not_equal";
+    case AST_OP_LESS:
+        return "less";
+    case AST_OP_LESS_EQUAL:
+        return "less_equal";
+    case AST_OP_GREATER:
+        return "greater";
+    case AST_OP_GREATER_EQUAL:
+        return "greater_equal";
+    case AST_OP_LOGICAL_AND:
+        return "logical_and";
+    case AST_OP_LOGICAL_OR:
+        return "logical_or";
+    case AST_OP_LOGICAL_XOR:
+        return "logical_xor";
+    case AST_OP_LOGICAL_NOT:
+        return "logical_not";
+    case AST_OP_NEGATE:
+        return "negate";
+    default:
+        return "<invalid-operator>";
+    }
+}
+
+/* Impresión indentada del árbol para diagnóstico y pruebas. */
 
 /* TODO(ast-print): implementar impresión indentada para todas las variantes. */
 
-/* Libera primero los recursos propios de la variante y luego el nodo. */
+/* Liberación recursiva de los recursos internos y del nodo exterior. */
 void ast_free(AstNode *node)
 {
     if (node == NULL) {
@@ -574,6 +745,11 @@ void ast_free(AstNode *node)
     switch (node->kind) {
     case AST_PROGRAM:
         ast_node_list_free(node->data.program.elements);
+        break;
+
+    case AST_IMPORT_DECLARATION:
+        free(node->data.import_declaration.symbol);
+        free(node->data.import_declaration.file_path);
         break;
 
     case AST_VARIABLE_DECLARATION:
@@ -603,6 +779,15 @@ void ast_free(AstNode *node)
     case AST_CALL_EXPRESSION:
         free(node->data.call_expression.routine_name);
         ast_node_list_free(node->data.call_expression.arguments);
+        break;
+
+    case AST_ARRAY_LITERAL:
+        ast_node_list_free(node->data.array_literal.elements);
+        break;
+
+    case AST_INDEX_EXPRESSION:
+        ast_free(node->data.index_expression.base);
+        ast_node_list_free(node->data.index_expression.indices);
         break;
 
     case AST_IDENTIFIER_EXPRESSION:

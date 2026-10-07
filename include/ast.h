@@ -184,8 +184,11 @@ AstNode *ast_new_binary_expression(AstOperator operator, AstNode *left,
  * Inspección y ciclo de vida
  * ------------------------------------------------------------------------- */
 
+/* node debe ser distinto de NULL. */
 AstKind ast_node_kind(const AstNode *node);
 SourceLocation ast_node_location(const AstNode *node);
+
+/* Devuelven literales estáticos; los valores inválidos tienen nombre propio. */
 const char *piper_type_name(PiperType type);
 const char *ast_operator_name(AstOperator operator);
 
