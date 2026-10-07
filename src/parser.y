@@ -291,6 +291,80 @@ statement:
     }
 ;
 
+/* ------------------------------------------------------------
+ * Routine
+ * ------------------------------------------------------------ */
+
+routine_declaration:
+    TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET parameter_list TOK_RBRACKET block
+    {
+        $$ = ast_new_routine_declaration($2, $3, $5, $7, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        $7 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+parameter_list:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | parameter
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | parameter_list TOK_COMMA parameter
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
+    }
+;
+
+parameter:
+    type TOK_IDENTIFIER
+    {
+        AstNodeList *dimensions = ast_node_list_create();
+
+        if (dimensions == NULL) {
+            $2 = NULL;
+            YYNOMEM;
+        }
+
+        $$ = ast_new_parameter($1, $2, dimensions, AST_LOCATION(@$));
+        $2 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
 declaration:
     TOK_CREATE type TOK_IDENTIFIER
     {
