@@ -165,9 +165,29 @@ void yyerror(AstNode **result, const char *message);
 %destructor { ast_free($$); } <node>
 %destructor { ast_node_list_free($$); } <node_list>
 
+/* ------------------------------------------------------------
+ * No terminales
+ * ------------------------------------------------------------ */
+
+/* Basicos: declaraciones, asignaciones y expresiones */
+
 %type <node> program statement declaration assignment block expression
 %type <node_list> statement_list
 %type <type> type
+
+/* Flujo: estructuras de control y rutinas */
+
+%type <node> routine_declaration
+%type <node> when_statement
+%type <node> alwhen_statement
+%type <node> break_statement
+%type <node> output_statement
+%type <node> call_expression
+%type <node> parameter
+%type <node> fallback_opt
+
+%type <node_list> parameter_list
+%type <node_list> argument_list
 
 /* Cualquier conflicto nuevo debe fallar la generación y ser investigado. */
 %expect 0
@@ -229,12 +249,37 @@ statement_list:
 
 /* Las instrucciones simples requieren punto; un bloque se cierra con }. */
 statement:
-    declaration TOK_DOT
+    routine_declaration
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | declaration TOK_DOT
     {
         $$ = $1;
         $1 = NULL;
     }
   | assignment TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | when_statement
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | alwhen_statement
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | output_statement TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | break_statement TOK_DOT
     {
         $$ = $1;
         $1 = NULL;
@@ -289,6 +334,77 @@ assignment:
         $$ = ast_new_assignment(target, $3, AST_LOCATION(@$));
         $3 = NULL;
 
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* ------------------------------------------------------------
+ * When / Fallback
+ * ------------------------------------------------------------ */
+
+when_statement:
+    TOK_WHEN TOK_LBRACKET expression TOK_RBRACKET block fallback_opt
+    {
+        $$ = ast_new_when($3, $5, $6, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        $6 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+fallback_opt:
+    %empty
+    {
+        $$ = NULL;
+    }
+  | TOK_FALLBACK block
+    {
+        $$ = $2;
+        $2 = NULL;
+    }
+;
+
+/* ------------------------------------------------------------
+ * Alwhen / Break
+ * ------------------------------------------------------------ */
+
+alwhen_statement:
+    TOK_ALWHEN TOK_LBRACKET expression TOK_RBRACKET block
+    {
+        $$ = ast_new_alwhen($3, $5, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+break_statement:
+    TOK_BREAK
+    {
+        $$ = ast_new_break(AST_LOCATION(@$));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+
+/* ------------------------------------------------------------
+ * Output
+ * ------------------------------------------------------------ */
+
+output_statement:
+    TOK_OUTPUT expression
+    {
+        $$ = ast_new_output($2, AST_LOCATION(@$));
+        $2 = NULL;
         if ($$ == NULL) {
             YYNOMEM;
         }
