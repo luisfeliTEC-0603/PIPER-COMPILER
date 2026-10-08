@@ -733,7 +733,284 @@ const char *ast_operator_name(AstOperator operator)
 
 /* Impresión indentada del árbol para diagnóstico y pruebas. */
 
-/* TODO(ast-print): implementar impresión indentada para todas las variantes. */
+static const char *ast_kind_name(AstKind kind)
+{
+    switch (kind) {
+    case AST_PROGRAM:
+        return "Program";
+    case AST_IMPORT_DECLARATION:
+        return "ImportDeclaration";
+    case AST_VARIABLE_DECLARATION:
+        return "VariableDeclaration";
+    case AST_PARAMETER:
+        return "Parameter";
+    case AST_ROUTINE_DECLARATION:
+        return "RoutineDeclaration";
+    case AST_BLOCK:
+        return "Block";
+    case AST_ASSIGNMENT:
+        return "Assignment";
+    case AST_WHEN_STATEMENT:
+        return "WhenStatement";
+    case AST_ALWHEN_STATEMENT:
+        return "AlwhenStatement";
+    case AST_LOOP_STATEMENT:
+        return "LoopStatement";
+    case AST_BREAK_STATEMENT:
+        return "BreakStatement";
+    case AST_OUTPUT_STATEMENT:
+        return "OutputStatement";
+    case AST_CALL_EXPRESSION:
+        return "CallExpression";
+    case AST_IDENTIFIER_EXPRESSION:
+        return "IdentifierExpression";
+    case AST_INTEGER_LITERAL:
+        return "IntegerLiteral";
+    case AST_BOOLEAN_LITERAL:
+        return "BooleanLiteral";
+    case AST_NONE_LITERAL:
+        return "NoneLiteral";
+    case AST_ARRAY_LITERAL:
+        return "ArrayLiteral";
+    case AST_INDEX_EXPRESSION:
+        return "IndexExpression";
+    case AST_UNARY_EXPRESSION:
+        return "UnaryExpression";
+    case AST_BINARY_EXPRESSION:
+        return "BinaryExpression";
+    default:
+        return "<invalid-node>";
+    }
+}
+
+static void ast_print_indentation(FILE *output, size_t indentation)
+{
+    for (size_t level = 0; level < indentation; level++) {
+        fputs("  ", output);
+    }
+}
+
+static void ast_print_node(FILE *output, const AstNode *node,
+                           size_t indentation);
+
+static void ast_print_child(FILE *output, const char *label,
+                            const AstNode *child, size_t indentation)
+{
+    assert(child != NULL);
+
+    ast_print_indentation(output, indentation);
+    fprintf(output, "%s:\n", label);
+    ast_print_node(output, child, indentation + 1);
+}
+
+static void ast_print_list(FILE *output, const char *label,
+                           const AstNodeList *list, size_t indentation)
+{
+    assert(list != NULL);
+
+    ast_print_indentation(output, indentation);
+    if (list->count == 0) {
+        fprintf(output, "%s: []\n", label);
+        return;
+    }
+
+    fprintf(output, "%s:\n", label);
+    for (size_t index = 0; index < list->count; index++) {
+        ast_print_node(output, list->items[index], indentation + 1);
+    }
+}
+
+static void ast_print_node(FILE *output, const AstNode *node,
+                           size_t indentation)
+{
+    ast_print_indentation(output, indentation);
+    fprintf(output, "%s [%d:%d-%d:%d]\n",
+            ast_kind_name(node->kind),
+            node->location.first_line, node->location.first_column,
+            node->location.last_line, node->location.last_column);
+
+    switch (node->kind) {
+    case AST_PROGRAM:
+        ast_print_list(output, "elements", node->data.program.elements,
+                       indentation + 1);
+        break;
+
+    case AST_IMPORT_DECLARATION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "symbol: \"%s\"\n",
+                node->data.import_declaration.symbol);
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "file_path: \"%s\"\n",
+                node->data.import_declaration.file_path);
+        break;
+
+    case AST_VARIABLE_DECLARATION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "type: %s\n",
+                piper_type_name(node->data.variable_declaration.type));
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "name: \"%s\"\n",
+                node->data.variable_declaration.name);
+        ast_print_list(output, "dimensions",
+                       node->data.variable_declaration.dimensions,
+                       indentation + 1);
+        break;
+
+    case AST_PARAMETER:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "type: %s\n",
+                piper_type_name(node->data.parameter.type));
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "name: \"%s\"\n", node->data.parameter.name);
+        ast_print_list(output, "dimensions",
+                       node->data.parameter.dimensions, indentation + 1);
+        break;
+
+    case AST_ROUTINE_DECLARATION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "return_type: %s\n",
+                piper_type_name(node->data.routine_declaration.return_type));
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "name: \"%s\"\n",
+                node->data.routine_declaration.name);
+        ast_print_list(output, "parameters",
+                       node->data.routine_declaration.parameters,
+                       indentation + 1);
+        ast_print_child(output, "body",
+                        node->data.routine_declaration.body,
+                        indentation + 1);
+        break;
+
+    case AST_BLOCK:
+        ast_print_list(output, "statements", node->data.block.statements,
+                       indentation + 1);
+        break;
+
+    case AST_ASSIGNMENT:
+        ast_print_child(output, "target", node->data.assignment.target,
+                        indentation + 1);
+        ast_print_child(output, "value", node->data.assignment.value,
+                        indentation + 1);
+        break;
+
+    case AST_WHEN_STATEMENT:
+        ast_print_child(output, "condition",
+                        node->data.when_statement.condition,
+                        indentation + 1);
+        ast_print_child(output, "then_block",
+                        node->data.when_statement.then_block,
+                        indentation + 1);
+        if (node->data.when_statement.fallback_block == NULL) {
+            ast_print_indentation(output, indentation + 1);
+            fputs("fallback_block: <absent>\n", output);
+        } else {
+            ast_print_child(output, "fallback_block",
+                            node->data.when_statement.fallback_block,
+                            indentation + 1);
+        }
+        break;
+
+    case AST_ALWHEN_STATEMENT:
+        ast_print_child(output, "condition",
+                        node->data.alwhen_statement.condition,
+                        indentation + 1);
+        ast_print_child(output, "body", node->data.alwhen_statement.body,
+                        indentation + 1);
+        break;
+
+    case AST_LOOP_STATEMENT:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "control_name: \"%s\"\n",
+                node->data.loop_statement.control_name);
+        ast_print_child(output, "begin", node->data.loop_statement.begin,
+                        indentation + 1);
+        ast_print_child(output, "end", node->data.loop_statement.end,
+                        indentation + 1);
+        ast_print_child(output, "step", node->data.loop_statement.step,
+                        indentation + 1);
+        ast_print_child(output, "body", node->data.loop_statement.body,
+                        indentation + 1);
+        break;
+
+    case AST_BREAK_STATEMENT:
+        break;
+
+    case AST_OUTPUT_STATEMENT:
+        ast_print_child(output, "value", node->data.output_statement.value,
+                        indentation + 1);
+        break;
+
+    case AST_CALL_EXPRESSION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "routine_name: \"%s\"\n",
+                node->data.call_expression.routine_name);
+        ast_print_list(output, "arguments",
+                       node->data.call_expression.arguments,
+                       indentation + 1);
+        break;
+
+    case AST_IDENTIFIER_EXPRESSION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "name: \"%s\"\n", node->data.identifier.name);
+        break;
+
+    case AST_INTEGER_LITERAL:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "value: %llu\n", node->data.integer_literal.value);
+        break;
+
+    case AST_BOOLEAN_LITERAL:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "value: %s\n",
+                node->data.boolean_literal.value ? "true" : "false");
+        break;
+
+    case AST_NONE_LITERAL:
+        break;
+
+    case AST_ARRAY_LITERAL:
+        ast_print_list(output, "elements", node->data.array_literal.elements,
+                       indentation + 1);
+        break;
+
+    case AST_INDEX_EXPRESSION:
+        ast_print_child(output, "base", node->data.index_expression.base,
+                        indentation + 1);
+        ast_print_list(output, "indices", node->data.index_expression.indices,
+                       indentation + 1);
+        break;
+
+    case AST_UNARY_EXPRESSION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "operator: %s\n",
+                ast_operator_name(node->data.unary_expression.operator));
+        ast_print_child(output, "operand",
+                        node->data.unary_expression.operand,
+                        indentation + 1);
+        break;
+
+    case AST_BINARY_EXPRESSION:
+        ast_print_indentation(output, indentation + 1);
+        fprintf(output, "operator: %s\n",
+                ast_operator_name(node->data.binary_expression.operator));
+        ast_print_child(output, "left", node->data.binary_expression.left,
+                        indentation + 1);
+        ast_print_child(output, "right", node->data.binary_expression.right,
+                        indentation + 1);
+        break;
+
+    default:
+        break;
+    }
+}
+
+void ast_print(FILE *output, const AstNode *node)
+{
+    assert(output != NULL);
+    assert(node != NULL);
+
+    ast_print_node(output, node, 0);
+}
 
 /* Liberación recursiva de los recursos internos y del nodo exterior. */
 void ast_free(AstNode *node)

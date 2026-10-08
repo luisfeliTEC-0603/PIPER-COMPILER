@@ -192,7 +192,7 @@ SourceLocation ast_node_location(const AstNode *node);
 const char *piper_type_name(PiperType type);
 const char *ast_operator_name(AstOperator operator);
 
-/* Imprime el árbol completo con indentación legible. */
+/* output y node deben ser distintos de NULL. */
 void ast_print(FILE *output, const AstNode *node);
 
 /* Libera recursivamente node y todo lo que sea propiedad del nodo. */
