@@ -165,9 +165,29 @@ void yyerror(AstNode **result, const char *message);
 %destructor { ast_free($$); } <node>
 %destructor { ast_node_list_free($$); } <node_list>
 
+/* ------------------------------------------------------------
+ * No terminales
+ * ------------------------------------------------------------ */
+
+/* Basicos: declaraciones, asignaciones y expresiones */
+
 %type <node> program statement declaration assignment block expression
 %type <node_list> statement_list
 %type <type> type
+
+/* Flujo: estructuras de control y rutinas */
+
+%type <node> routine_declaration
+%type <node> when_statement
+%type <node> alwhen_statement
+%type <node> break_statement
+%type <node> output_statement
+%type <node> call_expression
+%type <node> parameter
+%type <node> fallback_opt
+
+%type <node_list> parameter_list
+%type <node_list> argument_list
 
 /* Cualquier conflicto nuevo debe fallar la generación y ser investigado. */
 %expect 0
@@ -229,7 +249,12 @@ statement_list:
 
 /* Las instrucciones simples requieren punto; un bloque se cierra con }. */
 statement:
-    declaration TOK_DOT
+    routine_declaration
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | declaration TOK_DOT
     {
         $$ = $1;
         $1 = NULL;
@@ -239,10 +264,109 @@ statement:
         $$ = $1;
         $1 = NULL;
     }
+  | expression TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | when_statement
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | alwhen_statement
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | output_statement TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | break_statement TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
   | block
     {
         $$ = $1;
         $1 = NULL;
+    }
+;
+
+/* ------------------------------------------------------------
+ * Routine
+ * ------------------------------------------------------------ */
+
+routine_declaration:
+    TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET parameter_list TOK_RBRACKET block
+    {
+        $$ = ast_new_routine_declaration($2, $3, $5, $7, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        $7 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+parameter_list:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | parameter
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | parameter_list TOK_COMMA parameter
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
+    }
+;
+
+parameter:
+    type TOK_IDENTIFIER
+    {
+        AstNodeList *dimensions = ast_node_list_create();
+
+        if (dimensions == NULL) {
+            $2 = NULL;
+            YYNOMEM;
+        }
+
+        $$ = ast_new_parameter($1, $2, dimensions, AST_LOCATION(@$));
+        $2 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
     }
 ;
 
@@ -289,6 +413,77 @@ assignment:
         $$ = ast_new_assignment(target, $3, AST_LOCATION(@$));
         $3 = NULL;
 
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* ------------------------------------------------------------
+ * When / Fallback
+ * ------------------------------------------------------------ */
+
+when_statement:
+    TOK_WHEN TOK_LBRACKET expression TOK_RBRACKET block fallback_opt
+    {
+        $$ = ast_new_when($3, $5, $6, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        $6 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+fallback_opt:
+    %empty
+    {
+        $$ = NULL;
+    }
+  | TOK_FALLBACK block
+    {
+        $$ = $2;
+        $2 = NULL;
+    }
+;
+
+/* ------------------------------------------------------------
+ * Alwhen / Break
+ * ------------------------------------------------------------ */
+
+alwhen_statement:
+    TOK_ALWHEN TOK_LBRACKET expression TOK_RBRACKET block
+    {
+        $$ = ast_new_alwhen($3, $5, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+break_statement:
+    TOK_BREAK
+    {
+        $$ = ast_new_break(AST_LOCATION(@$));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+
+/* ------------------------------------------------------------
+ * Output
+ * ------------------------------------------------------------ */
+
+output_statement:
+    TOK_OUTPUT expression
+    {
+        $$ = ast_new_output($2, AST_LOCATION(@$));
+        $2 = NULL;
         if ($$ == NULL) {
             YYNOMEM;
         }
@@ -521,6 +716,65 @@ expression:
         if ($$ == NULL) {
             YYNOMEM;
         }
+    }
+  | call_expression
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+;
+
+/* ------------------------------------------------------------
+ * Call expression
+ * ------------------------------------------------------------ */
+
+call_expression:
+    TOK_IDENTIFIER TOK_LBRACKET argument_list TOK_RBRACKET
+    {
+        $$ = ast_new_call($1, $3, AST_LOCATION(@$));
+        $1 = NULL;
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+argument_list:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | expression
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | argument_list TOK_COMMA expression
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
     }
 ;
 
