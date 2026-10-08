@@ -11,7 +11,7 @@
 
 %{
 
-/* ast.h define AstNode, PiperType, AstOperator, AstNodeList.
+/* ast.h define AstNode, PiperType, AstOperator, AstNodeList
  * Debe ir ANTES de parser.h porque YYSTYPE (definido en parser.h)
  * usa esos tipos en su unión */
 #include "ast.h"
@@ -37,7 +37,15 @@ static void lexer_update_location(const char *text, int length);
 static char *lexer_strdup(const char *text);
 static char *lexer_strdup_unquoted(const char *text, int length);
 
+/* Macro para cada regla */
 #define YY_USER_ACTION lexer_update_location(yytext, yyleng);
+
+/* Inicializacion de bases de las columna */   
+#define YY_USER_INIT \
+    do { \
+        yylloc.first_line = yylloc.last_line = 1; \
+        yylloc.first_column = yylloc.last_column = 1; \
+    } while (0)
 %}
 
 /* Expresiones regulares para patrones basicos */
@@ -48,9 +56,9 @@ WHITESPACE  [ \t\r\n]+
 
 %%
 
-/* ============================================================
- * Comentarios
- * ============================================================ */
+    /* ============================================================
+     * Comentarios
+     * ============================================================ */
 
 "~~"[^\n]*              { /* comentario de una línea: ignorar */ }
 
@@ -66,18 +74,20 @@ WHITESPACE  [ \t\r\n]+
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): comentario de bloque sin cerrar\n",
             yylloc.first_line, yylloc.first_column);
+    yylval.text = NULL; 
+    BEGIN(INITIAL);
     return TOK_INVALID;
 }
 
-/* ============================================================
- * Espacios en blanco
- * ============================================================ */
+    /* ============================================================
+     * Espacios en blanco
+     * ============================================================ */
 
 {WHITESPACE}            { /* ignorar */ }
 
-/* ============================================================
- * Palabras reservadas y tipos
- * ============================================================ */
+    /* ============================================================
+     * Palabras reservadas y tipos
+     * ============================================================ */
 
 "create"                { return TOK_CREATE; }
 "routine"               { return TOK_ROUTINE; }
@@ -102,9 +112,9 @@ WHITESPACE  [ \t\r\n]+
 "B32"                   { return TOK_B32; }
 "uB32"                  { return TOK_UB32; }
 
-/* ============================================================
- * Operadores 
- * ============================================================ */
+    /* ============================================================
+     * Operadores 
+     * ============================================================ */
 
 "++"                    { return TOK_INCREMENT; }
 "--"                    { return TOK_DECREMENT; }
@@ -128,9 +138,9 @@ WHITESPACE  [ \t\r\n]+
 "or"                    { return TOK_OR; }
 "xor"                   { return TOK_XOR; }
 
-/* ============================================================
- * Delimitadores
- * ============================================================ */
+    /* ============================================================
+     * Delimitadores
+     * ============================================================ */
 
 "{"                     { return TOK_LBRACE; }
 "}"                     { return TOK_RBRACE; }
@@ -141,40 +151,59 @@ WHITESPACE  [ \t\r\n]+
 "&"                     { return TOK_AMPERSAND; }
 "|"                     { return TOK_PIPE; }
 
-/* ============================================================
- * Valores: rutas, enteros e identificadores
- * ============================================================ */
+    /* ============================================================
+     * Valores: rutas, enteros e identificadores
+     * ============================================================ */
 
+    /* FILE_PATH: ruta .rwt entre comillas
+     * yylval.text recibe la copia sin comillas
+     * lexer_strdup_unquoted copia a memoria dinámica porque yytext
+     * se sobrescribe en el siguiente token */
 {FILE_PATH} {
     yylval.text = lexer_strdup_unquoted(yytext, yyleng);
     return TOK_FILE_PATH;
 }
 
+    /* Entero: uno o más dígitos
+     * Se convierte con strtoull y se detecta overflow con errno
+     * yylval.integer_value recibe el valor */
 {DIGIT}+ {
+    /* Resetear errno antes de strtoull para detectar ERANGE */
     errno = 0;
+    /* endptr apuntará al primer carácter no convertido */
     char *endptr = NULL;
+    /* Convertir yytext a unsigned long long en base 10 */
     unsigned long long value = strtoull(yytext, &endptr, 10);
 
+    /* Si hubo overflow, no se convirtió nada, o sobraron caracteres,
+     * reportar error y devolver TOK_INVALID */
     if (errno == ERANGE || endptr == yytext || *endptr != '\0') {
         fprintf(stderr,
                 "%d:%d: [!ERROR] (lexer.l): entero fuera de rango '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
+
+        yylval.text = NULL; 
         return TOK_INVALID;
     }
 
+    /* Asignar el valor al campo correspondiente de YYSTYPE */
     yylval.integer_value = value;
+    /* Devolver el token de constante entera */
     return TOK_CONST_INT;
 }
 
+    /* Identificador: nombre de variable, función o etiqueta
+     * yylval.text recibe copia a memoria dinámica */
 {IDENTIFIER} {
     yylval.text = lexer_strdup(yytext);
     return TOK_IDENTIFIER;
 }
 
-/* ============================================================
- * Otros
- * ============================================================ */
+    /* ============================================================
+     * Otros
+     * ============================================================ */
 
+    /* Cualquier otro carácter no reconocido: error léxico */ 
 . {
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): carácter no reconocido '%s'\n",
@@ -191,6 +220,7 @@ WHITESPACE  [ \t\r\n]+
  * Definicion de funciones auxiliares
  * ============================================================ */
 
+/* Actualiza yylloc (línea/columna) con el texto del token */
 static void lexer_update_location(const char *text, int length)
 {
     int i;
@@ -208,26 +238,39 @@ static void lexer_update_location(const char *text, int length)
     }
 }
 
+/* Copia un texto a memoria dinámica */
 static char *lexer_strdup(const char *text)
 {
+    /* Longitud del texto (sin contar '\0') */
     size_t len = strlen(text);
+
+    /* Reservar len + 1 bytes (texto + '\0') */
     char *copy = (char *)malloc(len + 1);
     if (copy == NULL) {
         fprintf(stderr, "[!ERROR] (lexer.l): sin memoria para copiar lexema\n");
         exit(EXIT_FAILURE);
     }
+
+    /* Copiar el texto incluyendo el '\0' */
     memcpy(copy, text, len + 1);
     return copy;
 }
 
+/* Copia un FILE_PATH quitando las comillas dobles */
 static char *lexer_strdup_unquoted(const char *text, int length)
 {
+    /* Reservar length - 1 bytes (sin una comilla, con '\0') */
     char *copy = (char *)malloc((size_t)length - 1);
     if (copy == NULL) {
         fprintf(stderr, "[!ERROR] (lexer.l): sin memoria para copiar lexema\n");
         exit(EXIT_FAILURE);
     }
+
+    /* Copiar desde text + 1 (después de la comilla inicial)
+     * length - 2 caracteres (sin comilla inicial ni final) */
     memcpy(copy, text + 1, (size_t)length - 2);
+
+    /* Agregar el terminador '\0'. */
     copy[length - 2] = '\0';
     return copy;
 }
