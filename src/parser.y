@@ -11,7 +11,10 @@
  */
 
 %{
+#include "ast.h"
+
 #include <stdio.h>
+#include <stdlib.h>
 
 /*
  * yylex() será generado por Flex. El parser lo llama cada vez que necesita
@@ -46,6 +49,12 @@ void yyerror(const char *message);
      * como TOK_MINUS separado del número.
      */
     unsigned long long integer_value;
+
+    /* Valores que producirán las acciones sintácticas. */
+    PiperType type;
+    AstOperator operator;
+    AstNode *node;
+    AstNodeList *node_list;
 }
 
 /*
@@ -110,6 +119,9 @@ void yyerror(const char *message);
 %token <text> TOK_IDENTIFIER
 %token <text> TOK_FILE_PATH
 
+/* Token interno para que el lexer reporte una unidad no reconocida. */
+%token <text> TOK_INVALID
+
 /* Palabras reservadas que representan los tipos definidos por Piper. */
 %token TOK_BOOL
 %token TOK_B8
@@ -118,6 +130,15 @@ void yyerror(const char *message);
 %token TOK_UB16
 %token TOK_B32
 %token TOK_UB32
+
+/*
+ * En Bison 2.3 los destructores se asocian a símbolos concretos. Si uno de
+ * estos tokens se descarta durante un error, el parser libera su copia.
+ */
+%destructor { free($$); } TOK_IDENTIFIER TOK_FILE_PATH TOK_INVALID
+
+/* Cualquier conflicto nuevo debe fallar la generación y ser investigado. */
+%expect 0
 
 /* La gramática comenzará su análisis en el no terminal llamado input. */
 %start input
@@ -128,6 +149,34 @@ void yyerror(const char *message);
 /*
  * Regla temporal para que Bison pueda generar parser.c y parser.h antes de
  * implementar la gramática real. Por ahora solo acepta una entrada vacía.
+ *
+ * Blueprint de no terminales para completar por incrementos:
+ *
+ * input
+ *   -> program y fin de archivo implícito
+ *
+ * program
+ *   -> lista ordenada de elementos de nivel superior
+ *
+ * top_level
+ *   -> import_declaration | routine_declaration | declaration (si se aprueba)
+ *
+ * block
+ *   -> TOK_LBRACE statement_list TOK_RBRACE
+ *
+ * statement
+ *   -> declaration | assignment | when_statement | alwhen_statement
+ *    | loop_statement | break_statement | output_statement | block
+ *
+ * expression
+ *   -> literales | identificadores | llamadas | índices
+ *    | expresiones unarias | expresiones binarias
+ *
+ * Listas que deben admitir cero, uno o varios elementos según el contexto:
+ * parámetros, argumentos, instrucciones, dimensiones e inicializadores.
+ *
+ * Cada incremento debe declarar sus %type, construir AST en sus acciones y
+ * añadir destructores para nodos/listas que puedan descartarse en errores.
  */
 input:
     /* vacío */
@@ -138,9 +187,10 @@ input:
 
 /*
  * Implementación mínima del manejador de errores requerido por Bison.
- * Después incorporaremos la ubicación guardada en yylloc.
+ * El lexer será responsable de mantener yylloc actualizado.
  */
 void yyerror(const char *message)
 {
-    fprintf(stderr, "Error sintáctico: %s\n", message);
+    fprintf(stderr, "%d:%d: error sintáctico: %s\n",
+            yylloc.first_line, yylloc.first_column, message);
 }
