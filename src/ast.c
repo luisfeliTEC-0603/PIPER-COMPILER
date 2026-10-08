@@ -1,5 +1,8 @@
 #include "ast.h"
 
+#include <stdint.h>
+#include <stdlib.h>
+
 /*
  * Implementación del AST de Piper.
  *
@@ -8,36 +11,523 @@
  * que cada constructor respete el contrato de propiedad documentado.
  */
 
-/* TODO(ast-core): definir struct AstNodeList. */
+/* Arreglo dinámico que posee todos los nodos agregados exitosamente. */
+struct AstNodeList {
+    AstNode **items;
+    size_t count;
+    size_t capacity;
+};
 
 /*
- * TODO(ast-core): definir struct AstNode con:
- *
- * - AstKind kind;
- * - SourceLocation location;
- * - una union con los datos específicos de cada variante.
- *
- * No es necesario guardar palabras reservadas ni puntuación como nodos.
+ * kind identifica el miembro activo de data. Los campos kind y location son
+ * comunes a todas las variantes.
  */
+struct AstNode {
+    AstKind kind;
+    SourceLocation location;
 
-/* TODO(ast-core): implementar source_location_make(). */
+    union {
+        struct {
+            AstNodeList *elements;
+        } program;
 
-/* TODO(ast-core): implementar creación, append y liberación de listas. */
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } variable_declaration;
 
-/* TODO(ast-expressions): implementar literales, nombres y operaciones. */
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } parameter;
 
-/* TODO(ast-statements): implementar declaraciones, asignaciones y bloques. */
+        struct {
+            PiperType return_type;
+            char *name;
+            AstNodeList *parameters;
+            AstNode *body;
+        } routine_declaration;
+
+        struct {
+            AstNodeList *statements;
+        } block;
+
+        struct {
+            AstNode *value;
+        } output_statement;
+
+        struct {
+            char *routine_name;
+            AstNodeList *arguments;
+        } call_expression;
+
+        struct {
+            unsigned long long value;
+        } integer_literal;
+
+        struct {
+            bool value;
+        } boolean_literal;
+
+        struct {
+            char *name;
+        } identifier;
+
+        struct {
+            AstOperator operator;
+            AstNode *operand;
+        } unary_expression;
+
+        struct {
+            AstOperator operator;
+            AstNode *left;
+            AstNode *right;
+        } binary_expression;
+
+        struct {
+            AstNode *target;
+            AstNode *value;
+        } assignment;
+    } data;
+};
+
+/* Reserva un nodo e inicializa únicamente sus campos comunes. */
+static AstNode *ast_node_create(AstKind kind, SourceLocation location)
+{
+    AstNode *node = malloc(sizeof(*node));
+    if (node == NULL) {
+        return NULL;
+    }
+
+    node->kind = kind;
+    node->location = location;
+
+    return node;
+}
+
+/* Construye una ubicación sin interpretar ni validar sus coordenadas. */
+SourceLocation source_location_make(int first_line, int first_column,
+                                    int last_line, int last_column)
+{
+    SourceLocation location = {
+        .first_line = first_line,
+        .first_column = first_column,
+        .last_line = last_line,
+        .last_column = last_column
+    };
+
+    return location;
+}
+
+AstNodeList *ast_node_list_create(void)
+{
+    AstNodeList *list = malloc(sizeof(*list));
+    if (list == NULL) {
+        return NULL;
+    }
+
+    list->items = NULL;
+    list->count = 0;
+    list->capacity = 0;
+
+    return list;
+}
+
+bool ast_node_list_append(AstNodeList *list, AstNode *node)
+{
+    if (list == NULL || node == NULL) {
+        return false;
+    }
+
+    if (list->count == list->capacity) {
+        size_t new_capacity;
+
+        if (list->capacity == 0) {
+            new_capacity = 4;
+        } else {
+            if (list->capacity > SIZE_MAX / 2) {
+                return false;
+            }
+            new_capacity = list->capacity * 2;
+        }
+
+        if (new_capacity > SIZE_MAX / sizeof(*list->items)) {
+            return false;
+        }
+
+        AstNode **new_items =
+            realloc(list->items, new_capacity * sizeof(*new_items));
+        if (new_items == NULL) {
+            return false;
+        }
+
+        list->items = new_items;
+        list->capacity = new_capacity;
+    }
+
+    list->items[list->count] = node;
+    list->count++;
+
+    return true;
+}
+
+void ast_node_list_free(AstNodeList *list)
+{
+    if (list == NULL) {
+        return;
+    }
+
+    for (size_t index = 0; index < list->count; index++) {
+        ast_free(list->items[index]);
+    }
+
+    free(list->items);
+    free(list);
+}
+
+/* Constructores de la estructura general, declaraciones y rutinas. */
+AstNode *ast_new_program(AstNodeList *elements, SourceLocation location)
+{
+    if (elements == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_PROGRAM, location);
+    if (node == NULL) {
+        ast_node_list_free(elements);
+        return NULL;
+    }
+
+    node->data.program.elements = elements;
+
+    return node;
+}
+
+AstNode *ast_new_variable_declaration(PiperType type, char *name,
+                                      AstNodeList *dimensions,
+                                      SourceLocation location)
+{
+    if (name == NULL || dimensions == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_VARIABLE_DECLARATION, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    node->data.variable_declaration.type = type;
+    node->data.variable_declaration.name = name;
+    node->data.variable_declaration.dimensions = dimensions;
+
+    return node;
+}
+
+AstNode *ast_new_parameter(PiperType type, char *name,
+                           AstNodeList *dimensions,
+                           SourceLocation location)
+{
+    if (name == NULL || dimensions == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_PARAMETER, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(dimensions);
+        return NULL;
+    }
+
+    node->data.parameter.type = type;
+    node->data.parameter.name = name;
+    node->data.parameter.dimensions = dimensions;
+
+    return node;
+}
+
+AstNode *ast_new_routine_declaration(PiperType return_type, char *name,
+                                     AstNodeList *parameters, AstNode *body,
+                                     SourceLocation location)
+{
+    if (name == NULL || parameters == NULL || body == NULL) {
+        free(name);
+        ast_node_list_free(parameters);
+        ast_free(body);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_ROUTINE_DECLARATION, location);
+    if (node == NULL) {
+        free(name);
+        ast_node_list_free(parameters);
+        ast_free(body);
+        return NULL;
+    }
+
+    node->data.routine_declaration.return_type = return_type;
+    node->data.routine_declaration.name = name;
+    node->data.routine_declaration.parameters = parameters;
+    node->data.routine_declaration.body = body;
+
+    return node;
+}
+
+AstNode *ast_new_block(AstNodeList *statements, SourceLocation location)
+{
+    if (statements == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_BLOCK, location);
+    if (node == NULL) {
+        ast_node_list_free(statements);
+        return NULL;
+    }
+
+    node->data.block.statements = statements;
+
+    return node;
+}
+
+AstNode *ast_new_output(AstNode *value, SourceLocation location)
+{
+    if (value == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_OUTPUT_STATEMENT, location);
+    if (node == NULL) {
+        ast_free(value);
+        return NULL;
+    }
+
+    node->data.output_statement.value = value;
+
+    return node;
+}
+
+AstNode *ast_new_call(char *routine_name, AstNodeList *arguments,
+                      SourceLocation location)
+{
+    if (routine_name == NULL || arguments == NULL) {
+        free(routine_name);
+        ast_node_list_free(arguments);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_CALL_EXPRESSION, location);
+    if (node == NULL) {
+        free(routine_name);
+        ast_node_list_free(arguments);
+        return NULL;
+    }
+
+    node->data.call_expression.routine_name = routine_name;
+    node->data.call_expression.arguments = arguments;
+
+    return node;
+}
+
+/*
+ * Constructores de expresiones. Cada constructor adquiere incondicionalmente
+ * sus argumentos que sean punteros.
+ */
+AstNode *ast_new_integer_literal(unsigned long long value,
+                                 SourceLocation location)
+{
+    AstNode *node = ast_node_create(AST_INTEGER_LITERAL, location);
+    if (node == NULL) {
+        return NULL;
+    }
+
+    node->data.integer_literal.value = value;
+
+    return node;
+}
+
+AstNode *ast_new_boolean_literal(bool value, SourceLocation location)
+{
+    AstNode *node = ast_node_create(AST_BOOLEAN_LITERAL, location);
+    if (node == NULL) {
+        return NULL;
+    }
+
+    node->data.boolean_literal.value = value;
+
+    return node;
+}
+
+AstNode *ast_new_none_literal(SourceLocation location)
+{
+    /* El kind representa por completo al literal none. */
+    return ast_node_create(AST_NONE_LITERAL, location);
+}
+
+AstNode *ast_new_identifier(char *name, SourceLocation location)
+{
+    if (name == NULL) {
+        return NULL;
+    }
+
+    AstNode *node =
+        ast_node_create(AST_IDENTIFIER_EXPRESSION, location);
+
+    if (node == NULL) {
+        free(name);
+        return NULL;
+    }
+
+    node->data.identifier.name = name;
+
+    return node;
+}
+
+AstNode *ast_new_unary_expression(AstOperator operator, AstNode *operand,
+                                  SourceLocation location)
+{
+    if (operand == NULL) {
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_UNARY_EXPRESSION, location);
+    if (node == NULL) {
+        ast_free(operand);
+        return NULL;
+    }
+
+    node->data.unary_expression.operator = operator;
+    node->data.unary_expression.operand = operand;
+
+    return node;
+}
+
+AstNode *ast_new_binary_expression(AstOperator operator, AstNode *left,
+                                   AstNode *right, SourceLocation location)
+{
+    if (left == NULL || right == NULL) {
+        ast_free(left);
+        ast_free(right);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_BINARY_EXPRESSION, location);
+    if (node == NULL) {
+        ast_free(left);
+        ast_free(right);
+        return NULL;
+    }
+
+    node->data.binary_expression.operator = operator;
+    node->data.binary_expression.left = left;
+    node->data.binary_expression.right = right;
+
+    return node;
+}
+
+/* Constructores de instrucciones. */
+AstNode *ast_new_assignment(AstNode *target, AstNode *value,
+                            SourceLocation location)
+{
+    if (target == NULL || value == NULL) {
+        ast_free(target);
+        ast_free(value);
+        return NULL;
+    }
+
+    AstNode *node = ast_node_create(AST_ASSIGNMENT, location);
+    if (node == NULL) {
+        ast_free(target);
+        ast_free(value);
+        return NULL;
+    }
+
+    node->data.assignment.target = target;
+    node->data.assignment.value = value;
+
+    return node;
+}
 
 /* TODO(ast-control): implementar when, alwhen, loop y break. */
-
-/* TODO(ast-routines): implementar parámetros, rutinas, llamadas y output. */
 
 /* TODO(ast-composites): implementar arreglos, índices e importaciones. */
 
 /* TODO(ast-print): implementar impresión indentada para todas las variantes. */
 
-/*
- * TODO(ast-memory): implementar ast_free() de forma recursiva y revisar el
- * camino de error de cada constructor con sanitizadores cuando exista la
- * implementación.
- */
+/* Libera primero los recursos propios de la variante y luego el nodo. */
+void ast_free(AstNode *node)
+{
+    if (node == NULL) {
+        return;
+    }
+
+    switch (node->kind) {
+    case AST_PROGRAM:
+        ast_node_list_free(node->data.program.elements);
+        break;
+
+    case AST_VARIABLE_DECLARATION:
+        free(node->data.variable_declaration.name);
+        ast_node_list_free(node->data.variable_declaration.dimensions);
+        break;
+
+    case AST_PARAMETER:
+        free(node->data.parameter.name);
+        ast_node_list_free(node->data.parameter.dimensions);
+        break;
+
+    case AST_ROUTINE_DECLARATION:
+        free(node->data.routine_declaration.name);
+        ast_node_list_free(node->data.routine_declaration.parameters);
+        ast_free(node->data.routine_declaration.body);
+        break;
+
+    case AST_BLOCK:
+        ast_node_list_free(node->data.block.statements);
+        break;
+
+    case AST_OUTPUT_STATEMENT:
+        ast_free(node->data.output_statement.value);
+        break;
+
+    case AST_CALL_EXPRESSION:
+        free(node->data.call_expression.routine_name);
+        ast_node_list_free(node->data.call_expression.arguments);
+        break;
+
+    case AST_IDENTIFIER_EXPRESSION:
+        free(node->data.identifier.name);
+        break;
+
+    case AST_ASSIGNMENT:
+        ast_free(node->data.assignment.target);
+        ast_free(node->data.assignment.value);
+        break;
+
+    case AST_UNARY_EXPRESSION:
+        ast_free(node->data.unary_expression.operand);
+        break;
+
+    case AST_BINARY_EXPRESSION:
+        ast_free(node->data.binary_expression.left);
+        ast_free(node->data.binary_expression.right);
+        break;
+
+    case AST_INTEGER_LITERAL:
+    case AST_BOOLEAN_LITERAL:
+    case AST_NONE_LITERAL:
+        break;
+
+    default:
+        break;
+    }
+
+    free(node);
+}

@@ -1,0 +1,6 @@
+-std=c11
+-Iinclude
+-Ibuild
+-Wall
+-Wextra
+-Wpedantic
