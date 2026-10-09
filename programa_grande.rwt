@@ -1,0 +1,40 @@
+~~ Declaraciones globales
+create B32 primero.
+create B32 @  segundo.
+create B32 resultado.
+
+routine B32 mayor[B32 izquierda, B32 derecha] {
+    when[izquierda > derecha] {
+        output izquierda.
+    } fallback {
+        output derecha.
+    }
+}
+
+routine B32 calcular[B32 base, B32 limite] {
+    create B32 acumulado.
+    create B32 contador.
+
+    acumulado store base * 2 + 3 ^ 2.
+    contador store 0.
+
+    alwhen[contador < limite] {
+        acumulado store acumulado + contador.
+        contador store contador + 1.
+
+        when[contador = limite] {
+            break.
+        }
+    }
+
+    when[acumulado >= 20 and true] {
+        output acumulado.
+    } fallback {
+        output 20.
+    }
+}
+
+primero store 4.
+segundo store 7.
+resultado store calcular[mayor[primero, segundo], 5].
+mayor[resultado, 100].
