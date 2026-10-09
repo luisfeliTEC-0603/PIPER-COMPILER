@@ -1,6 +1,13 @@
 CC = gcc
 FLEX ?= flex
-BISON ?= bison
+
+# Si el bison de Homebrew existe (macOS Apple Silicon), usarlo por defecto para evitar
+# usar el bison desactualizado del sistema. En Linux/Windows usará 'bison' del PATH.
+ifeq ($(wildcard /opt/homebrew/opt/bison/bin/bison),)
+    BISON ?= bison
+else
+    BISON ?= /opt/homebrew/opt/bison/bin/bison
+endif
 
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
 OBJ = build/parser.o build/lexer.o build/ast.o build/main.o

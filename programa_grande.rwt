@@ -1,6 +1,6 @@
 ~~ Declaraciones globales
 create B32 primero.
-create B32 @  segundo.
+create B32 segundo.
 create B32 resultado.
 
 routine B32 mayor[B32 izquierda, B32 derecha] {
