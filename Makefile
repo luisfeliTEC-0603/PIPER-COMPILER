@@ -1,14 +1,15 @@
-CC ?= cc
+CC = gcc
 FLEX ?= flex
 BISON ?= bison
 
-CPPFLAGS = -Iinclude -Ibuild
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic
+CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
+OBJ = build/parser.o build/lexer.o build/ast.o build/main.o
+TARGET = bin/pipoc
 
 .DELETE_ON_ERROR:
 .PHONY: all generate conflicts clean
 
-all: bin/pipoc
+all: $(TARGET)
 
 generate: build/parser.c build/parser.h build/lexer.c
 
@@ -25,21 +26,21 @@ build/lexer.c: src/lexer.l build/parser.h include/ast.h
 	$(FLEX) -o build/lexer.c src/lexer.l
 
 build/parser.o: build/parser.c build/parser.h include/ast.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c build/parser.c -o $@
+	$(CC) $(CFLAGS) -c build/parser.c -o $@
 
 # Flex 2.6.4 genera una comparación signed/unsigned fuera del código del equipo.
 build/lexer.o: build/lexer.c build/parser.h include/ast.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-sign-compare -c build/lexer.c -o $@
+	$(CC) $(CFLAGS) -Wno-sign-compare -c build/lexer.c -o $@
 
 build/ast.o: src/ast.c include/ast.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/ast.c -o $@
+	$(CC) $(CFLAGS) -c src/ast.c -o $@
 
 build/main.o: src/main.c build/parser.h include/ast.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/main.c -o $@
+	$(CC) $(CFLAGS) -c src/main.c -o $@
 
-bin/pipoc: build/parser.o build/lexer.o build/ast.o build/main.o
+$(TARGET): $(OBJ)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(OBJ) -o $@
 
 # No silencia conflictos: inspecciona el informe que Bison genera con -v.
 conflicts: build/parser.c
