@@ -1,7 +1,8 @@
-# Implementación de los issues #3 y #4
+# Implementación del parser y CLI de Piper
 
 Este documento describe el código agregado para implementar la gramática
-básica de Piper y conectar el recorrido archivo → lexer → parser → AST.
+básica de Piper, las extensiones de `loop`, arreglos, matrices e importaciones,
+y el recorrido archivo → lexer → parser → AST de los issues #3, #4 y #6.
 
 Los cambios están concentrados en:
 
@@ -124,8 +125,11 @@ terminales:
 Los no terminales se asociaron con el miembro correspondiente:
 
 ```bison
-%type <node> program statement declaration assignment block expression
-%type <node_list> statement_list
+%type <node> program statement declaration assignment assignment_target
+%type <node> block expression import_declaration loop_statement
+%type <node> array_literal index_expression index_item dimension
+%type <node_list> statement_list dimensions_opt dimension_list index_list
+%type <node_list> parameter_list expression_list
 %type <type> type
 ```
 
@@ -257,18 +261,28 @@ acción. La acción las libera antes de terminar con `YYNOMEM`.
 
 ## 1.8. Instrucciones y punto final
 
-Se implementaron tres formas de instrucción:
+El no terminal `statement` reúne las construcciones que pueden aparecer en
+el programa o dentro de un bloque:
 
 ```bison
 statement:
-    declaration TOK_DOT
+    routine_declaration
+  | declaration TOK_DOT
+  | import_declaration TOK_DOT
   | assignment TOK_DOT
+  | expression TOK_DOT
+  | when_statement
+  | alwhen_statement
+  | loop_statement
+  | output_statement TOK_DOT
+  | break_statement TOK_DOT
   | block
 ;
 ```
 
-Las declaraciones y asignaciones requieren punto. El bloque no agrega un
-punto después de `}` porque su delimitador de cierre ya marca el final.
+Las instrucciones simples requieren punto. Las rutinas y estructuras que
+terminan en un bloque no agregan un punto después de `}` porque el cierre del
+bloque ya marca su final.
 
 Ejemplos:
 
@@ -282,11 +296,11 @@ edad store 20.
 
 ## 1.9. Tipos y declaraciones
 
-La declaración reconocida es:
+La declaración general es:
 
 ```bison
 declaration:
-    TOK_CREATE type TOK_IDENTIFIER
+    TOK_CREATE type dimensions_opt TOK_IDENTIFIER
 ;
 ```
 
@@ -302,33 +316,55 @@ TOK_B32  { $$ = PIPER_TYPE_B32; }
 TOK_UB32 { $$ = PIPER_TYPE_UB32; }
 ```
 
-El constructor de declaración requiere una lista de dimensiones. Como los
-arreglos están fuera del alcance actual, se crea una lista vacía:
+`dimensions_opt` siempre produce una lista. Para una variable escalar produce
+una lista vacía; para un arreglo o matriz contiene sus tamaños:
+
+```piper
+create B32 edad.
+create B32|10| edades.
+create B32|3 & 4| tablero.
+```
+
+En la declaración, los `|` delimitan la lista de dimensiones y `&` separa
+cada dimensión. Actualmente cada dimensión debe escribirse como literal
+entero. Comprobar que sea mayor que cero corresponde al análisis semántico.
+
+La acción entrega el nombre y la lista a:
 
 ```c
-AstNodeList *dimensions = ast_node_list_create();
-
 $$ = ast_new_variable_declaration(
     $2,
+    $4,
     $3,
-    dimensions,
     AST_LOCATION(@$));
+```
+
+Los parámetros de rutina reutilizan `dimensions_opt`, por lo que también se
+pueden declarar parámetros de arreglo:
+
+```piper
+routine B32 primero[B32|10| valores] {
+    output valores|0|.
+}
 ```
 
 ## 1.10. Asignaciones
 
-La asignación básica es:
+La asignación separa el destino del valor:
 
 ```bison
 assignment:
-    TOK_IDENTIFIER TOK_STORE expression
+    assignment_target TOK_STORE expression
 ;
 ```
 
-El identificador se convierte primero en el nodo destino:
+Un destino puede ser un identificador o un acceso indexado:
 
-```c
-AstNode *target = ast_new_identifier($1, AST_LOCATION(@1));
+```bison
+assignment_target:
+    TOK_IDENTIFIER
+  | index_expression
+;
 ```
 
 Después se construye la asignación:
@@ -337,19 +373,18 @@ Después se construye la asignación:
 $$ = ast_new_assignment(target, $3, AST_LOCATION(@$));
 ```
 
-El destino se restringe a un identificador. Esto permite:
+Esto permite ambas formas:
 
 ```piper
 edad store 10.
+valores|i| store 10.
 ```
 
-y rechaza:
+pero continúa rechazando una expresión arbitraria como destino:
 
 ```piper
 2 store 10.
 ```
-
-Los destinos con índices se agregarán junto con el soporte de arreglos.
 
 ## 1.11. Bloques
 
@@ -369,9 +404,9 @@ ast_new_block($2, AST_LOCATION(@$));
 
 Como `statement_list` también acepta vacío, `{}` es un bloque válido.
 
-## 1.12. Expresiones primarias
+## 1.12. Expresiones primarias escalares
 
-Se implementaron:
+Las formas escalares básicas son:
 
 ```bison
 TOK_CONST_INT
@@ -387,6 +422,9 @@ ast_new_integer_literal(...)
 ast_new_boolean_literal(...)
 ast_new_identifier(...)
 ```
+
+`expression` también acepta llamadas, literales de arreglo y accesos
+indexados, descritos en las secciones posteriores.
 
 ## 1.13. Expresiones unarias
 
@@ -433,7 +471,163 @@ $$ = ast_new_binary_expression(
     AST_LOCATION(@$));
 ```
 
-## 1.15. Errores sintácticos
+## 1.15. Literales y listas de expresiones
+
+Un literal de arreglo se escribe entre corchetes:
+
+```piper
+[1, 2, 3]
+[]
+```
+
+Su producción es:
+
+```bison
+array_literal:
+    TOK_LBRACKET expression_list TOK_RBRACKET
+;
+```
+
+`expression_list` es una lista genérica de cero o más expresiones separadas
+por comas. No obliga a utilizar sintaxis de llamada; son las producciones que
+la rodean las que colocan los delimitadores y determinan su significado:
+
+```bison
+array_literal:
+    TOK_LBRACKET expression_list TOK_RBRACKET
+;
+
+call_expression:
+    TOK_IDENTIFIER TOK_LBRACKET expression_list TOK_RBRACKET
+;
+```
+
+Así, `[1, 2]` crea `AST_ARRAY_LITERAL`, mientras `procesar[1, 2]` crea
+`AST_CALL_EXPRESSION`. La misma lógica de lista se reutiliza para no mantener
+dos producciones idénticas.
+
+Los `|` no delimitan el contenido literal. En la sintaxis elegida tienen dos
+usos relacionados con la forma del arreglo:
+
+```piper
+create B32|10| valores.  ~~ dimensiones de la declaración
+valores|i|               ~~ acceso mediante índice
+valores store [1, 2, 3]. ~~ valor literal asignado
+```
+
+Esta forma también coincide con los inicializadores mostrados en los ejemplos
+del lenguaje. El constructor del literal recibe la lista con:
+
+```c
+ast_new_array_literal($2, AST_LOCATION(@$));
+```
+
+No se agregó una sintaxis especial que combine declaración e inicialización.
+La compatibilidad entre dimensiones, número de elementos y tipos se revisará
+en la fase semántica.
+
+## 1.16. Acceso e indexación
+
+La regla de acceso es:
+
+```bison
+index_expression:
+    TOK_IDENTIFIER TOK_PIPE index_list TOK_PIPE
+;
+```
+
+Los índices se separan con `&`:
+
+```piper
+valores|i|
+matriz|fila & columna|
+```
+
+Cada índice aceptado actualmente es un literal entero o un identificador.
+`ast_new_index_expression()` recibe por separado el nodo base y la lista de
+índices. Por eso las dimensiones y los índices no se confunden en el AST:
+
+- las dimensiones pertenecen a `AST_VARIABLE_DECLARATION` o `AST_PARAMETER`;
+- un acceso produce `AST_INDEX_EXPRESSION`.
+
+Como `index_expression` aparece en `expression` y en `assignment_target`, un
+acceso puede leerse o recibir una asignación:
+
+```piper
+resultado store matriz|fila & columna| + 1.
+matriz|fila & columna| store resultado.
+```
+
+## 1.17. `loop`
+
+La sintaxis definitiva implementada es:
+
+```text
+loop[<control> & <inicio> -> <fin> & <paso>] <bloque>
+```
+
+Ejemplo:
+
+```piper
+loop[i & 0 -> 10 & 1] {
+    valores|i| store valores|i| + 1.
+}
+```
+
+Se usan corchetes porque la tabla de tokens actual no contiene paréntesis y
+porque `when` y `alwhen` ya delimitan sus encabezados de esa manera. La acción
+crea:
+
+```c
+ast_new_loop(control_name, begin, end, step, body, location);
+```
+
+El parser conserva inicio, fin y paso como expresiones. Decidir si el límite
+final es inclusivo o exclusivo corresponde a la definición semántica del
+lenguaje.
+
+## 1.18. Importaciones
+
+La producción implementada es:
+
+```bison
+import_declaration:
+    TOK_BRING TOK_IDENTIFIER TOK_FROM TOK_FILE_PATH
+;
+```
+
+La instrucción requiere el punto que agrega `statement`:
+
+```piper
+bring ordenar from "algoritmos/sort.rwt".
+```
+
+`TOK_FILE_PATH` no aparece en ninguna otra producción. Por eso una ruta solo
+se acepta como parte de una importación y una ruta aislada produce error
+sintáctico. La acción transfiere símbolo y ruta a
+`ast_new_import_declaration()`.
+
+## 1.19. Preparación para la tabla de símbolos
+
+No se agregó una API provisional de tabla de símbolos porque todavía deben
+acordarse su representación, propiedad, ámbitos y tratamiento de errores.
+Cuando exista ese contrato, se puede construir la tabla al mismo tiempo que
+el AST pasando a `yyparse()` un contexto como este:
+
+```c
+typedef struct {
+    AstNode *root;
+    SymbolTable *symbols;
+} ParserContext;
+```
+
+Ese contexto sustituiría el `AstNode **result` de `%parse-param`. Las acciones
+de declaración, parámetro, rutina e importación registrarían símbolos al
+reducirse; la entrada y salida de `block` administrarían ámbitos. Antes de
+integrarlo también debe decidirse cómo revertir o destruir los símbolos
+insertados si el análisis termina con error.
+
+## 1.20. Errores sintácticos
 
 Bison invoca esta función cuando no encuentra una producción válida:
 
@@ -570,8 +764,16 @@ a `PIPOC_EXIT_IO_ERROR`.
 
 ## 3. Cambios en el Makefile
 
-El Makefile ya contenía el flujo principal de generación y compilación. Se
-agregaron dos ajustes para los cambios del frontend.
+El Makefile actual construye el frontend completo con GCC, Bison y Flex. Sus
+rutas principales son:
+
+```make
+CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
+OBJ = build/parser.o build/lexer.o build/ast.o build/main.o
+TARGET = bin/pipoc
+```
+
+`build/` contiene archivos generados y objetos; `bin/` contiene el ejecutable.
 
 ## 3.1. Eliminación de archivos incompletos
 
@@ -583,20 +785,64 @@ Si una receta falla mientras construye un destino, Make elimina ese destino
 incompleto. Esto evita reutilizar un `parser.c`, objeto o ejecutable producido
 parcialmente.
 
-## 3.2. Dependencias de `main.o`
+## 3.2. Orden de Bison y Flex
+
+`parser.y` genera primero `build/parser.c` y `build/parser.h`:
+
+```make
+build/parser.c: src/parser.y include/ast.h
+	@mkdir -p build
+	$(BISON) -d -v -o build/parser.c src/parser.y
+```
+
+Después Flex puede generar el lexer, porque `lexer.l` incluye el encabezado
+producido por Bison:
+
+```make
+build/lexer.c: src/lexer.l build/parser.h include/ast.h
+	@mkdir -p build
+	$(FLEX) -o build/lexer.c src/lexer.l
+```
+
+La opción `-v` de Bison genera también `build/parser.output` para inspeccionar
+los estados y conflictos de la gramática.
+
+## 3.3. Dependencias de `main.o`
 
 La regla quedó:
 
 ```make
 build/main.o: src/main.c build/parser.h include/ast.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/main.c -o $@
+	$(CC) $(CFLAGS) -c src/main.c -o $@
 ```
 
 `main.c` incluye `parser.h` y `ast.h`. Declararlos como dependencias provoca
 que `main.o` se reconstruya si cambia cualquiera de esas interfaces.
 
 Además, depender de `build/parser.h` garantiza que Bison se ejecute antes de
-compilar `main.c`.
+compilar `main.c`. La documentación usa exactamente `$(CFLAGS)`, igual que el
+Makefile actual; no existe una variable `CPPFLAGS` en este archivo.
+
+## 3.4. Revisión de conflictos
+
+El objetivo `conflicts` depende del parser generado y consulta el informe de
+Bison:
+
+```make
+conflicts: build/parser.c
+	@if grep -Eq '[1-9][0-9]* (shift/reduce|reduce/reduce)' build/parser.output; then \
+		echo "Bison reportó conflictos:"; \
+		grep -E '[1-9][0-9]* (shift/reduce|reduce/reduce)' build/parser.output; \
+		exit 1; \
+	else \
+		echo "Bison reportó 0 conflictos."; \
+	fi
+```
+
+Además, `parser.y` declara `%expect 0`; un conflicto nuevo también hace que la
+generación de Bison falle en vez de aceptarse silenciosamente.
+
+## 3.5. Objetivos disponibles
 
 No se agregó un objetivo de pruebas. Se mantienen los objetivos existentes:
 
@@ -604,6 +850,18 @@ No se agregó un objetivo de pruebas. Se mantienen los objetivos existentes:
 - `make generate`: genera parser y lexer.
 - `make conflicts`: revisa conflictos de Bison.
 - `make clean`: elimina `build/` y `bin/`.
+
+La receta de `clean` actual es exactamente:
+
+```make
+clean:
+	rm -rf build bin
+```
+
+Por lo tanto no elimina fuentes, documentación ni otros archivos del
+repositorio. Como las recetas usan herramientas POSIX (`mkdir`, `test`,
+`grep` y `rm`), en Windows deben ejecutarse desde WSL; también funcionan en
+Linux y macOS.
 
 ## 4. Ejecución y verificación
 
@@ -614,8 +872,7 @@ make clean
 make conflicts
 ```
 
-Cuando estén integradas las implementaciones del lexer y del AST, el frontend
-completo se construye con:
+El frontend completo se construye con:
 
 ```sh
 make

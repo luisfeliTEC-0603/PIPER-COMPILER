@@ -171,8 +171,10 @@ void yyerror(AstNode **result, const char *message);
 
 /* Basicos: declaraciones, asignaciones y expresiones */
 
-%type <node> program statement declaration assignment block expression
-%type <node_list> statement_list
+%type <node> program statement declaration assignment assignment_target
+%type <node> block expression import_declaration loop_statement
+%type <node> array_literal index_expression index_item dimension
+%type <node_list> statement_list dimensions_opt dimension_list index_list
 %type <type> type
 
 /* Flujo: estructuras de control y rutinas */
@@ -187,7 +189,7 @@ void yyerror(AstNode **result, const char *message);
 %type <node> fallback_opt
 
 %type <node_list> parameter_list
-%type <node_list> argument_list
+%type <node_list> expression_list
 
 /* Cualquier conflicto nuevo debe fallar la generación y ser investigado. */
 %expect 0
@@ -259,6 +261,11 @@ statement:
         $$ = $1;
         $1 = NULL;
     }
+  | import_declaration TOK_DOT
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
   | assignment TOK_DOT
     {
         $$ = $1;
@@ -275,6 +282,11 @@ statement:
         $1 = NULL;
     }
   | alwhen_statement
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | loop_statement
     {
         $$ = $1;
         $1 = NULL;
@@ -352,17 +364,11 @@ parameter_list:
 ;
 
 parameter:
-    type TOK_IDENTIFIER
+    type dimensions_opt TOK_IDENTIFIER
     {
-        AstNodeList *dimensions = ast_node_list_create();
-
-        if (dimensions == NULL) {
-            $2 = NULL;
-            YYNOMEM;
-        }
-
-        $$ = ast_new_parameter($1, $2, dimensions, AST_LOCATION(@$));
+        $$ = ast_new_parameter($1, $3, $2, AST_LOCATION(@$));
         $2 = NULL;
+        $3 = NULL;
 
         if ($$ == NULL) {
             YYNOMEM;
@@ -371,17 +377,86 @@ parameter:
 ;
 
 declaration:
-    TOK_CREATE type TOK_IDENTIFIER
+    TOK_CREATE type dimensions_opt TOK_IDENTIFIER
     {
-        AstNodeList *dimensions = ast_node_list_create();
-
-        if (dimensions == NULL) {
-            YYNOMEM;
-        }
-
-        $$ = ast_new_variable_declaration($2, $3, dimensions,
+        $$ = ast_new_variable_declaration($2, $4, $3,
                                           AST_LOCATION(@$));
         $3 = NULL;
+        $4 = NULL;
+
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/*
+ * Los valores entre |...| son dimensiones de una declaracion, no
+ * accesos. La fase semantica validara despues que cada tamano sea valido.
+ */
+dimensions_opt:
+    %empty
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_PIPE dimension_list TOK_PIPE
+    {
+        $$ = $2;
+        $2 = NULL;
+    }
+;
+
+dimension_list:
+    dimension
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | dimension_list TOK_AMPERSAND dimension
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
+    }
+;
+
+dimension:
+    TOK_CONST_INT
+    {
+        $$ = ast_new_integer_literal($1, AST_LOCATION(@1));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* TOK_FILE_PATH se acepta exclusivamente en una importacion. */
+import_declaration:
+    TOK_BRING TOK_IDENTIFIER TOK_FROM TOK_FILE_PATH
+    {
+        $$ = ast_new_import_declaration($2, $4, AST_LOCATION(@$));
+        $2 = NULL;
+        $4 = NULL;
 
         if ($$ == NULL) {
             YYNOMEM;
@@ -399,23 +474,33 @@ type:
   | TOK_UB32 { $$ = PIPER_TYPE_UB32; }
 ;
 
-/* En este alcance el destino de store se restringe a un identificador. */
 assignment:
-    TOK_IDENTIFIER TOK_STORE expression
+    assignment_target TOK_STORE expression
     {
-        AstNode *target = ast_new_identifier($1, AST_LOCATION(@1));
+        $$ = ast_new_assignment($1, $3, AST_LOCATION(@$));
         $1 = NULL;
-
-        if (target == NULL) {
-            YYNOMEM;
-        }
-
-        $$ = ast_new_assignment(target, $3, AST_LOCATION(@$));
         $3 = NULL;
 
         if ($$ == NULL) {
             YYNOMEM;
         }
+    }
+;
+
+/* Tanto una variable como un elemento indexado pueden recibir store. */
+assignment_target:
+    TOK_IDENTIFIER
+    {
+        $$ = ast_new_identifier($1, AST_LOCATION(@1));
+        $1 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | index_expression
+    {
+        $$ = $1;
+        $1 = NULL;
     }
 ;
 
@@ -458,6 +543,27 @@ alwhen_statement:
         $$ = ast_new_alwhen($3, $5, AST_LOCATION(@$));
         $3 = NULL;
         $5 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/*
+ * Sintaxis definitiva:
+ *     loop[control & inicio -> fin & paso] { instrucciones }
+ */
+loop_statement:
+    TOK_LOOP TOK_LBRACKET TOK_IDENTIFIER TOK_AMPERSAND expression
+    TOK_ARROW expression TOK_AMPERSAND expression TOK_RBRACKET block
+    {
+        $$ = ast_new_loop($3, $5, $7, $9, $11, AST_LOCATION(@$));
+        $3 = NULL;
+        $5 = NULL;
+        $7 = NULL;
+        $9 = NULL;
+        $11 = NULL;
+
         if ($$ == NULL) {
             YYNOMEM;
         }
@@ -531,6 +637,16 @@ expression:
         if ($$ == NULL) {
             YYNOMEM;
         }
+    }
+  | index_expression
+    {
+        $$ = $1;
+        $1 = NULL;
+    }
+  | array_literal
+    {
+        $$ = $1;
+        $1 = NULL;
     }
   | TOK_MINUS expression %prec UNARY
     {
@@ -725,11 +841,99 @@ expression:
 ;
 
 /* ------------------------------------------------------------
+ * Arreglos: literales y acceso indexado
+ * ------------------------------------------------------------ */
+
+/* Lista literal: los corchetes delimitan y las comas separan elementos. */
+array_literal:
+    TOK_LBRACKET expression_list TOK_RBRACKET
+    {
+        $$ = ast_new_array_literal($2, AST_LOCATION(@$));
+        $2 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/*
+ * Un acceso usa |...| para no confundirse con una llamada nombre[...].
+ * Cada indice es un entero o una variable; las validaciones de tipo y rango
+ * pertenecen a la fase semantica.
+ */
+index_expression:
+    TOK_IDENTIFIER TOK_PIPE index_list TOK_PIPE
+    {
+        AstNode *base = ast_new_identifier($1, AST_LOCATION(@1));
+        $1 = NULL;
+
+        if (base == NULL) {
+            YYNOMEM;
+        }
+
+        $$ = ast_new_index_expression(base, $3, AST_LOCATION(@$));
+        $3 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+index_list:
+    index_item
+    {
+        $$ = ast_node_list_create();
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+        if (!ast_node_list_append($$, $1)) {
+            ast_node_list_free($$);
+            ast_free($1);
+            $$ = NULL;
+            $1 = NULL;
+            YYNOMEM;
+        }
+        $1 = NULL;
+    }
+  | index_list TOK_AMPERSAND index_item
+    {
+        if (!ast_node_list_append($1, $3)) {
+            ast_node_list_free($1);
+            ast_free($3);
+            $1 = NULL;
+            $3 = NULL;
+            YYNOMEM;
+        }
+        $$ = $1;
+        $1 = NULL;
+        $3 = NULL;
+    }
+;
+
+index_item:
+    TOK_CONST_INT
+    {
+        $$ = ast_new_integer_literal($1, AST_LOCATION(@1));
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+  | TOK_IDENTIFIER
+    {
+        $$ = ast_new_identifier($1, AST_LOCATION(@1));
+        $1 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* ------------------------------------------------------------
  * Call expression
  * ------------------------------------------------------------ */
 
 call_expression:
-    TOK_IDENTIFIER TOK_LBRACKET argument_list TOK_RBRACKET
+    TOK_IDENTIFIER TOK_LBRACKET expression_list TOK_RBRACKET
     {
         $$ = ast_new_call($1, $3, AST_LOCATION(@$));
         $1 = NULL;
@@ -740,7 +944,8 @@ call_expression:
     }
 ;
 
-argument_list:
+/* Lista generica usada como elementos de un literal o argumentos de llamada. */
+expression_list:
     %empty
     {
         $$ = ast_node_list_create();
@@ -763,7 +968,7 @@ argument_list:
         }
         $1 = NULL;
     }
-  | argument_list TOK_COMMA expression
+  | expression_list TOK_COMMA expression
     {
         if (!ast_node_list_append($1, $3)) {
             ast_node_list_free($1);
