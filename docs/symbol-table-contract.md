@@ -49,6 +49,13 @@ relativo a `r7`. El ensamblador debe generar el acceso como `r7 + offset`, no
 como una direccion absoluta. Las rutinas no usan ese campo como direccion de
 datos.
 
+Las variables locales y globales que son matrices reservan el almacenamiento
+completo: una matriz de `filas x columnas` elementos de 32 bits ocupa
+`filas * columnas * 4` bytes. Un parametro matricial se trata como una
+referencia a la matriz y ocupa solamente 4 bytes para guardar su direccion
+base; sus campos de dimensiones se conservan para validacion y calculo de
+indices.
+
 ## Uso por fase
 
 El parser registra nombres, clases, tipos base y ubicaciones. Las listas de
