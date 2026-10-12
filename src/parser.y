@@ -12,6 +12,7 @@
 
 %{
 #include "ast.h"
+#include "symbol_table.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,13 +32,32 @@ int yylex(void);
  * Bison llama a yyerror() cuando la secuencia de tokens no coincide con
  * ninguna producción válida de la gramática.
  */
-void yyerror(AstNode **result, const char *message);
+void yyerror(AstNode **result, SymbolTable *symbols, const char *message);
+
+static int parser_skip_block_scope;
+static int parser_preserve_function_scope;
+static int parser_function_scope_active;
+static Symbol *parser_pending_function;
+static DataType symbol_type(PiperType type)
+{
+    return type == PIPER_TYPE_BOOL ? TYPE_BOOL : TYPE_INT;
+}
+
+static void register_symbol(SymbolTable *symbols, const char *name,
+                            SymbolClass symbol_class, PiperType type,
+                            int line)
+{
+    (void)symbol_table_insert(symbols, name, symbol_class,
+                              symbol_type(type), 1, 1, line);
+}
+
 %}
 
 /* parser.h debe conocer los tipos usados por YYSTYPE sin depender del orden
  * de includes de sus consumidores. */
 %code requires {
 #include "ast.h"
+#include "symbol_table.h"
 }
 
 /*
@@ -49,6 +69,7 @@ void yyerror(AstNode **result, const char *message);
 
 /* yyparse() entrega la raíz construida mediante el puntero del llamador. */
 %parse-param { AstNode **result }
+%parse-param { SymbolTable *symbols }
 
 /*
  * Además de su categoría, algunos tokens transportan un valor.
@@ -313,12 +334,33 @@ statement:
  * ------------------------------------------------------------ */
 
 routine_declaration:
-    TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET parameter_list TOK_RBRACKET block
+    TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET
     {
-        $$ = ast_new_routine_declaration($2, $3, $5, $7, AST_LOCATION(@$));
+        parser_pending_function = symbol_table_insert(
+            symbols, $3, SYMBOL_FUNC, symbol_type($2), 1, 1,
+            @3.first_line);
+        symbol_table_open_scope(symbols);
+        parser_function_scope_active = 1;
+        parser_skip_block_scope = 1;
+    }
+    parameter_list TOK_RBRACKET block
+    {
+        $$ = ast_new_routine_declaration($2, $3, $6, $8, AST_LOCATION(@$));
+        if (parser_function_scope_active) {
+            if (parser_pending_function != NULL) {
+                parser_pending_function->function_scope =
+                    symbol_table_current_scope(symbols);
+                symbol_table_set_function_frame(symbols, parser_pending_function);
+            }
+            symbol_table_close_scope(symbols);
+            parser_function_scope_active = 0;
+        }
+        if (parser_pending_function != NULL) {
+            parser_pending_function = NULL;
+        }
         $3 = NULL;
-        $5 = NULL;
-        $7 = NULL;
+        $6 = NULL;
+        $8 = NULL;
         if ($$ == NULL) {
             YYNOMEM;
         }
@@ -366,6 +408,7 @@ parameter_list:
 parameter:
     type dimensions_opt TOK_IDENTIFIER
     {
+        register_symbol(symbols, $3, SYMBOL_PARAM, $1, @3.first_line);
         $$ = ast_new_parameter($1, $3, $2, AST_LOCATION(@$));
         $2 = NULL;
         $3 = NULL;
@@ -379,6 +422,7 @@ parameter:
 declaration:
     TOK_CREATE type dimensions_opt TOK_IDENTIFIER
     {
+        register_symbol(symbols, $4, SYMBOL_VAR, $2, @4.first_line);
         $$ = ast_new_variable_declaration($2, $4, $3,
                                           AST_LOCATION(@$));
         $3 = NULL;
@@ -597,10 +641,24 @@ output_statement:
 ;
 
 block:
-    TOK_LBRACE statement_list TOK_RBRACE
+    TOK_LBRACE
     {
-        $$ = ast_new_block($2, AST_LOCATION(@$));
-        $2 = NULL;
+        if (parser_skip_block_scope) {
+            parser_skip_block_scope = 0;
+            parser_preserve_function_scope = 1;
+        } else {
+            symbol_table_open_scope(symbols);
+        }
+    }
+    statement_list TOK_RBRACE
+    {
+        $$ = ast_new_block($3, AST_LOCATION(@$));
+        $3 = NULL;
+        if (parser_preserve_function_scope) {
+            parser_preserve_function_scope = 0;
+        } else {
+            symbol_table_close_scope(symbols);
+        }
 
         if ($$ == NULL) {
             YYNOMEM;
@@ -990,9 +1048,10 @@ expression_list:
  * Implementación mínima del manejador de errores requerido por Bison.
  * El lexer será responsable de mantener yylloc actualizado.
  */
-void yyerror(AstNode **result, const char *message)
+void yyerror(AstNode **result, SymbolTable *symbols, const char *message)
 {
     (void)result;
+    (void)symbols;
     fprintf(stderr, "%d:%d: error sintáctico: %s\n",
             yylloc.first_line, yylloc.first_column, message);
 }

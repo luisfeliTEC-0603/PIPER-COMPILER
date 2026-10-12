@@ -1,5 +1,6 @@
 #include "ast.h"
 #include "parser.h"
+#include "symbol_table.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -42,6 +43,7 @@ int main(int argc, char **argv)
     const char *input_path;
     FILE *input = NULL;
     AstNode *program = NULL;
+    SymbolTable *symbols = NULL;
     int parse_status;
     int exit_status = PIPOC_EXIT_FRONTEND_ERROR;
 
@@ -65,8 +67,16 @@ int main(int argc, char **argv)
     }
 
     yyrestart(input);
-    parse_status = yyparse(&program);
+    symbols = symbol_table_create();
+    if (symbols == NULL) {
+        fprintf(stderr, "error interno: no se pudo crear la tabla de símbolos\n");
+        fclose(input);
+        return PIPOC_EXIT_FRONTEND_ERROR;
+    }
+    parse_status = yyparse(&program, symbols);
     (void)yylex_destroy();
+
+    symbol_table_print(stdout, symbols);
 
     if (parse_status == 0 && program != NULL) {
         ast_print(stdout, program);
@@ -78,6 +88,7 @@ int main(int argc, char **argv)
     /* ast_free(NULL) es válido; este camino cubre éxito y error. */
     ast_free(program);
     program = NULL;
+    symbol_table_destroy(symbols);
 
     if (fclose(input) != 0) {
         fprintf(stderr, "error: no se pudo cerrar '%s': %s\n",
