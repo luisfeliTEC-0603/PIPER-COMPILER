@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <symbol_table.h>
 
 typedef struct AstNode AstNode;
 typedef struct AstNodeList AstNodeList;
@@ -195,7 +196,15 @@ const char *ast_operator_name(AstOperator operator);
 /* output y node deben ser distintos de NULL. */
 void ast_print(FILE *output, const AstNode *node);
 
+/* Escribe node como JSON válido en output. */
+void ast_print_json(FILE *output, const AstNode *node);
+
 /* Libera recursivamente node y todo lo que sea propiedad del nodo. */
 void ast_free(AstNode *node);
 
-#endif
+/* Extrae las dimensiones (filas y columnas) de una lista de nodos de dimensión y las registra en la tabla de símbolos. */
+void ast_register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
+                                         SymbolClass symbol_class, PiperType type,
+                                         const AstNodeList *dimensions, int line);
+
+#endif  

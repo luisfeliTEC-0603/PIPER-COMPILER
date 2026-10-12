@@ -10,7 +10,7 @@ else
 endif
 
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
-OBJ = build/parser.o build/lexer.o build/ast.o build/main.o
+OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o
 TARGET = bin/pipoc
 
 .DELETE_ON_ERROR:
@@ -21,7 +21,7 @@ all: $(TARGET)
 generate: build/parser.c build/parser.h build/lexer.c
 
 # Bison debe ejecutarse antes de Flex porque lexer.l incluye parser.h.
-build/parser.c: src/parser.y include/ast.h
+build/parser.c: src/parser.y include/ast.h include/symbol_table.h
 	@mkdir -p build
 	$(BISON) -d -v -o build/parser.c src/parser.y
 
@@ -32,7 +32,7 @@ build/lexer.c: src/lexer.l build/parser.h include/ast.h
 	@mkdir -p build
 	$(FLEX) -o build/lexer.c src/lexer.l
 
-build/parser.o: build/parser.c build/parser.h include/ast.h
+build/parser.o: build/parser.c build/parser.h include/ast.h include/symbol_table.h
 	$(CC) $(CFLAGS) -c build/parser.c -o $@
 
 # Flex 2.6.4 genera una comparación signed/unsigned fuera del código del equipo.
@@ -42,7 +42,13 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h
 build/ast.o: src/ast.c include/ast.h
 	$(CC) $(CFLAGS) -c src/ast.c -o $@
 
-build/main.o: src/main.c build/parser.h include/ast.h
+build/ast_to_json.o: src/ast_to_json.c include/ast_to_json.h include/ast.h
+	$(CC) $(CFLAGS) -c src/ast_to_json.c -o $@
+
+build/symbol_table.o: src/symbol_table.c include/symbol_table.h
+	$(CC) $(CFLAGS) -c src/symbol_table.c -o $@
+
+build/main.o: src/main.c build/parser.h include/ast.h include/symbol_table.h
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
 $(TARGET): $(OBJ)
