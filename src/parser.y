@@ -34,10 +34,6 @@ int yylex(void);
  */
 void yyerror(AstNode **result, SymbolTable *symbols, const char *message);
 
-static int parser_skip_block_scope;
-static int parser_preserve_function_scope;
-static int parser_function_scope_active;
-static Symbol *parser_pending_function;
 static DataType symbol_type(PiperType type)
 {
     return type == PIPER_TYPE_BOOL ? TYPE_BOOL : TYPE_INT;
@@ -82,6 +78,8 @@ static DataType symbol_type(PiperType type)
     AstOperator operator;
     AstNode *node;
     AstNodeList *node_list;
+    Symbol *symbol;
+    int opened_scope;
 }
 
 /*
@@ -185,10 +183,11 @@ static DataType symbol_type(PiperType type)
 /* Basicos: declaraciones, asignaciones y expresiones */
 
 %type <node> program statement declaration assignment assignment_target
-%type <node> block expression import_declaration loop_statement
+%type <node> block routine_body expression import_declaration loop_statement
 %type <node> array_literal index_expression index_item dimension
 %type <node_list> statement_list dimensions_opt dimension_list index_list
 %type <type> type
+%type <opened_scope> block_scope
 
 /* Flujo: estructuras de control y rutinas */
 
@@ -327,32 +326,38 @@ statement:
 
 routine_declaration:
     TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET
-    {
-        parser_pending_function = symbol_table_insert(
+    <symbol>{
+        $$ = symbol_table_insert(
             symbols, $3, SYMBOL_FUNC, symbol_type($2), 1, 1,
             @3.first_line);
-        symbol_table_open_scope(symbols);
-        parser_function_scope_active = 1;
-        parser_skip_block_scope = 1;
+        if (!symbol_table_open_scope(symbols)) {
+            YYNOMEM;
+        }
     }
-    parameter_list TOK_RBRACKET block
+    parameter_list TOK_RBRACKET routine_body
     {
         $$ = ast_new_routine_declaration($2, $3, $6, $8, AST_LOCATION(@$));
-        if (parser_function_scope_active) {
-            if (parser_pending_function != NULL) {
-                parser_pending_function->function_scope =
-                    symbol_table_current_scope(symbols);
-                symbol_table_set_function_frame(symbols, parser_pending_function);
-            }
-            symbol_table_close_scope(symbols);
-            parser_function_scope_active = 0;
+        if ($5 != NULL) {
+            $5->function_scope = symbol_table_current_scope(symbols);
+            symbol_table_set_function_frame(symbols, $5);
         }
-        if (parser_pending_function != NULL) {
-            parser_pending_function = NULL;
-        }
+        symbol_table_close_scope(symbols);
         $3 = NULL;
         $6 = NULL;
         $8 = NULL;
+        if ($$ == NULL) {
+            YYNOMEM;
+        }
+    }
+;
+
+/* La rutina ya abrió el ámbito que comparten sus parámetros y su cuerpo.
+ * Un bloque normal sí abre un ámbito hijo. */
+routine_body:
+    TOK_LBRACE statement_list TOK_RBRACE
+    {
+        $$ = ast_new_block($2, AST_LOCATION(@$));
+        $2 = NULL;
         if ($$ == NULL) {
             YYNOMEM;
         }
@@ -634,28 +639,28 @@ output_statement:
 ;
 
 block:
-    TOK_LBRACE
-    {
-        if (parser_skip_block_scope) {
-            parser_skip_block_scope = 0;
-            parser_preserve_function_scope = 1;
-        } else {
-            symbol_table_open_scope(symbols);
-        }
-    }
-    statement_list TOK_RBRACE
+    TOK_LBRACE block_scope statement_list TOK_RBRACE
     {
         $$ = ast_new_block($3, AST_LOCATION(@$));
         $3 = NULL;
-        if (parser_preserve_function_scope) {
-            parser_preserve_function_scope = 0;
-        } else {
+        if ($2) {
             symbol_table_close_scope(symbols);
         }
 
         if ($$ == NULL) {
             YYNOMEM;
         }
+    }
+;
+
+/* Cada bloque normal conserva en la pila del parser su propia apertura. */
+block_scope:
+    %empty
+    {
+        if (!symbol_table_open_scope(symbols)) {
+            YYNOMEM;
+        }
+        $$ = 1;
     }
 ;
 
