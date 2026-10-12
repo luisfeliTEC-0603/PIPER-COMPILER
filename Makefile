@@ -10,7 +10,7 @@ else
 endif
 
 CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
-OBJ = build/parser.o build/lexer.o build/ast.o build/symbol_table.o build/main.o
+OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o
 TARGET = bin/pipoc
 
 .DELETE_ON_ERROR:
@@ -41,6 +41,9 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h
 
 build/ast.o: src/ast.c include/ast.h
 	$(CC) $(CFLAGS) -c src/ast.c -o $@
+
+build/ast_to_json.o: src/ast_to_json.c include/ast_to_json.h include/ast.h
+	$(CC) $(CFLAGS) -c src/ast_to_json.c -o $@
 
 build/symbol_table.o: src/symbol_table.c include/symbol_table.h
 	$(CC) $(CFLAGS) -c src/symbol_table.c -o $@

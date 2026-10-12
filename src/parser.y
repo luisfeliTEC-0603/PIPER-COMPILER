@@ -43,31 +43,6 @@ static DataType symbol_type(PiperType type)
     return type == PIPER_TYPE_BOOL ? TYPE_BOOL : TYPE_INT;
 }
 
-static void register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
-                                            SymbolClass symbol_class, PiperType type,
-                                            const AstNodeList *dimensions, int line)
-{
-    int rows = 1;
-    int cols = 1;
-    DataType data_type = symbol_type(type);
-
-    if (dimensions != NULL && dimensions->count > 0) {
-        data_type = TYPE_ARRAY; // Marcar como tipo arreglo si tiene dimensiones
-
-        // Extraer la primera dimensión (filas)
-        if (dimensions->count >= 1 && dimensions->nodes[0]->kind == AST_NODE_INTEGER_LITERAL) {
-            rows = (int)dimensions->nodes[0]->data.integer_literal.value;
-        }
-
-        // Extraer la segunda dimensión si existe (columnas)
-        if (dimensions->count >= 2 && dimensions->nodes[1]->kind == AST_NODE_INTEGER_LITERAL) {
-            cols = (int)dimensions->nodes[1]->data.integer_literal.value;
-        }
-    }
-
-    symbol_table_insert(symbols, name, symbol_class, data_type, rows, cols, line);
-}
-
 %}
 
 /* parser.h debe conocer los tipos usados por YYSTYPE sin depender del orden
@@ -425,8 +400,7 @@ parameter_list:
 parameter:
     type dimensions_opt TOK_IDENTIFIER
     {
-        // Se envía la lista $2 a la nueva función
-        register_symbol_with_dimensions(symbols, $3, SYMBOL_PARAM, $1, $2, @3.first_line);
+        ast_register_symbol_with_dimensions(symbols, $3, SYMBOL_PARAM, $1, $2, @3.first_line);
 
         $$ = ast_new_parameter($1, $3, $2, AST_LOCATION(@$));
         $2 = NULL;
@@ -437,11 +411,11 @@ parameter:
         }
     }
 ;
+
 declaration:
     TOK_CREATE type dimensions_opt TOK_IDENTIFIER
     {
-        // Se envía la lista $3 a la nueva función
-        register_symbol_with_dimensions(symbols, $4, SYMBOL_VAR, $2, $3, @4.first_line);
+        ast_register_symbol_with_dimensions(symbols, $4, SYMBOL_VAR, $2, $3, @4.first_line);
 
         $$ = ast_new_variable_declaration($2, $4, $3, AST_LOCATION(@$));
         $3 = NULL;

@@ -1012,6 +1012,329 @@ void ast_print(FILE *output, const AstNode *node)
     ast_print_node(output, node, 0);
 }
 
+void ast_register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
+                                         SymbolClass symbol_class, PiperType type,
+                                         const AstNodeList *dimensions, int line)
+{
+    int rows = 1;
+    int cols = 1;
+    DataType data_type = (type == PIPER_TYPE_BOOL) ? TYPE_BOOL : TYPE_INT;
+
+    if (dimensions != NULL && dimensions->count > 0) {
+        data_type = TYPE_ARRAY;
+
+        // 1. Extraer filas (accediendo a items[0])
+        if (dimensions->count >= 1 && dimensions->items[0] != NULL) {
+            if (dimensions->items[0]->kind == AST_INTEGER_LITERAL) {
+                rows = (int)dimensions->items[0]->data.integer_literal.value;
+            }
+        }
+
+        // 2. Extraer columnas (accediendo a items[1])
+        if (dimensions->count >= 2 && dimensions->items[1] != NULL) {
+            if (dimensions->items[1]->kind == AST_INTEGER_LITERAL) {
+                cols = (int)dimensions->items[1]->data.integer_literal.value;
+            }
+        }
+    }
+
+    symbol_table_insert(symbols, name, symbol_class, data_type, rows, cols, line);
+}
+
+
+static void ast_json_string(FILE *output, const char *value)
+{
+    fputc('"', output);
+    for (const unsigned char *character = (const unsigned char *)value;
+         *character != '\0'; character++) {
+        switch (*character) {
+        case '"':
+            fputs("\\\"", output);
+            break;
+        case '\\':
+            fputs("\\\\", output);
+            break;
+        case '\n':
+            fputs("\\n", output);
+            break;
+        case '\r':
+            fputs("\\r", output);
+            break;
+        case '\t':
+            fputs("\\t", output);
+            break;
+        default:
+            if (*character < 0x20) {
+                fprintf(output, "\\u%04x", *character);
+            } else {
+                fputc(*character, output);
+            }
+            break;
+        }
+    }
+    fputc('"', output);
+}
+
+static void ast_json_indent(FILE *output, size_t indentation)
+{
+    for (size_t level = 0; level < indentation; level++) {
+        fputs("  ", output);
+    }
+}
+
+static void ast_json_node(FILE *output, const AstNode *node,
+                          size_t indentation);
+
+static void ast_json_list(FILE *output, const AstNodeList *list,
+                          size_t indentation)
+{
+    fputs("[", output);
+    if (list->count != 0) {
+        fputc('\n', output);
+        for (size_t index = 0; index < list->count; index++) {
+            ast_json_indent(output, indentation + 1);
+            ast_json_node(output, list->items[index], indentation + 1);
+            if (index + 1 < list->count) {
+                fputc(',', output);
+            }
+            fputc('\n', output);
+        }
+        ast_json_indent(output, indentation);
+    }
+    fputc(']', output);
+}
+
+static void ast_json_child(FILE *output, const char *name,
+                           const AstNode *child, size_t indentation,
+                           bool trailing_comma)
+{
+    ast_json_indent(output, indentation);
+    ast_json_string(output, name);
+    fputs(": ", output);
+    if (child == NULL) {
+        fputs("null", output);
+    } else {
+        ast_json_node(output, child, indentation);
+    }
+    if (trailing_comma) {
+        fputc(',', output);
+    }
+    fputc('\n', output);
+}
+
+static void ast_json_node(FILE *output, const AstNode *node,
+                          size_t indentation)
+{
+    ast_json_indent(output, indentation);
+    fputs("{\n", output);
+    ast_json_indent(output, indentation + 1);
+    fputs("\"kind\": ", output);
+    ast_json_string(output, ast_kind_name(node->kind));
+    fputs(",\n", output);
+    ast_json_indent(output, indentation + 1);
+    fprintf(output, "\"location\": {\"first_line\": %d, "
+                    "\"first_column\": %d, \"last_line\": %d, "
+                    "\"last_column\": %d}",
+            node->location.first_line, node->location.first_column,
+            node->location.last_line, node->location.last_column);
+
+    switch (node->kind) {
+    case AST_PROGRAM:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"elements\": ", output);
+        ast_json_list(output, node->data.program.elements, indentation + 1);
+        break;
+    case AST_IMPORT_DECLARATION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"symbol\": ", output);
+        ast_json_string(output, node->data.import_declaration.symbol);
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"file_path\": ", output);
+        ast_json_string(output, node->data.import_declaration.file_path);
+        break;
+    case AST_VARIABLE_DECLARATION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fprintf(output, "\"type\": ");
+        ast_json_string(output, piper_type_name(node->data.variable_declaration.type));
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"name\": ", output);
+        ast_json_string(output, node->data.variable_declaration.name);
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"dimensions\": ", output);
+        ast_json_list(output, node->data.variable_declaration.dimensions,
+                      indentation + 1);
+        break;
+    case AST_PARAMETER:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"type\": ", output);
+        ast_json_string(output, piper_type_name(node->data.parameter.type));
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"name\": ", output);
+        ast_json_string(output, node->data.parameter.name);
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"dimensions\": ", output);
+        ast_json_list(output, node->data.parameter.dimensions, indentation + 1);
+        break;
+    case AST_ROUTINE_DECLARATION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"return_type\": ", output);
+        ast_json_string(output, piper_type_name(node->data.routine_declaration.return_type));
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"name\": ", output);
+        ast_json_string(output, node->data.routine_declaration.name);
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"parameters\": ", output);
+        ast_json_list(output, node->data.routine_declaration.parameters,
+                      indentation + 1);
+        fputs(",\n", output);
+        ast_json_child(output, "body", node->data.routine_declaration.body,
+                       indentation + 1, false);
+        break;
+    case AST_BLOCK:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"statements\": ", output);
+        ast_json_list(output, node->data.block.statements, indentation + 1);
+        break;
+    case AST_ASSIGNMENT:
+        fputs(",\n", output);
+        ast_json_child(output, "target", node->data.assignment.target,
+                       indentation + 1, true);
+        ast_json_child(output, "value", node->data.assignment.value,
+                       indentation + 1, false);
+        break;
+    case AST_WHEN_STATEMENT:
+        fputs(",\n", output);
+        ast_json_child(output, "condition", node->data.when_statement.condition,
+                       indentation + 1, true);
+        ast_json_child(output, "then_block", node->data.when_statement.then_block,
+                       indentation + 1, true);
+        ast_json_child(output, "fallback_block",
+                       node->data.when_statement.fallback_block,
+                       indentation + 1, false);
+        break;
+    case AST_ALWHEN_STATEMENT:
+        fputs(",\n", output);
+        ast_json_child(output, "condition", node->data.alwhen_statement.condition,
+                       indentation + 1, true);
+        ast_json_child(output, "body", node->data.alwhen_statement.body,
+                       indentation + 1, false);
+        break;
+    case AST_LOOP_STATEMENT:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"control_name\": ", output);
+        ast_json_string(output, node->data.loop_statement.control_name);
+        fputs(",\n", output);
+        ast_json_child(output, "begin", node->data.loop_statement.begin,
+                       indentation + 1, true);
+        ast_json_child(output, "end", node->data.loop_statement.end,
+                       indentation + 1, true);
+        ast_json_child(output, "step", node->data.loop_statement.step,
+                       indentation + 1, true);
+        ast_json_child(output, "body", node->data.loop_statement.body,
+                       indentation + 1, false);
+        break;
+    case AST_BREAK_STATEMENT:
+        break;
+    case AST_OUTPUT_STATEMENT:
+        fputs(",\n", output);
+        ast_json_child(output, "value", node->data.output_statement.value,
+                       indentation + 1, false);
+        break;
+    case AST_CALL_EXPRESSION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"routine_name\": ", output);
+        ast_json_string(output, node->data.call_expression.routine_name);
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"arguments\": ", output);
+        ast_json_list(output, node->data.call_expression.arguments,
+                      indentation + 1);
+        break;
+    case AST_IDENTIFIER_EXPRESSION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"name\": ", output);
+        ast_json_string(output, node->data.identifier.name);
+        break;
+    case AST_INTEGER_LITERAL:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fprintf(output, "\"value\": %llu", node->data.integer_literal.value);
+        break;
+    case AST_BOOLEAN_LITERAL:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fprintf(output, "\"value\": %s",
+                node->data.boolean_literal.value ? "true" : "false");
+        break;
+    case AST_NONE_LITERAL:
+        break;
+    case AST_ARRAY_LITERAL:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"elements\": ", output);
+        ast_json_list(output, node->data.array_literal.elements,
+                      indentation + 1);
+        break;
+    case AST_INDEX_EXPRESSION:
+        fputs(",\n", output);
+        ast_json_child(output, "base", node->data.index_expression.base,
+                       indentation + 1, true);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"indices\": ", output);
+        ast_json_list(output, node->data.index_expression.indices,
+                      indentation + 1);
+        break;
+    case AST_UNARY_EXPRESSION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"operator\": ", output);
+        ast_json_string(output, ast_operator_name(node->data.unary_expression.operator));
+        fputs(",\n", output);
+        ast_json_child(output, "operand", node->data.unary_expression.operand,
+                       indentation + 1, false);
+        break;
+    case AST_BINARY_EXPRESSION:
+        fputs(",\n", output);
+        ast_json_indent(output, indentation + 1);
+        fputs("\"operator\": ", output);
+        ast_json_string(output, ast_operator_name(node->data.binary_expression.operator));
+        fputs(",\n", output);
+        ast_json_child(output, "left", node->data.binary_expression.left,
+                       indentation + 1, true);
+        ast_json_child(output, "right", node->data.binary_expression.right,
+                       indentation + 1, false);
+        break;
+    }
+
+    fputc('\n', output);
+    ast_json_indent(output, indentation);
+    fputc('}', output);
+}
+
+void ast_print_json(FILE *output, const AstNode *node)
+{
+    assert(output != NULL);
+    assert(node != NULL);
+
+    ast_json_node(output, node, 0);
+}
+
 /* Liberación recursiva de los recursos internos y del nodo exterior. */
 void ast_free(AstNode *node)
 {
