@@ -14,6 +14,7 @@
 /* Funciones generadas por Flex para configurar y liberar el scanner. */
 void yyrestart(FILE *input_file);
 int yylex_destroy(void);
+void lexer_set_trace(int enabled);
 
 enum {
     PIPOC_EXIT_SUCCESS = 0,
@@ -26,10 +27,15 @@ static void print_usage(FILE *output, const char *program_name)
 {
     fprintf(output, "Uso: %s [opciones] <archivo.rwt>\n", program_name);
     fprintf(output, "Opciones:\n");
-    fprintf(output, "  -t           Exporta el Árbol Sintáctico Abstracto (AST) a 'ast_output.json'\n");
-    fprintf(output, "  -m           Imprime la tabla de símbolos y asignaciones de memoria\n");
-    fprintf(output, "  -s           Genera código ASM PORYGON\n");
-    fprintf(output, "  -o <archivo> Especifica el nombre del archivo de salida\n");
+    fprintf(output, "  -l, --lexical    Muestra los lexemas del análisis léxico\n");
+    fprintf(output, "  -s, --syntactic  Muestra el resultado sintáctico\n");
+    fprintf(output, "  -m, --symbols    Muestra la tabla de símbolos y memoria\n");
+    fprintf(output, "  -e, --semantic   Muestra el recorrido semántico\n");
+    fprintf(output, "  -a, --all        Muestra las cuatro fases anteriores\n");
+    fprintf(output, "  -t, --ast-json   Exporta el AST a 'ast_output.json'\n");
+    fprintf(output, "  -o, --output <archivo>  Ruta del JSON exportado con -t\n");
+    fprintf(output, "  -h, --help       Muestra esta ayuda\n");
+    fprintf(output, "  -x               Genera código ASM PORYGON\n");
 }
 
 static int has_rwt_extension(const char *path)
@@ -60,24 +66,53 @@ int main(int argc, char **argv)
     /* Banderas de opciones */
     int export_json_flag = 0;
     int print_symbols_flag = 0;
+    int trace_lexical = 0;
+    int trace_syntactic = 0;
+    int trace_semantic = 0;
     int generate_asm_flag = 0;
     int opt;
+    static const struct option long_options[] = {
+        {"lexical", no_argument, NULL, 'l'},
+        {"syntactic", no_argument, NULL, 's'},
+        {"symbols", no_argument, NULL, 'm'},
+        {"semantic", no_argument, NULL, 'e'},
+        {"all", no_argument, NULL, 'a'},
+        {"ast-json", no_argument, NULL, 't'},
+        {"output", required_argument, NULL, 'o'},
+        {"help", no_argument, NULL, 'h'},
+        {NULL, 0, NULL, 0}
+    };
 
     /* 1. Procesar opciones mediante getopt */
-    while ((opt = getopt(argc, argv, "tmso:")) != -1) {
+    while ((opt = getopt_long(argc, argv, "lsmeatxo:h", long_options, NULL)) != -1) {
         switch (opt) {
+        case 'l':
+            trace_lexical = 1;
+            break;
+        case 's':
+            trace_syntactic = 1;
+            break;
+        case 'e':
+            trace_semantic = 1;
+            break;
+        case 'a':
+            trace_lexical = trace_syntactic = print_symbols_flag = trace_semantic = 1;
+            break;
         case 't':
             export_json_flag = 1;
             break;
         case 'm':
             print_symbols_flag = 1;
             break;
-        case 's':
+        case 'x':
             generate_asm_flag = 1;
             break;
         case 'o':
             output_path = optarg;
             break;
+        case 'h':
+            print_usage(stdout, argv[0]);
+            return PIPOC_EXIT_SUCCESS;
         default:
             print_usage(stderr, argv[0]);
             return PIPOC_EXIT_USAGE;
@@ -106,6 +141,7 @@ int main(int argc, char **argv)
     }
 
     yyrestart(input);
+    lexer_set_trace(trace_lexical);
     symbols = symbol_table_create();
     if (symbols == NULL) {
         fprintf(stderr, "error interno: no se pudo crear la tabla de símbolos\n");
@@ -117,11 +153,12 @@ int main(int argc, char **argv)
     (void)yylex_destroy();
 
     if (parse_status == 0 && program != NULL) {
-        if (!analyze_semantics(program, symbols)) {
+        if (trace_syntactic) {
+            printf("[Sintáctico] Análisis completado correctamente.\n");
+        }
+        if (!analyze_semantics_with_trace(program, symbols, trace_semantic)) {
             fprintf(stderr, "Error: La verificación semántica ha fallado. Abortando compilación.\n");
             parse_status = 1;
-        } else {
-            printf("Análisis semántico completado exitosamente.\n");
         }
     }
 
@@ -133,8 +170,6 @@ int main(int argc, char **argv)
     }
 
     if (parse_status == 0 && program != NULL) {
-        ast_print(stdout, program);
-
         /* Si se activó la bandera -t, exportamos el AST a JSON antes de liberarlo */
         if (export_json_flag) {
             const char *json_path = output_path != NULL
