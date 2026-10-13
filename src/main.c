@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "semantic.h"
 #include "ast_to_json.h"
 #include "parser.h"
 #include "symbol_table.h"
@@ -108,6 +109,15 @@ int main(int argc, char **argv)
 
     parse_status = yyparse(&program, symbols);
     (void)yylex_destroy();
+
+    if (parse_status == 0 && program != NULL) {
+        if (!analyze_semantics(program, symbols)) {
+            fprintf(stderr, "Error: La verificación semántica ha fallado. Abortando compilación.\n");
+            parse_status = 1;
+        } else {
+            printf("Análisis semántico completado exitosamente.\n");
+        }
+    }
 
     /* 2. Ejecutar acciones condicionales según las banderas activadas */
 

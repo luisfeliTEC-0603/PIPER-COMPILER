@@ -134,6 +134,10 @@ Symbol *symbol_table_lookup(SymbolTable *table, const char *name)
     if (table == NULL || name == NULL) {
         return NULL;
     }
+    /* Visibilidad léxica: comenzar en el ámbito actual y subir por todos sus
+     * padres. El primer símbolo encontrado permite sombrear declaraciones.
+     * all_scopes conserva los ámbitos para liberar/imprimir, no para buscar:
+     * recorrerlo haría visibles variables locales de funciones hermanas. */
     for (scope = table->current_scope; scope != NULL; scope = scope->parent) {
         Symbol *symbol = lookup_scope(scope, name);
         if (symbol != NULL) {
