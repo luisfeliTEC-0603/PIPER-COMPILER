@@ -3,6 +3,7 @@
 #include "ast_to_json.h"
 #include "parser.h"
 #include "symbol_table.h"
+#include "codegen.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -34,6 +35,7 @@ static void print_usage(FILE *output, const char *program_name)
     fprintf(output, "  -t, --ast-json   Exporta el AST a 'ast_output.json'\n");
     fprintf(output, "  -o, --output <archivo>  Ruta del JSON exportado con -t\n");
     fprintf(output, "  -h, --help       Muestra esta ayuda\n");
+    fprintf(output, "  -x               Genera código ASM PORYGON\n");
 }
 
 static int has_rwt_extension(const char *path)
@@ -67,6 +69,7 @@ int main(int argc, char **argv)
     int trace_lexical = 0;
     int trace_syntactic = 0;
     int trace_semantic = 0;
+    int generate_asm_flag = 0;
     int opt;
     static const struct option long_options[] = {
         {"lexical", no_argument, NULL, 'l'},
@@ -81,7 +84,7 @@ int main(int argc, char **argv)
     };
 
     /* 1. Procesar opciones mediante getopt */
-    while ((opt = getopt_long(argc, argv, "lsmeato:h", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "lsmeatxo:h", long_options, NULL)) != -1) {
         switch (opt) {
         case 'l':
             trace_lexical = 1;
@@ -100,6 +103,9 @@ int main(int argc, char **argv)
             break;
         case 'm':
             print_symbols_flag = 1;
+            break;
+        case 'x':
+            generate_asm_flag = 1;
             break;
         case 'o':
             output_path = optarg;
@@ -172,6 +178,31 @@ int main(int argc, char **argv)
                 printf("[AST] Exportado exitosamente a '%s'\n", json_path);
             } else {
                 fprintf(stderr, "error: no se pudo exportar el AST a JSON\n");
+            }
+        }
+
+        /* ★ Generación de ASM */
+        if (generate_asm_flag) {
+            const char *asm_path = output_path != NULL
+                ? output_path : "programa.asm";
+            FILE *asm_file = fopen(asm_path, "w");
+            if (asm_file == NULL) {
+                fprintf(stderr, "error: no se pudo crear '%s': %s\n",
+                        asm_path, strerror(errno));
+                parse_status = 1;
+            } else {
+                CodegenOptions opts = { .emitir_comentarios = 1,
+                                        .optimizar_temporales = 0 };
+                CodegenResult r = codegen_generate(program, symbols,
+                                                   asm_file, &opts);
+                fclose(asm_file);
+                if (r != CODEGEN_OK) {
+                    fprintf(stderr,
+                            "error: generación de código falló (código %d)\n", r);
+                    parse_status = 1;
+                } else {
+                    printf("[ASM] Generado exitosamente en '%s'\n", asm_path);
+                }
             }
         }
 
