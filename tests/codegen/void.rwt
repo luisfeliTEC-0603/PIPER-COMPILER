@@ -1,6 +1,5 @@
-routine B32 void[B32 a, B32 b] {
-    create B32 resultado.
-    create B32 temporal.
-    resultado store a + b.
-    output resultado.
+create B32 contador.
+
+routine B32 main[] {
+    contador store 42.
 }
