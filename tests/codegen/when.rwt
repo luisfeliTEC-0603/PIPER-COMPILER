@@ -1,0 +1,9 @@
+routine B32 max[B32 a, B32 b] {
+    create B32 resultado.
+    when [a > b] {
+        resultado store a.
+    } fallback {
+        resultado store b.
+    }
+    output resultado.
+}
