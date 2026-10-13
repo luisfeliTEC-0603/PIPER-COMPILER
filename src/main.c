@@ -64,7 +64,7 @@ int main(int argc, char **argv)
     int opt;
 
     /* 1. Procesar opciones mediante getopt */
-    while ((opt = getopt(argc, argv, "tmo:o:")) != -1) {
+    while ((opt = getopt(argc, argv, "tmso:")) != -1) {
         switch (opt) {
         case 't':
             export_json_flag = 1;
