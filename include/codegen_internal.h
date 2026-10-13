@@ -67,6 +67,10 @@ CodegenContext *codegen_context_create(const AstNode *root,
 void codegen_context_destroy(CodegenContext *ctx);
 void codegen_context_error(CodegenContext *ctx, const char *fmt, ...);
 int codegen_has_errors(const CodegenContext *ctx);
+Symbol *lookup_symbol_or_error(CodegenContext *ctx,
+                               const char *name,
+                               int expected_class);
+Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym);
 
 /* ----------------------------------------------------------------
  * codegen_emit.c
