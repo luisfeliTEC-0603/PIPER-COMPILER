@@ -44,8 +44,7 @@ typedef size_t porygon_label_id_t;
 #define PORYGON_NO_LABEL SIZE_MAX
 #define PORYGON_NO_BLOCK SIZE_MAX
 
-/* Recurso funcional requerido. MATH_SPECIAL agrupa mul, mulh y desplazamientos;
-   las capacidades y latencias concretas se fijarán con el scheduler/RTL. */
+/* MATH permite ALU0 o ALU1; MATH_SPECIAL exige ALU1. */
 typedef enum {
     PORYGON_RESOURCE_NONE,
     PORYGON_RESOURCE_MATH,
@@ -63,14 +62,11 @@ typedef enum {
     PORYGON_MEMORY_WRITE
 } porygon_memory_effect_t;
 
-/* Estado arquitectónico fuera del banco de registros. Las máscaras permiten
-   modelar dependencias sin fingir que AUTH o las banderas son registros GPR. */
-#define PORYGON_STATE_FLAGS  UINT32_C(0x01)
 #define PORYGON_STATE_CRYPTO UINT32_C(0x02)
 
 /* Entrada que recibe el scheduler para una operación. uses/defs son máscaras
    de ocho bits; por ejemplo, leer r1 y r3 da 0b00001010. state_uses/defs
-   aplican la misma idea a banderas y estado CRYPTO. */
+   aplican la misma idea al estado CRYPTO. */
 typedef struct {
     porygon_instruction_t instruction;
     porygon_label_id_t target_label; /* No se convierte todavía en offset. */

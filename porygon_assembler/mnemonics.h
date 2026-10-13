@@ -26,4 +26,8 @@ typedef struct {
  */
 const porygon_mnemonic_t *porygon_find_mnemonic(const char *name);
 
+/** Devuelve el nombre canónico de una operación reconocida, o NULL. */
+const char *porygon_mnemonic_name(porygon_format_t format, unsigned int funct,
+                                 bool immediate);
+
 #endif

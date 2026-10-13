@@ -90,3 +90,18 @@ const porygon_mnemonic_t *porygon_find_mnemonic(const char *name)
 
     return NULL;
 }
+
+/** Reutiliza la tabla del parser para escribir ASM sin duplicar la ISA. */
+const char *porygon_mnemonic_name(porygon_format_t format, unsigned int funct,
+                                 bool immediate)
+{
+    size_t index;
+    for (index = 0; index < sizeof(MNEMONICS) / sizeof(MNEMONICS[0]); ++index) {
+        const porygon_mnemonic_t *entry = &MNEMONICS[index];
+        if (entry->format == format && entry->funct == funct &&
+            entry->immediate == immediate) {
+            return entry->name;
+        }
+    }
+    return NULL;
+}

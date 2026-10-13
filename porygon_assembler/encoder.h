@@ -77,6 +77,12 @@ porygon_encode_result_t porygon_encode_math(porygon_math_op_t op, int rs1,
                                             int rs2, bool immediate,
                                             uint16_t *encoded);
 
+/** Codifica MATH con la ALU elegida por el scheduler; shifts y MUL exigen pipe 1. */
+porygon_encode_result_t porygon_encode_math_pipe(porygon_math_op_t op, int rs1,
+                                               int rs2, bool immediate,
+                                               unsigned int pipe,
+                                               uint16_t *encoded);
+
 /*
  * op selecciona el funct de la carga o almacenamiento LOST. Sin inmediato,
  * offset admite valores de -4 a 3 bytes. Con inmediato, offset debe ser cero y el

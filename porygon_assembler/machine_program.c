@@ -4,13 +4,13 @@
 
 #include <stdlib.h>
 
-/* Cada bit corresponde a un registro físico y permite comprobar RAW, WAR y
-   WAW con operaciones de máscaras, sin volver a leer los operandos ASM. */
+/** Convierte rn en el bit n; por ejemplo, r3 se representa como 00001000. */
 static uint8_t register_bit(uint8_t number)
 {
     return (uint8_t)(UINT8_C(1) << number);
 }
 
+/** Agrega un destino real; escribir r0 no produce un valor que deba esperarse. */
 static void define_register(porygon_machine_instruction_t *out, uint8_t number)
 {
     /* r0 es constante: una escritura hacia él no crea dependencia RAW/WAW. */
@@ -19,6 +19,10 @@ static void define_register(porygon_machine_instruction_t *out, uint8_t number)
     }
 }
 
+/**
+ * Deriva lecturas, escrituras, efectos y slots desde operandos ya validados.
+ * Las máscaras describen dependencias potenciales; no contienen ciclos ni ALU elegida.
+ */
 void porygon_describe_instruction(porygon_machine_instruction_t *out)
 {
     const porygon_instruction_t *in;
@@ -46,8 +50,6 @@ void porygon_describe_instruction(porygon_machine_instruction_t *out)
     case PORYGON_FORMAT_MATH:
         /* MOV solo lee rs2. Las otras formas operan sobre el valor previo
            de rs1; con inmediato o en forma unaria no leen rs2. */
-        /* Los funct de desplazamiento y multiplicación usan la ALU especial
-           de la ISA; las demás operaciones MATH usan la general. */
         out->resource = ((in->funct >= PORYGON_MATH_SHL &&
                           in->funct <= PORYGON_MATH_MUL) ||
                          in->funct == PORYGON_MATH_MULH)
@@ -61,9 +63,6 @@ void porygon_describe_instruction(porygon_machine_instruction_t *out)
             out->uses |= register_bit(in->operands.math.rs2);
         }
         define_register(out, in->operands.math.rs1);
-        /* Marcar todas las operaciones MATH como escritoras de banderas es
-           conservador hasta fijar qué funct las actualiza en el RTL. */
-        out->state_defs = PORYGON_STATE_FLAGS;
         break;
     case PORYGON_FORMAT_LOST:
         out->resource = PORYGON_RESOURCE_LOST;
@@ -109,6 +108,7 @@ void porygon_describe_instruction(porygon_machine_instruction_t *out)
     }
 }
 
+/** Libera los arreglos y los nombres de etiquetas que pertenecen al programa. */
 void porygon_machine_program_free(porygon_machine_program_t *program)
 {
     size_t index;

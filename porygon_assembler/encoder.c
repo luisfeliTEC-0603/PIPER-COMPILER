@@ -80,6 +80,29 @@ porygon_encode_result_t porygon_encode_math(porygon_math_op_t op, int rs1,
     return PORYGON_ENCODE_OK;
 }
 
+/** Conserva la validación de MATH y permite usar ALU1 para operaciones básicas. */
+porygon_encode_result_t porygon_encode_math_pipe(porygon_math_op_t op, int rs1,
+                                               int rs2, bool immediate,
+                                               unsigned int pipe,
+                                               uint16_t *encoded)
+{
+    uint16_t word;
+    porygon_encode_result_t status;
+
+    if (encoded == NULL) {
+        return PORYGON_ENCODE_INVALID_ARGUMENT;
+    }
+    status = porygon_encode_math(op, rs1, rs2, immediate, &word);
+    if (status != PORYGON_ENCODE_OK) {
+        return status;
+    }
+    if (pipe > 1 || ((word & 8u) != 0 && pipe == 0)) {
+        return PORYGON_ENCODE_INVALID_FORM;
+    }
+    *encoded = (uint16_t)((word & ~8u) | (pipe << 3));
+    return PORYGON_ENCODE_OK;
+}
+
 porygon_encode_result_t porygon_encode_lost(porygon_lost_op_t op, int rd,
                                             int rs, int offset, bool immediate,
                                             uint16_t *encoded)
@@ -164,6 +187,7 @@ porygon_encode_result_t porygon_encode_crypto(porygon_crypto_op_t op, int rs1,
     if (((op == PORYGON_CRYPTO_AUTH || op == PORYGON_CRYPTO_PWD ||
           op == PORYGON_CRYPTO_RVK) &&
          (rs1 != 0 || rs2 != 0 || item_index != 0 || key_index != 0)) ||
+        (op == PORYGON_CRYPTO_FEISTEL && rs1 == rs2 && rs1 != 0) ||
         (op == PORYGON_CRYPTO_WRITE && rs2 != 0) ||
         (op == PORYGON_CRYPTO_LOPW && (rs2 != 0 || key_index != 0))) {
         return PORYGON_ENCODE_INVALID_FORM;
