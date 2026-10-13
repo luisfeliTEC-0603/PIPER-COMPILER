@@ -17,11 +17,12 @@
 #define REG_ARG2     3   /* r3: tercer argumento */
 #define REG_ARG3     4   /* r4: cuarto argumento */
 #define REG_TMP0     5   /* r5: temporal */
-#define REG_TMP1     6   /* r6: temporal / dirección de retorno */
+#define REG_TMP1     6   /* r6: temporal / id al despachar retornos */
 #define REG_FP       7   /* r7: frame pointer */
 
 #define MAX_TEMPORALES   2
 #define MAX_ARGUMENTOS   4
+#define CALL_RECORD_SIZE 32  /* id, r1..r6 y valor de retorno */
 
 /* ----------------------------------------------------------------
  * Pila de etiquetas para break
@@ -52,6 +53,11 @@ typedef struct {
 
     /* Estado de temporales: bitmask de r5/r6 en uso */
     unsigned int temp_in_use;
+
+    /* Continuaciones de llamadas emitidas y espacio reservado al evaluar
+     * argumentos de llamadas anidadas. */
+    int call_site_count;
+    int pending_call_bytes;
 
     /* Buffer de último error */
     char last_error[256];
@@ -126,7 +132,8 @@ int codegen_array_index_address(CodegenContext *ctx,
 /* ----------------------------------------------------------------
  * codegen_call.c
  * ---------------------------------------------------------------- */
-void codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg);
+int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg);
+void codegen_emit_return_dispatch(CodegenContext *ctx);
 
 /* ----------------------------------------------------------------
  * codegen_crypto.c

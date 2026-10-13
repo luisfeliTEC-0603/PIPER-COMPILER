@@ -448,25 +448,49 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 }
 
 /* ----------------------------------------------------------------
- * Stubs
+ * break y output
  * ---------------------------------------------------------------- */
 
 static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
 {
+    int fin_n;
+    char fin_label[32];
+
     (void)stmt;
-    emit_comment(ctx, "break no implementado aun (punto 9)");
+    fin_n = label_stack_top(ctx);
+    if (fin_n < 0) {
+        codegen_context_error(ctx, "break fuera de un ciclo");
+        return;
+    }
+    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    emit_instruction(ctx, "j %s", fin_label);
 }
 
 static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
 {
-    (void)stmt;
-    emit_comment(ctx, "output no implementado aun (punto 9)");
+    const AstNode *value = stmt->data.output_statement.value;
+    char epilogue_name[SYMBOL_NAME_MAX + 16];
+
+    if (ctx->current_function == NULL || value == NULL) {
+        codegen_context_error(ctx, "output fuera de una rutina o sin valor");
+        return;
+    }
+    if (value->kind != AST_NONE_LITERAL &&
+        codegen_expression(ctx, value, REG_RET) == TYPE_VOID)
+        return;
+
+    snprintf(epilogue_name, sizeof(epilogue_name), "epilogo_%s",
+             ctx->current_function->name);
+    emit_instruction(ctx, "j %s", epilogue_name);
 }
+
+/* ----------------------------------------------------------------
+ * Llamadas pendientes
+ * ---------------------------------------------------------------- */
 
 static void codegen_call_statement(CodegenContext *ctx, const AstNode *stmt)
 {
-    (void)stmt;
-    emit_comment(ctx, "llamada como sentencia no implementada aun (punto 6)");
+    (void)codegen_call(ctx, stmt, -1);
 }
 
 /* ----------------------------------------------------------------

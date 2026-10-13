@@ -1,5 +1,7 @@
 #include "codegen_internal.h"
 
+#include <string.h>
+
 /*
  * Punto de entrada del generador de código.
  *
@@ -32,6 +34,28 @@ CodegenResult codegen_generate(const AstNode *root,
     emit_comment(ctx, "Convencion: r7=frame pointer, r1=retorno, r5/r6=temp");
     emit_blank(ctx);
 
+    /* Entrada autocontenida cuando existe main sin parámetros. El id cero
+     * permite que el despachador termine en fin_programa. */
+    {
+        const Symbol *entry = NULL;
+        for (const Symbol *it = table->global_scope->symbols_head;
+             it != NULL; it = it->next) {
+            if (strcmp(it->name, "main") == 0) {
+                entry = it;
+                break;
+            }
+        }
+        if (entry != NULL && entry->symbol_class == SYMBOL_FUNC &&
+            entry->param_count == 0) {
+            emit_instruction(ctx, "mov r%d, r%d", REG_FP, REG_ZERO);
+            emit_instruction(ctx, "sumi r%d, #1", REG_FP);
+            emit_instruction(ctx, "shli r%d, #16", REG_FP);
+            emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
+            emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
+            emit_instruction(ctx, "j main");
+        }
+    }
+
     /* Recorrer los elementos del programa. */
     if (root->data.program.elements != NULL) {
         AstNodeList *elements = root->data.program.elements;
@@ -63,6 +87,8 @@ CodegenResult codegen_generate(const AstNode *root,
             }
         }
     }
+
+    codegen_emit_return_dispatch(ctx);
 
     result = codegen_has_errors(ctx)
         ? CODEGEN_ERROR_INTERNO

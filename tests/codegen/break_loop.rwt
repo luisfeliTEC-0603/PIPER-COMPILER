@@ -1,0 +1,10 @@
+routine B32 corte_loop[] {
+    create B32 i.
+    i store 0.
+    loop[i & 0 -> 5 & 1] {
+        when [i = 2] {
+            break.
+        }
+    }
+    output i.
+}

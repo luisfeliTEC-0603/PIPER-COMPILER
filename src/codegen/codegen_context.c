@@ -70,6 +70,8 @@ CodegenContext *codegen_context_create(const AstNode *root,
     ctx->current_scope = table->global_scope;
     ctx->frame_offset = 0;
     ctx->temp_in_use = 0;
+    ctx->call_site_count = 0;
+    ctx->pending_call_bytes = 0;
     ctx->last_error[0] = '\0';
 
     ctx->break_stack = label_stack_create();
