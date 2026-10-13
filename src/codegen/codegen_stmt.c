@@ -183,6 +183,23 @@ void codegen_statement(CodegenContext *ctx, const AstNode *stmt)
     }
 
     switch (stmt->kind) {
+    case AST_UNARY_EXPRESSION:
+        {
+            int temp = alloc_temp(ctx);
+            if (temp < 0) break;
+            codegen_expression(ctx, stmt, temp);
+            free_temp(ctx, temp);
+        }
+        break;
+    case AST_BINARY_EXPRESSION: {
+        int temp = alloc_temp(ctx);
+        if (temp < 0) {
+            break;
+        }
+        (void)codegen_expression(ctx, stmt, temp);
+        free_temp(ctx, temp);
+        break;
+    }
     case AST_ASSIGNMENT:
         codegen_assignment(ctx, stmt);
         break;

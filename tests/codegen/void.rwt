@@ -1,5 +1,9 @@
-create B32 contador.
-
 routine B32 main[] {
-    contador store 42.
+    create B32 a.
+    create B32 b.
+    create B32 c.
+    a store 5.
+    b store 3.
+    c store a + b.
+    output c.
 }
