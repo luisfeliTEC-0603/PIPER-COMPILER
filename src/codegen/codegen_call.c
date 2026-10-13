@@ -126,4 +126,10 @@ void codegen_emit_return_dispatch(CodegenContext *ctx)
     emit_instruction(ctx, "j fin_programa");
     emit_label(ctx, "error_pila");
     emit_instruction(ctx, "j error_pila");
+    emit_label(ctx, "error_division_cero");
+    emit_instruction(ctx, "j error_division_cero");
+    emit_label(ctx, "error_exponente_negativo");
+    emit_instruction(ctx, "j error_exponente_negativo");
+    emit_label(ctx, "error_aritmetico");
+    emit_instruction(ctx, "j error_aritmetico");
 }

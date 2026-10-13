@@ -53,6 +53,7 @@ typedef struct {
 
     /* Estado de temporales: bitmask de r5/r6 en uso */
     unsigned int temp_in_use;
+    int expression_depth;      /* Distingue valores vivos de expresiones externas */
 
     /* Continuaciones de llamadas emitidas y espacio reservado al evaluar
      * argumentos de llamadas anidadas. */
@@ -107,6 +108,8 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value);
  * codegen_expr.c
  * ---------------------------------------------------------------- */
 int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg);
+int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
+                               int dest_reg);
 
 /* ----------------------------------------------------------------
  * codegen_stmt.c

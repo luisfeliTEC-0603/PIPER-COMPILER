@@ -1,0 +1,19 @@
+routine B32 residuo[B32 dividendo, B32 divisor] {
+    output dividendo % divisor.
+}
+
+routine uB32 residuo_sin_signo[uB32 dividendo, uB32 divisor] {
+    output dividendo % divisor.
+}
+
+routine B32 main[] {
+    create B32 negativo.
+    create B32 positivo.
+    create B32 extremo.
+    create uB32 grande.
+    negativo store residuo[-17, 3].
+    positivo store residuo[17, -3].
+    extremo store residuo[-2147483648, -1].
+    grande store residuo_sin_signo[4294967295, 7].
+    output negativo + positivo + extremo.
+}

@@ -26,6 +26,7 @@ OBJ = build/parser.o \
       build/codegen_regs.o \
       build/codegen_routine.o \
       build/codegen_expr.o \
+      build/codegen_arithmetic.o \
       build/codegen_stmt.o \
       build/codegen_array.o \
       build/codegen_call.o \
@@ -93,6 +94,9 @@ build/codegen_routine.o: src/codegen/codegen_routine.c include/codegen.h include
 
 build/codegen_expr.o: src/codegen/codegen_expr.c include/codegen.h include/codegen_internal.h
 	$(CC) $(CFLAGS) -c src/codegen/codegen_expr.c -o $@
+
+build/codegen_arithmetic.o: src/codegen/codegen_arithmetic.c include/codegen.h include/codegen_internal.h
+	$(CC) $(CFLAGS) -c src/codegen/codegen_arithmetic.c -o $@
 
 build/codegen_stmt.o: src/codegen/codegen_stmt.c include/codegen.h include/codegen_internal.h
 	$(CC) $(CFLAGS) -c src/codegen/codegen_stmt.c -o $@

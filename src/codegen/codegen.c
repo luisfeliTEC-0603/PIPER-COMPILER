@@ -5,8 +5,12 @@
 /*
  * Punto de entrada del generador de código.
  *
- * Recorre el AST_PROGRAM y emite cada rutina. Las declaraciones globales
- * ya tienen espacio en la tabla; las formas de arreglo se validan aqui.
+ * Recorre la lista de hijos de AST_PROGRAM en varias pasadas:
+ *   1. Detectar si hay sentencias globales que necesitan una entrada.
+ *   2. Generar esas sentencias en orden, antes del salto a main o al final.
+ *   3. Generar las rutinas y procesar declaraciones/imports aún no visitados.
+ * codegen_statement y codegen_routine recorren los hijos de cada elemento;
+ * codegen_expression recorre sus operandos. El recorrido del AST se conserva.
  */
 
 CodegenResult codegen_generate(const AstNode *root,
@@ -16,6 +20,9 @@ CodegenResult codegen_generate(const AstNode *root,
 {
     CodegenContext *ctx;
     CodegenResult result;
+    const Symbol *entry = NULL;
+    int has_global_statements = 0;
+    AstNodeList *elements;
 
     if (root == NULL || table == NULL || output == NULL) {
         return CODEGEN_ERROR_AST_INVALIDO;
@@ -34,31 +41,59 @@ CodegenResult codegen_generate(const AstNode *root,
     emit_comment(ctx, "Convencion: r7=frame pointer, r1=retorno, r5/r6=temp");
     emit_blank(ctx);
 
-    /* Entrada autocontenida cuando existe main sin parámetros. El id cero
-     * permite que el despachador termine en fin_programa. */
-    {
-        const Symbol *entry = NULL;
-        for (const Symbol *it = table->global_scope->symbols_head;
-             it != NULL; it = it->next) {
-            if (strcmp(it->name, "main") == 0) {
-                entry = it;
-                break;
-            }
+    elements = root->data.program.elements;
+    /* main se busca en la tabla semántica para comprobar su firma. Este
+     * recorrido de símbolos es independiente de las pasadas del AST. */
+    for (const Symbol *it = table->global_scope->symbols_head;
+         it != NULL; it = it->next) {
+        if (strcmp(it->name, "main") == 0 && it->symbol_class == SYMBOL_FUNC &&
+            it->param_count == 0) {
+            entry = it;
+            break;
         }
-        if (entry != NULL && entry->symbol_class == SYMBOL_FUNC &&
-            entry->param_count == 0) {
-            emit_instruction(ctx, "mov r%d, r%d", REG_FP, REG_ZERO);
-            emit_instruction(ctx, "sumi r%d, #1", REG_FP);
-            emit_instruction(ctx, "shli r%d, #16", REG_FP);
-            emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
-            emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
-            emit_instruction(ctx, "j main");
+    }
+    /* Primera pasada del AST: solo clasifica, no genera instrucciones.
+     * Declaraciones, imports y rutinas no son sentencias globales ejecutables;
+     * se excluyen aquí, pero sí se procesan en las siguientes pasadas. */
+    if (elements != NULL) {
+        for (size_t i = 0; i < elements->count; i++) {
+            const AstNode *elem = elements->items[i];
+            if (elem != NULL && elem->kind != AST_ROUTINE_DECLARATION &&
+                elem->kind != AST_VARIABLE_DECLARATION &&
+                elem->kind != AST_IMPORT_DECLARATION)
+                has_global_statements = 1;
         }
     }
 
-    /* Recorrer los elementos del programa. */
+    if (entry != NULL || has_global_statements) {
+        emit_instruction(ctx, "mov r%d, r%d", REG_FP, REG_ZERO);
+        emit_instruction(ctx, "sumi r%d, #1", REG_FP);
+        emit_instruction(ctx, "shli r%d, #16", REG_FP);
+    }
+    /* Segunda pasada del AST, si hay código global: procesa en orden todos
+     * los elementos salvo rutinas. Incluye declaraciones e imports mediante
+     * codegen_statement; las rutinas se emiten después para que la entrada
+     * no caiga accidentalmente dentro de su cuerpo.
+     * El semántico no permite locales en bloques fuera de una rutina. */
+    if (has_global_statements) {
+        for (size_t i = 0; i < elements->count; i++) {
+            const AstNode *elem = elements->items[i];
+            if (elem != NULL && elem->kind != AST_ROUTINE_DECLARATION)
+                codegen_statement(ctx, elem);
+        }
+    }
+    if (entry != NULL) {
+        /* El id cero termina el retorno de main en fin_programa. */
+        emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
+        emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
+        emit_instruction(ctx, "j main");
+    } else if (has_global_statements) {
+        emit_instruction(ctx, "j fin_programa");
+    }
+
+    /* Tercera pasada del AST: emitir las rutinas. Si no hubo segunda pasada,
+     * procesar aquí las declaraciones e imports. No repetir nodos ya tratados. */
     if (root->data.program.elements != NULL) {
-        AstNodeList *elements = root->data.program.elements;
         for (size_t i = 0; i < elements->count; i++) {
             AstNode *elem = elements->items[i];
             if (elem == NULL) {
@@ -69,6 +104,8 @@ CodegenResult codegen_generate(const AstNode *root,
                 codegen_routine(ctx, elem);
                 break;
             case AST_VARIABLE_DECLARATION:
+                /* Ya validada por codegen_statement en la segunda pasada. */
+                if (has_global_statements) break;
                 if (elem->data.variable_declaration.dimensions != NULL &&
                     elem->data.variable_declaration.dimensions->count > 0)
                     codegen_array_declaration(ctx, elem);
@@ -77,12 +114,14 @@ CodegenResult codegen_generate(const AstNode *root,
                                  elem->data.variable_declaration.name);
                 break;
             case AST_IMPORT_DECLARATION:
+                /* Ya tratado por codegen_statement en la segunda pasada. */
+                if (has_global_statements) break;
                 emit_comment(ctx, "import '%s' (ignorado en codegen)",
                              elem->data.import_declaration.symbol);
                 break;
             default:
-                codegen_context_error(ctx,
-                    "elemento de programa no manejado (kind=%d)", elem->kind);
+                /* Asignaciones, expresiones y control global ya fueron
+                 * recorridos y emitidos por codegen_statement. */
                 break;
             }
         }

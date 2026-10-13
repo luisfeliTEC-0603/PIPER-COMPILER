@@ -43,16 +43,16 @@ void reset_temps(CodegenContext *ctx)
 /*
  * Carga un valor inmediato en dest_reg.
  *
- * La ISA de PORYGON usa inmediatos de 16 bits CON SIGNO en todas las
- * instrucciones que los aceptan (`sumi`, `diffi`, `andi`, `ori`, etc.).
- * Por lo tanto, el rango representable directamente es -32768..32767.
+ * El parser ASM acepta inmediatos de 16 bits con signo (-32768..32767).
+ * Esta función usa sumi/diffi, cuya ALU extiende el inmediato con signo;
+ * no depende de la extensión de andi/ori/xori en el RTL.
  *
  * Estrategia:
  *   - 0:                    mov dest, r0
  *   - 1..32767:             mov dest, r0 ; sumi dest, #N
  *   - -32767..-1:           mov dest, r0 ; diffi dest, #|N|
  *   - -32768:              mov dest, r0 ; sumi dest, #-32768
- *   - fuera de rango:       error (se construirá con shli+ori en punto 3)
+ *   - resto de 32 bits:     construir dos mitades con shli y sumi
  *
  * Nota: el parser representa números negativos como AST_UNARY_EXPRESSION
  * (NEGATE) sobre un AST_INTEGER_LITERAL positivo. Por eso `value` llega
@@ -89,9 +89,23 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value)
         return 1;
     }
 
-    codegen_context_error(ctx,
-        "load_immediate: valor %lld fuera del rango -32768..32767 "
-        "(se construira con shli+ori en punto 3)",
-        value);
+    if (value >= -2147483648LL && value <= 4294967295LL) {
+        unsigned long long bits = (unsigned long long)value & 0xffffffffULL;
+        long long low = (long long)(bits & 65535ULL);
+        long long high;
+        if (low >= 32768) low -= 65536;
+        high = ((long long)bits - low) / 65536;
+        if (high >= 32768) high -= 65536;
+        emit_instruction(ctx, "mov r%d, r0", dest_reg);
+        /* Ajustar la mitad alta permite sumar la baja con signo. Tampoco
+         * depende de cómo la ALU extienda los inmediatos lógicos. */
+        if (high != 0) {
+            emit_instruction(ctx, "sumi r%d, #%lld", dest_reg, high);
+            emit_instruction(ctx, "shli r%d, #16", dest_reg);
+        }
+        if (low != 0) emit_instruction(ctx, "sumi r%d, #%lld", dest_reg, low);
+        return 1;
+    }
+    codegen_context_error(ctx, "literal %lld fuera del rango de 32 bits", value);
     return 0;
 }

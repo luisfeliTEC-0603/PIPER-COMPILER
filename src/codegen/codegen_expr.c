@@ -91,7 +91,7 @@ static int codegen_unary_negate(CodegenContext *ctx,
     /* Optimización: literal entero. */
     if (operand != NULL && operand->kind == AST_INTEGER_LITERAL) {
         long long v = (long long)operand->data.integer_literal.value;
-        if (v <= 32768) {
+        if (v <= 2147483648LL) {
             if (!load_immediate(ctx, dest_reg, -v)) {
                 return TYPE_VOID;
             }
@@ -294,132 +294,6 @@ static int codegen_binary_comparison(CodegenContext *ctx,
 }
 
 /* ----------------------------------------------------------------
- * División y residuo por una potencia de dos
- * ---------------------------------------------------------------- */
-
-static int codegen_power_two_divmod(CodegenContext *ctx,
-                                    const AstNode *expr, int dest_reg)
-{
-    const AstNode *left = expr->data.binary_expression.left;
-    const AstNode *right = expr->data.binary_expression.right;
-    unsigned long long divisor;
-    unsigned shift = 0;
-    int is_remainder = expr->data.binary_expression.operator == AST_OP_REMAINDER;
-    int is_unsigned;
-    int temp;
-
-    if (left == NULL || right == NULL) {
-        codegen_context_error(ctx, "division o modulo con operandos nulos");
-        return TYPE_VOID;
-    }
-    if (right->kind != AST_INTEGER_LITERAL) {
-        codegen_context_error(ctx,
-            "division y modulo solo soportan un divisor literal potencia de dos");
-        return TYPE_VOID;
-    }
-    divisor = right->data.integer_literal.value;
-    if (divisor == 0 || divisor > (1ULL << 31) ||
-        (divisor & (divisor - 1)) != 0) {
-        codegen_context_error(ctx,
-            "division y modulo solo soportan un divisor literal potencia de dos");
-        return TYPE_VOID;
-    }
-    while ((1ULL << shift) != divisor) shift++;
-
-    is_unsigned = left->has_piper_type &&
-        (left->piper_type == PIPER_TYPE_UB8 ||
-         left->piper_type == PIPER_TYPE_UB16 ||
-         left->piper_type == PIPER_TYPE_UB32);
-    if (!is_unsigned && shift == 31) {
-        codegen_context_error(ctx,
-            "divisor 2^31 solo soportado para operandos sin signo");
-        return TYPE_VOID;
-    }
-    if (codegen_expression(ctx, left, dest_reg) == TYPE_VOID)
-        return TYPE_VOID;
-    if (shift == 0) {
-        if (is_remainder)
-            emit_instruction(ctx, "mov r%d, r0", dest_reg);
-        return TYPE_INT;
-    }
-
-    if (!is_remainder && is_unsigned) {
-        emit_instruction(ctx, "shri r%d, #%u", dest_reg, shift);
-        return TYPE_INT;
-    }
-    if (is_remainder && is_unsigned) {
-        if (shift <= 15)
-            emit_instruction(ctx, "andi r%d, #%llu", dest_reg, divisor - 1);
-        else {
-            emit_instruction(ctx, "shli r%d, #%u", dest_reg, 32 - shift);
-            emit_instruction(ctx, "shri r%d, #%u", dest_reg, 32 - shift);
-        }
-        return TYPE_INT;
-    }
-
-    temp = alloc_temp(ctx);
-    if (temp < 0) return TYPE_VOID;
-    emit_instruction(ctx, "mov r%d, r%d", temp, dest_reg);
-    emit_instruction(ctx, "sari r%d, #31", temp);
-
-    if (!is_remainder) {
-        /* (x + ((x < 0) ? divisor - 1 : 0)) >> shift trunca hacia cero. */
-        emit_instruction(ctx, "shri r%d, #%u", temp, 32 - shift);
-        emit_instruction(ctx, "sum r%d, r%d", dest_reg, temp);
-        emit_instruction(ctx, "sari r%d, #%u", dest_reg, shift);
-    } else {
-        /* Convertir a magnitud, aislar bits bajos y restaurar el signo. */
-        emit_instruction(ctx, "xor r%d, r%d", dest_reg, temp);
-        emit_instruction(ctx, "diff r%d, r%d", dest_reg, temp);
-        if (shift <= 15)
-            emit_instruction(ctx, "andi r%d, #%llu", dest_reg, divisor - 1);
-        else {
-            emit_instruction(ctx, "shli r%d, #%u", dest_reg, 32 - shift);
-            emit_instruction(ctx, "shri r%d, #%u", dest_reg, 32 - shift);
-        }
-        emit_instruction(ctx, "xor r%d, r%d", dest_reg, temp);
-        emit_instruction(ctx, "diff r%d, r%d", dest_reg, temp);
-    }
-    free_temp(ctx, temp);
-    return TYPE_INT;
-}
-
-/* ----------------------------------------------------------------
- * Potencia con exponente literal
- * ---------------------------------------------------------------- */
-
-static int codegen_constant_power(CodegenContext *ctx,
-                                  const AstNode *expr, int dest_reg)
-{
-    const AstNode *left = expr->data.binary_expression.left;
-    const AstNode *right = expr->data.binary_expression.right;
-    unsigned long long exponent;
-    int temp;
-
-    if (left == NULL || right == NULL ||
-        right->kind != AST_INTEGER_LITERAL ||
-        right->data.integer_literal.value > 16) {
-        codegen_context_error(ctx,
-            "potencia solo soporta un exponente literal entre 0 y 16");
-        return TYPE_VOID;
-    }
-    exponent = right->data.integer_literal.value;
-    if (codegen_expression(ctx, left, dest_reg) == TYPE_VOID)
-        return TYPE_VOID;
-    if (exponent == 0)
-        return load_immediate(ctx, dest_reg, 1) ? TYPE_INT : TYPE_VOID;
-    if (exponent == 1) return TYPE_INT;
-
-    temp = alloc_temp(ctx);
-    if (temp < 0) return TYPE_VOID;
-    emit_instruction(ctx, "mov r%d, r%d", temp, dest_reg);
-    for (unsigned long long i = 1; i < exponent; i++)
-        emit_instruction(ctx, "mul r%d, r%d", dest_reg, temp);
-    free_temp(ctx, temp);
-    return TYPE_INT;
-}
-
-/* ----------------------------------------------------------------
  * Aritmética y lógica binaria
  * ---------------------------------------------------------------- */
 
@@ -435,9 +309,9 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
     const char *instruction;
 
     if (op == AST_OP_DIVIDE || op == AST_OP_REMAINDER)
-        return codegen_power_two_divmod(ctx, expr, dest_reg);
+        return codegen_general_arithmetic(ctx, expr, dest_reg);
     if (op == AST_OP_POWER)
-        return codegen_constant_power(ctx, expr, dest_reg);
+        return codegen_general_arithmetic(ctx, expr, dest_reg);
 
     /* 1. Evaluar left en dest_reg. */
     left_type = codegen_expression(ctx, left, dest_reg);
@@ -518,7 +392,8 @@ static int codegen_binary_expression(CodegenContext *ctx,
  * Punto de entrada
  * ---------------------------------------------------------------- */
 
-int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg)
+static int codegen_expression_impl(CodegenContext *ctx, const AstNode *expr,
+                                   int dest_reg)
 {
     if (ctx == NULL || expr == NULL) {
         return TYPE_VOID;
@@ -553,4 +428,14 @@ int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg)
             expr->kind);
         return TYPE_VOID;
     }
+}
+
+int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg)
+{
+    int type;
+    if (ctx == NULL || expr == NULL) return TYPE_VOID;
+    ctx->expression_depth++;
+    type = codegen_expression_impl(ctx, expr, dest_reg);
+    ctx->expression_depth--;
+    return type;
 }
