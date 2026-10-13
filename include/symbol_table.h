@@ -31,7 +31,9 @@ typedef struct Symbol {
     int is_array;
     int array_rows;
     int array_cols;
+    /* Espacio ocupado en el ámbito; un parámetro matriz solo ocupa el puntero. */
     int size_bytes;
+    /* Para un parámetro matriz: ranura del puntero, no de los elementos. */
     int address_or_offset;
     DataType return_type;
     int param_count;
@@ -61,7 +63,8 @@ typedef struct SymbolTable {
 
 SymbolTable *symbol_table_create(void);
 void symbol_table_destroy(SymbolTable *table);
-void symbol_table_open_scope(SymbolTable *table);
+/* Devuelve 1 si creó el ámbito; 0 si no pudo hacerlo. */
+int symbol_table_open_scope(SymbolTable *table);
 void symbol_table_close_scope(SymbolTable *table);
 
 Symbol *symbol_table_insert(SymbolTable *table, const char *name,

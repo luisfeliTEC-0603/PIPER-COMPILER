@@ -93,19 +93,22 @@ void symbol_table_destroy(SymbolTable *table)
     free(table);
 }
 
-void symbol_table_open_scope(SymbolTable *table)
+int symbol_table_open_scope(SymbolTable *table)
 {
     Scope *scope;
 
     if (table == NULL || table->current_scope == NULL) {
-        return;
+        return 0;
     }
-    scope = scope_create(table->scope_counter++, 0, table->current_scope);
-    if (scope != NULL) {
-        scope->next_all = table->all_scopes;
-        table->all_scopes = scope;
-        table->current_scope = scope;
+    scope = scope_create(table->scope_counter, 0, table->current_scope);
+    if (scope == NULL) {
+        return 0;
     }
+    table->scope_counter++;
+    scope->next_all = table->all_scopes;
+    table->all_scopes = scope;
+    table->current_scope = scope;
+    return 1;
 }
 
 void symbol_table_close_scope(SymbolTable *table)
@@ -180,6 +183,11 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
         if (size < 0) {
             free(symbol);
             return NULL;
+        }
+        /* La matriz vive en el ámbito del llamador. El parámetro solo guarda
+         * su dirección base; conservamos filas y columnas para describirla. */
+        if (symbol_class == SYMBOL_PARAM && type == TYPE_ARRAY) {
+            size = SYMBOL_WORD_SIZE;
         }
         symbol->size_bytes = size;
         if (table->current_scope->is_global) {
@@ -263,27 +271,33 @@ static void print_memory_address(FILE *output, const Scope *scope,
 void symbol_table_print_scope(FILE *output, const Scope *scope)
 {
     const Symbol *symbol;
+    char type_label[40];
 
     if (output == NULL || scope == NULL) {
         return;
     }
     fprintf(output, "\nScope %d%s\n", scope->scope_id,
             scope->is_global ? " (global)" : " (local, base r7)");
-    fprintf(output, "  %-18s %-10s %-16s %s\n",
-            "nombre", "clase", "tipo", "mem_dir");
-    fprintf(output, "  %-18s %-10s %-16s %s\n",
-            "------------------", "----------", "----------------",
+    fprintf(output, "  %-18s %-10s %-16s %-5s %s\n",
+            "nombre", "clase", "tipo", "bytes", "mem_dir");
+    fprintf(output, "  %-18s %-10s %-16s %-5s %s\n",
+            "------------------", "----------", "----------------", "-----",
             "------------------------");
     for (symbol = scope->symbols_head; symbol != NULL; symbol = symbol->next) {
-        fprintf(output, "  %-18s %-10s ", symbol->name,
-                symbol_class_name(symbol->symbol_class));
         if (symbol->is_array) {
-            fprintf(output, "array[%dx%d]      ", symbol->array_rows,
-                    symbol->array_cols);
+            snprintf(type_label, sizeof(type_label), "array[%dx%d]",
+                     symbol->array_rows, symbol->array_cols);
         } else {
-            fprintf(output, "%-16s ", data_type_name(symbol->type));
+            snprintf(type_label, sizeof(type_label), "%s",
+                     data_type_name(symbol->type));
         }
+        fprintf(output, "  %-18s %-10s %-16s %-5d ", symbol->name,
+                symbol_class_name(symbol->symbol_class), type_label,
+                symbol->size_bytes);
         print_memory_address(output, scope, symbol);
+        if (symbol->symbol_class == SYMBOL_PARAM && symbol->is_array) {
+            fputs("(ranura de puntero)", output);
+        }
         fputc('\n', output);
     }
 }
