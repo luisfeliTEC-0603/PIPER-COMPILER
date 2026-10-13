@@ -1,0 +1,8 @@
+routine B32 mientras_simple[] {
+    create B32 i.
+    i store 2.
+    alwhen [i < 2] {
+        i store 3.
+    }
+    output i.
+}

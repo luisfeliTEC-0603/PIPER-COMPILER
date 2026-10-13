@@ -50,7 +50,8 @@ void reset_temps(CodegenContext *ctx)
  * Estrategia:
  *   - 0:                    mov dest, r0
  *   - 1..32767:             mov dest, r0 ; sumi dest, #N
- *   - -32768..-1:           mov dest, r0 ; diffi dest, #|N|
+ *   - -32767..-1:           mov dest, r0 ; diffi dest, #|N|
+ *   - -32768:              mov dest, r0 ; sumi dest, #-32768
  *   - fuera de rango:       error (se construirá con shli+ori en punto 3)
  *
  * Nota: el parser representa números negativos como AST_UNARY_EXPRESSION
@@ -76,7 +77,13 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value)
         return 1;
     }
 
-    if (value < 0 && value >= -32768) {
+    if (value == -32768) {
+        emit_instruction(ctx, "mov r%d, r0", dest_reg);
+        emit_instruction(ctx, "sumi r%d, #-32768", dest_reg);
+        return 1;
+    }
+
+    if (value < 0 && value >= -32767) {
         emit_instruction(ctx, "mov r%d, r0", dest_reg);
         emit_instruction(ctx, "diffi r%d, #%lld", dest_reg, -value);
         return 1;

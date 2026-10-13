@@ -3,9 +3,8 @@
 /*
  * Punto de entrada del generador de código.
  *
- * Recorre el AST_PROGRAM y emite cada rutina y declaración global.
- * Por ahora solo procesa rutinas; las declaraciones globales y las
- * importaciones se ignoran con un comentario.
+ * Recorre el AST_PROGRAM y emite cada rutina. Las declaraciones globales
+ * ya tienen espacio en la tabla; las formas de arreglo se validan aqui.
  */
 
 CodegenResult codegen_generate(const AstNode *root,
@@ -46,18 +45,20 @@ CodegenResult codegen_generate(const AstNode *root,
                 codegen_routine(ctx, elem);
                 break;
             case AST_VARIABLE_DECLARATION:
-                /* Globales: por ahora solo comentario.
-                 * En puntos posteriores se emitirá su inicialización. */
-                emit_comment(ctx, "global '%s' (pendiente de inicializar)",
-                             elem->data.variable_declaration.name);
+                if (elem->data.variable_declaration.dimensions != NULL &&
+                    elem->data.variable_declaration.dimensions->count > 0)
+                    codegen_array_declaration(ctx, elem);
+                else
+                    emit_comment(ctx, "global '%s' (espacio reservado)",
+                                 elem->data.variable_declaration.name);
                 break;
             case AST_IMPORT_DECLARATION:
                 emit_comment(ctx, "import '%s' (ignorado en codegen)",
                              elem->data.import_declaration.symbol);
                 break;
             default:
-                emit_comment(ctx, "elemento de programa no manejado (kind=%d)",
-                             elem->kind);
+                codegen_context_error(ctx,
+                    "elemento de programa no manejado (kind=%d)", elem->kind);
                 break;
             }
         }

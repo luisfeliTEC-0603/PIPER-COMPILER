@@ -191,22 +191,28 @@ int main(int argc, char **argv)
                         asm_path, strerror(errno));
                 parse_status = 1;
             } else {
-                CodegenOptions opts = { .emitir_comentarios = 1,
+                CodegenOptions opts = { .emitir_comentarios = 0,
                                         .optimizar_temporales = 0 };
                 CodegenResult r = codegen_generate(program, symbols,
                                                    asm_file, &opts);
-                fclose(asm_file);
+                if (fclose(asm_file) != 0) {
+                    fprintf(stderr, "error: no se pudo cerrar '%s': %s\n",
+                            asm_path, strerror(errno));
+                    parse_status = 1;
+                }
                 if (r != CODEGEN_OK) {
                     fprintf(stderr,
                             "error: generación de código falló (código %d)\n", r);
                     parse_status = 1;
-                } else {
+                } else if (parse_status == 0) {
                     printf("[ASM] Generado exitosamente en '%s'\n", asm_path);
                 }
             }
         }
 
-        exit_status = PIPOC_EXIT_SUCCESS;
+        if (parse_status == 0) {
+            exit_status = PIPOC_EXIT_SUCCESS;
+        }
     } else if (parse_status == 0) {
         fprintf(stderr, "error interno: el parser no produjo un AST\n");
     }

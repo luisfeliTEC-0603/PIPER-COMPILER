@@ -126,6 +126,19 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
         return;
     }
 
+    /* Validar también arreglos que aparecen solo en la firma. */
+    if (routine->data.routine_declaration.parameters != NULL) {
+        AstNodeList *params = routine->data.routine_declaration.parameters;
+        for (size_t i = 0; i < params->count; i++) {
+            AstNode *param = params->items[i];
+            if (param != NULL && param->kind == AST_PARAMETER &&
+                param->data.parameter.dimensions != NULL &&
+                param->data.parameter.dimensions->count > 0)
+                codegen_array_declaration(ctx, param);
+        }
+        if (codegen_has_errors(ctx)) return;
+    }
+
     saved_scope = ctx->current_scope;
     saved_function = ctx->current_function;
     saved_frame_offset = ctx->frame_offset;

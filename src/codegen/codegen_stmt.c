@@ -26,10 +26,9 @@ static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
     }
 }
 
-/*
- * Carga en dest_reg el valor de un símbolo escalar.
- * Devuelve 1 si pudo, 0 si hubo error.
- */
+/* ----------------------------------------------------------------
+ * Lectura de un símbolo escalar
+ * ---------------------------------------------------------------- */
 
 static int load_symbol(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
@@ -48,6 +47,71 @@ static int load_symbol(CodegenContext *ctx, Symbol *sym, int dest_reg)
                          dest_reg, sym->address_or_offset, REG_FP);
     }
     return 1;
+}
+
+/* ----------------------------------------------------------------
+ * Asignaciones a arreglos
+ * ---------------------------------------------------------------- */
+
+static void codegen_index_assignment(CodegenContext *ctx,
+                                     const AstNode *target,
+                                     const AstNode *value)
+{
+    int address_reg = alloc_temp(ctx);
+    int value_reg;
+
+    if (address_reg < 0) return;
+    if (!codegen_array_index_address(ctx, target, address_reg)) {
+        free_temp(ctx, address_reg);
+        return;
+    }
+    value_reg = alloc_temp(ctx);
+    if (value_reg < 0) {
+        free_temp(ctx, address_reg);
+        return;
+    }
+    if (codegen_expression(ctx, value, value_reg) != TYPE_VOID)
+        emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
+    free_temp(ctx, value_reg);
+    free_temp(ctx, address_reg);
+}
+
+static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
+                                             const AstNode *target,
+                                             const AstNode *value)
+{
+    const AstNodeList *items = value->data.array_literal.elements;
+    int value_reg;
+
+    if (target->array_rank != 1 || sym->declared_type == PIPER_TYPE_BOOL ||
+        items == NULL || items->count != (size_t)sym->array_rows) {
+        codegen_context_error(ctx, "inicializacion de '%s' no soportada en punto 5",
+                              sym->name);
+        return;
+    }
+    value_reg = alloc_temp(ctx);
+    if (value_reg < 0) return;
+    for (size_t i = 0; i < items->count; i++) {
+        int base_reg;
+        size_t offset = i * SYMBOL_WORD_SIZE;
+
+        if (codegen_expression(ctx, items->items[i], value_reg) == TYPE_VOID)
+            break;
+        base_reg = alloc_temp(ctx);
+        if (base_reg < 0) break;
+        if (!load_array_base(ctx, sym, base_reg)) {
+            free_temp(ctx, base_reg);
+            break;
+        }
+        while (offset > 0) {
+            int chunk = offset > 32767 ? 32767 : (int)offset;
+            emit_instruction(ctx, "sumi r%d, #%d", base_reg, chunk);
+            offset -= (size_t)chunk;
+        }
+        emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, base_reg);
+        free_temp(ctx, base_reg);
+    }
+    free_temp(ctx, value_reg);
 }
 
 /* ----------------------------------------------------------------
@@ -74,14 +138,17 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
                 "no se puede asignar a la funcion '%s'", sym->name);
             return;
         }
-        if (sym->type == TYPE_ARRAY || sym->is_array) {
-            codegen_context_error(ctx,
-                "no se puede asignar a '%s' sin indexacion", sym->name);
+        if (sym->is_array) {
+            if (value->kind == AST_ARRAY_LITERAL)
+                codegen_array_literal_assignment(ctx, sym, target, value);
+            else
+                codegen_context_error(ctx,
+                    "asignacion de arreglo '%s' no soportada en punto 5",
+                    sym->name);
             return;
         }
     } else if (target->kind == AST_INDEX_EXPRESSION) {
-        codegen_context_error(ctx,
-            "asignacion a indexacion aun no implementada (punto 5)");
+        codegen_index_assignment(ctx, target, value);
         return;
     } else {
         codegen_context_error(ctx,
@@ -117,8 +184,7 @@ static void codegen_variable_declaration(CodegenContext *ctx,
         return;
     }
     if (dims != NULL && dims->count > 0) {
-        emit_comment(ctx, "declaracion de arreglo '%s' (pendiente punto 5)",
-                     name);
+        codegen_array_declaration(ctx, stmt);
         return;
     }
     emit_comment(ctx, "declaracion escalar '%s' (sin codigo)", name);
@@ -336,11 +402,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
         }
 
         /* Comparar: si control >= end, salir.
-         * Usamos ltn(end, control) + xori #1 → end < control → control > end.
-         * Pero queremos control >= end, que es equivalente a
-         * !(control < end).
-         *
-         * Estrategia: calcular control < end en temp2, luego invertir.
+         * Calcular control < end en temp2 y luego invertir.
          * ltn rTemp2, rTemp → temp2 = (control < end) ? 1 : 0
          * xori rTemp2, #1   → temp2 = !(control < end) = (control >= end)
          * jnz rTemp2, fin   → si control >= end, salir
@@ -408,6 +470,24 @@ static void codegen_call_statement(CodegenContext *ctx, const AstNode *stmt)
 }
 
 /* ----------------------------------------------------------------
+ * Ámbito de bloques
+ * ---------------------------------------------------------------- */
+
+static void codegen_block(CodegenContext *ctx, const AstNode *block)
+{
+    Scope *saved_scope = ctx->current_scope;
+    Scope *block_scope = block->semantic_scope;
+
+    if (block_scope == NULL || block_scope->parent != saved_scope) {
+        codegen_context_error(ctx, "ambito semantico del bloque no disponible");
+        return;
+    }
+    ctx->current_scope = block_scope;
+    codegen_statement_list(ctx, block->data.block.statements);
+    ctx->current_scope = saved_scope;
+}
+
+/* ----------------------------------------------------------------
  * Punto de entrada
  * ---------------------------------------------------------------- */
 
@@ -463,7 +543,7 @@ void codegen_statement(CodegenContext *ctx, const AstNode *stmt)
         codegen_routine(ctx, stmt);
         break;
     case AST_BLOCK:
-        codegen_statement_list(ctx, stmt->data.block.statements);
+        codegen_block(ctx, stmt);
         break;
     case AST_IMPORT_DECLARATION:
         emit_comment(ctx, "import '%s' ignorado en codegen",

@@ -102,7 +102,9 @@ static int codegen_unary_negate(CodegenContext *ctx,
     if (codegen_expression(ctx, operand, dest_reg) == TYPE_VOID) {
         return TYPE_VOID;
     }
-    emit_instruction(ctx, "diff r%d, r%d", dest_reg, REG_ZERO);
+    /* En MATH, diff rA, rB calcula rA-rB. El complemento a dos da -rA. */
+    emit_instruction(ctx, "not r%d", dest_reg);
+    emit_instruction(ctx, "sumi r%d, #1", dest_reg);
     return TYPE_INT;
 }
 
@@ -417,6 +419,11 @@ int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg)
         return codegen_boolean_literal(ctx, expr, dest_reg);
     case AST_IDENTIFIER_EXPRESSION:
         return codegen_identifier_load(ctx, expr, dest_reg);
+    case AST_INDEX_EXPRESSION:
+        if (!codegen_array_index_address(ctx, expr, dest_reg))
+            return TYPE_VOID;
+        emit_instruction(ctx, "lowi r%d, 0(r%d)", dest_reg, dest_reg);
+        return expr->inferred_type;
     case AST_UNARY_EXPRESSION:
         return codegen_unary_expression(ctx, expr, dest_reg);
     case AST_BINARY_EXPRESSION:

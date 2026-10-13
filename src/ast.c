@@ -22,6 +22,7 @@ static AstNode *ast_node_create(AstKind kind, SourceLocation location)
 
     node->kind = kind;
     node->location = location;
+    node->semantic_scope = NULL;
     node->inferred_type = TYPE_VOID;
     node->element_type = TYPE_VOID;
     node->array_rank = 0;

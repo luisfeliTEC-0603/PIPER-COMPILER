@@ -119,9 +119,9 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine);
  * codegen_array.c
  * ---------------------------------------------------------------- */
 void codegen_array_declaration(CodegenContext *ctx, const AstNode *decl);
-void codegen_array_index_address(CodegenContext *ctx,
-                                 const AstNode *index_expr,
-                                 int base_reg, int dest_reg);
+int load_array_base(CodegenContext *ctx, Symbol *sym, int dest_reg);
+int codegen_array_index_address(CodegenContext *ctx,
+                                const AstNode *index_expr, int dest_reg);
 
 /* ----------------------------------------------------------------
  * codegen_call.c
