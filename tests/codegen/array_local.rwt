@@ -1,0 +1,10 @@
+routine B32 arreglo_local[] {
+    create B32|3| valores.
+    create B32 indice.
+    create B32 resultado.
+    valores store [2, 4, 6].
+    indice store 1.
+    valores|indice| store 9.
+    resultado store valores|indice|.
+    output resultado.
+}

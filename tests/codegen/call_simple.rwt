@@ -1,0 +1,7 @@
+routine B32 doble[B32 x] {
+    output x + x.
+}
+
+routine B32 main[] {
+    output doble[5].
+}

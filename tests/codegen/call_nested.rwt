@@ -1,0 +1,11 @@
+routine B32 sumar[B32 a, B32 b] {
+    output a + b.
+}
+
+routine B32 doble[B32 x] {
+    output x * 2.
+}
+
+routine B32 main[] {
+    output sumar[doble[3], 4].
+}

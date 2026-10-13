@@ -1,0 +1,8 @@
+routine B32 cuando_simple[] {
+    create B32 x.
+    x store 1.
+    when [x < 2] {
+        x store 3.
+    }
+    output x.
+}

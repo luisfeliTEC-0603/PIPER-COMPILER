@@ -1,0 +1,7 @@
+routine B32 residuo_potencia[] {
+    create B32 valor.
+    create B32 resultado.
+    valor store -13.
+    resultado store valor % 4.
+    output resultado.
+}

@@ -1,0 +1,4 @@
+routine bool cmp[B32 a, B32 b] {
+    a > b.
+    output false.
+}

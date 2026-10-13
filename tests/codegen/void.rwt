@@ -1,0 +1,9 @@
+routine B32 main[] {
+    create B32 a.
+    create B32 b.
+    create B32 c.
+    a store 5.
+    b store 3.
+    c store a + b.
+    output c.
+}

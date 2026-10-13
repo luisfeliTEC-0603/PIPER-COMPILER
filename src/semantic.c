@@ -183,6 +183,7 @@ static int open_scope(Visitor *v, AstNode *n, int block)
         error(v, n, "No se pudo abrir el ámbito.");
         return 0;
     }
+    n->semantic_scope = v->table->current_scope;
     /* Un bloque comparte el marco de su rutina. Los bloques hermanos pueden
      * reutilizar posiciones, pues nunca están activos simultáneamente. */
     if (block) {
@@ -689,6 +690,7 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Solo aprobar el nodo completo si sus hijos y sus reglas no fallaron. */
     int errors_before = v->errors;
     /* Reiniciar la decoración permite analizar el mismo árbol otra vez. */
+    n->semantic_scope = NULL;
     n->inferred_type = TYPE_VOID;
     n->array_rank = n->array_rows = n->array_cols = 0;
     n->element_type = TYPE_VOID;

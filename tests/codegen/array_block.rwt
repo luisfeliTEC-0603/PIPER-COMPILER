@@ -1,0 +1,10 @@
+routine B32 arreglo_bloque[] {
+    create B32 resultado.
+    resultado store 0.
+    when [true] {
+        create B32|2| valores.
+        valores store [3, 7].
+        resultado store valores|1|.
+    }
+    output resultado.
+}
