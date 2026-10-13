@@ -1,13 +1,8 @@
 #include "codegen_internal.h"
 
-/*
- * Administración de registros temporales.
- *
- * Por ahora solo r5 y r6 son temporales. Si una expresión necesita más,
- * se hará spill a memoria (pendiente para puntos posteriores).
- *
- * El bitmask temp_in_use usa los bits 0 y 1 para r5 y r6 respectivamente.
- */
+/* ----------------------------------------------------------------
+ * Administración de registros temporales
+ * ---------------------------------------------------------------- */
 
 #define TEMP_BIT(reg) (1u << ((reg) - REG_TMP0))
 
@@ -47,35 +42,49 @@ void reset_temps(CodegenContext *ctx)
 
 /*
  * Carga un valor inmediato en dest_reg.
- * Por ahora solo maneja valores que caben en 16 bits:
- *   mov dest_reg, r0    ; dest = 0
- *   sumi dest_reg, #N   ; dest = N
  *
- * Para valores mayores, se construye con shli + ori (pendiente).
+ * La ISA de PORYGON usa inmediatos de 16 bits CON SIGNO en todas las
+ * instrucciones que los aceptan (`sumi`, `diffi`, `andi`, `ori`, etc.).
+ * Por lo tanto, el rango representable directamente es -32768..32767.
+ *
+ * Estrategia:
+ *   - 0:                    mov dest, r0
+ *   - 1..32767:             mov dest, r0 ; sumi dest, #N
+ *   - -32768..-1:           mov dest, r0 ; diffi dest, #|N|
+ *   - fuera de rango:       error (se construirá con shli+ori en punto 3)
+ *
+ * Nota: el parser representa números negativos como AST_UNARY_EXPRESSION
+ * (NEGATE) sobre un AST_INTEGER_LITERAL positivo. Por eso `value` llega
+ * aquí normalmente como positivo; los negativos aparecen cuando el
+ * llamador ya resolvió el signo (por ejemplo, en un contexto constante).
+ * De todas formas, esta función maneja ambos signos por completitud.
  */
-
 int load_immediate(CodegenContext *ctx, int dest_reg, long long value)
 {
     if (ctx == NULL) {
         return 0;
     }
 
-    if (value >= 0 && value <= 65535) {
+    if (value == 0) {
         emit_instruction(ctx, "mov r%d, r0", dest_reg);
-        if (value != 0) {
-            emit_instruction(ctx, "sumi r%d, #%lld", dest_reg, value);
-        }
         return 1;
     }
 
-    if (value >= -32768 && value < 0) {
+    if (value > 0 && value <= 32767) {
+        emit_instruction(ctx, "mov r%d, r0", dest_reg);
+        emit_instruction(ctx, "sumi r%d, #%lld", dest_reg, value);
+        return 1;
+    }
+
+    if (value < 0 && value >= -32768) {
         emit_instruction(ctx, "mov r%d, r0", dest_reg);
         emit_instruction(ctx, "diffi r%d, #%lld", dest_reg, -value);
         return 1;
     }
 
     codegen_context_error(ctx,
-        "load_immediate: valor %lld fuera de rango (pendiente de implementar)",
+        "load_immediate: valor %lld fuera del rango -32768..32767 "
+        "(se construira con shli+ori en punto 3)",
         value);
     return 0;
 }
