@@ -91,7 +91,7 @@ void codegen_context_destroy(CodegenContext *ctx)
 }
 
 /* ----------------------------------------------------------------
- * Acumulación de errores
+ * Acumulación y busqueda de errores
  * ---------------------------------------------------------------- */
 
 void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
@@ -116,4 +116,58 @@ void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
 int codegen_has_errors(const CodegenContext *ctx)
 {
     return ctx == NULL || ctx->error_count > 0;
+}
+
+Symbol *lookup_symbol_or_error(CodegenContext *ctx,
+                               const char *name,
+                               int expected_class)
+{
+    Scope *scope;
+    Symbol *sym = NULL;
+
+    if (ctx == NULL || name == NULL) {
+        return NULL;
+    }
+
+    /* Búsqueda léxica desde el ámbito actual del contexto hacia arriba. */
+    for (scope = ctx->current_scope; scope != NULL; scope = scope->parent) {
+        for (Symbol *it = scope->symbols_head; it != NULL; it = it->next) {
+            if (strcmp(it->name, name) == 0) {
+                sym = it;
+                goto found;
+            }
+        }
+    }
+
+found:
+    if (sym == NULL) {
+        codegen_context_error(ctx,
+            "identificador '%s' no encontrado en la tabla de simbolos", name);
+        return NULL;
+    }
+
+    if (expected_class >= 0 && (int)sym->symbol_class != expected_class) {
+        codegen_context_error(ctx,
+            "'%s' no es de la clase esperada (%d)", name, expected_class);
+        return NULL;
+    }
+
+    return sym;
+}
+
+Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym)
+{
+    Scope *scope;
+
+    if (ctx == NULL || sym == NULL) {
+        return NULL;
+    }
+    for (scope = ctx->current_scope; scope != NULL; scope = scope->parent) {
+        for (Symbol *it = scope->symbols_head; it != NULL; it = it->next) {
+            if (it == sym) {
+                return scope;
+            }
+        }
+    }
+    return NULL;
 }
