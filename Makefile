@@ -9,8 +9,11 @@ else
     BISON ?= /opt/homebrew/opt/bison/bin/bison
 endif
 
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
-OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o build/semantic.o
+CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild -I.
+PORYGON_ASM_DIR = porygon_assembler
+PORYGON_ASM_SRC = $(wildcard $(PORYGON_ASM_DIR)/*.c)
+PORYGON_ASM_OBJ = $(patsubst $(PORYGON_ASM_DIR)/%.c,build/porygon_assembler/%.o,$(PORYGON_ASM_SRC))
+OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o build/semantic.o $(PORYGON_ASM_OBJ)
 TARGET = bin/pipoc
 
 .DELETE_ON_ERROR:
@@ -53,6 +56,12 @@ build/semantic.o: src/semantic.c include/semantic.h include/ast.h include/symbol
 
 build/main.o: include/semantic.h src/main.c build/parser.h include/ast.h include/symbol_table.h
 	$(CC) $(CFLAGS) -c src/main.c -o $@
+
+# El ensamblador PORYGON se compila aqui para que el generador de ASM y el
+# scheduler puedan compartir sus estructuras y funciones desde el compilador.
+build/porygon_assembler/%.o: $(PORYGON_ASM_DIR)/%.c $(wildcard $(PORYGON_ASM_DIR)/*.h)
+	@mkdir -p build/porygon_assembler
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJ)
 	@mkdir -p bin

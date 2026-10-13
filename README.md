@@ -27,3 +27,11 @@ fases. Los errores siempre aparecen en la consola. Las opciones de salida son:
 
 Se pueden combinar opciones. El AST no se imprime en la consola; para verlo se
 usa `-t`. Por ejemplo: `bin/pipoc -a -t programa.rwt`.
+
+## Ensamblador PORYGON
+
+El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/README.md).
+El `Makefile` lo compila y enlaza con `pipoc`. Su parser recibe ASM PORYGON
+lineal, escrito a mano o generado desde el AST, y construye el `MachineProgram`
+que consumirá el scheduler. El generador, el scheduler y la emisión final de
+`.mem` aún deben conectarse al ejecutable.
