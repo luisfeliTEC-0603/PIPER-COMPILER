@@ -13,13 +13,15 @@ CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild -I.
 PORYGON_ASM_DIR = porygon_assembler
 PORYGON_ASM_SRC = $(wildcard $(PORYGON_ASM_DIR)/*.c)
 PORYGON_ASM_OBJ = $(patsubst $(PORYGON_ASM_DIR)/%.c,build/porygon_assembler/%.o,$(PORYGON_ASM_SRC))
-OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o build/semantic.o $(PORYGON_ASM_OBJ)
+SCHEDULER_SRC = $(wildcard scheduler/*.c)
+SCHEDULER_OBJ = $(patsubst scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
+OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o build/semantic.o $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ)
 TARGET = bin/pipoc
 
 .DELETE_ON_ERROR:
-.PHONY: all generate conflicts clean
+.PHONY: all generate conflicts clean test-scheduler test-scheduler-rtl
 
-all: $(TARGET)
+all: $(TARGET) bin/porygon-schedule
 
 generate: build/parser.c build/parser.h build/lexer.c
 
@@ -66,6 +68,24 @@ build/porygon_assembler/%.o: $(PORYGON_ASM_DIR)/%.c $(wildcard $(PORYGON_ASM_DIR
 $(TARGET): $(OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(OBJ) -o $@
+
+build/scheduler/%.o: scheduler/%.c $(wildcard scheduler/*.h) $(wildcard $(PORYGON_ASM_DIR)/*.h)
+	@mkdir -p build/scheduler
+	$(CC) $(CFLAGS) -c $< -o $@
+
+bin/porygon-schedule: tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) scheduler/scheduler.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) -o $@
+
+bin/test_scheduler: tests/scheduler/test_scheduler.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) scheduler/scheduler.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) tests/scheduler/test_scheduler.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) -o $@
+
+test-scheduler: bin/test_scheduler
+	./bin/test_scheduler
+
+test-scheduler-rtl: bin/porygon-schedule
+	python3 tests/scheduler/test_scheduler_rtl.py "$(PORYGON_RTL)"
 
 # No silencia conflictos: inspecciona el informe que Bison genera con -v.
 conflicts: build/parser.c
