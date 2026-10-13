@@ -9,3 +9,21 @@
 
   **Compilador en C que traduce el lenguaje `Piper` a binario —específico para la arquitectura `PORYGON`**
 </div>
+
+## Salida del compilador
+
+`bin/pipoc archivo.rwt` valida el programa sin imprimir el recorrido de las
+fases. Los errores siempre aparecen en la consola. Las opciones de salida son:
+
+| Opción | Contenido |
+| --- | --- |
+| `-l`, `--lexical` | Lexemas y posiciones entregados por el lexer |
+| `-s`, `--syntactic` | Resultado del parser |
+| `-m`, `--symbols` | Tabla de símbolos definitiva y memoria |
+| `-e`, `--semantic` | Recorrido de comprobaciones semánticas |
+| `-a`, `--all` | Las cuatro salidas anteriores |
+| `-t`, `--ast-json` | Exporta el AST a `ast_output.json` |
+| `-o ruta.json`, `--output ruta.json` | Cambia la ruta del JSON de `-t` |
+
+Se pueden combinar opciones. El AST no se imprime en la consola; para verlo se
+usa `-t`. Por ejemplo: `bin/pipoc -a -t programa.rwt`.

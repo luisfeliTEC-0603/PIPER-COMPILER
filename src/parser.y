@@ -328,7 +328,7 @@ routine_declaration:
     TOK_ROUTINE type TOK_IDENTIFIER TOK_LBRACKET
     <symbol>{
         $$ = symbol_table_insert(
-            symbols, $3, SYMBOL_FUNC, symbol_type($2), 1, 1,
+            symbols, $3, SYMBOL_FUNC, symbol_type($2), $2, 1, 1,
             @3.first_line);
         if (!symbol_table_open_scope(symbols)) {
             YYNOMEM;

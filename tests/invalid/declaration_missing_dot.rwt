@@ -1,0 +1,5 @@
+create B32 value
+
+routine B32 main[] {
+    output 0.
+}
