@@ -908,24 +908,20 @@ void ast_register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
     DataType data_type = (type == PIPER_TYPE_BOOL) ? TYPE_BOOL : TYPE_INT;
 
     if (dimensions != NULL && dimensions->count > 0) {
+        if (dimensions->count > 2) return;
         data_type = TYPE_ARRAY;
-
-        // 1. Extraer filas (accediendo a items[0])
-        if (dimensions->count >= 1 && dimensions->items[0] != NULL) {
-            if (dimensions->items[0]->kind == AST_INTEGER_LITERAL) {
-                rows = (int)dimensions->items[0]->data.integer_literal.value;
-            }
-        }
-
-        // 2. Extraer columnas (accediendo a items[1])
-        if (dimensions->count >= 2 && dimensions->items[1] != NULL) {
-            if (dimensions->items[1]->kind == AST_INTEGER_LITERAL) {
-                cols = (int)dimensions->items[1]->data.integer_literal.value;
-            }
+        for (size_t i = 0; i < dimensions->count; i++) {
+            const AstNode *dimension = dimensions->items[i];
+            if (dimension == NULL || dimension->kind != AST_INTEGER_LITERAL ||
+                dimension->data.integer_literal.value == 0 ||
+                dimension->data.integer_literal.value >
+                    (unsigned long long)(SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE)) return;
+            if (i == 0) rows = (int)dimension->data.integer_literal.value;
+            else cols = (int)dimension->data.integer_literal.value;
         }
     }
 
-    symbol_table_insert(symbols, name, symbol_class, data_type, rows, cols, line);
+    (void)symbol_table_insert(symbols, name, symbol_class, data_type, type, rows, cols, line);
 }
 
 

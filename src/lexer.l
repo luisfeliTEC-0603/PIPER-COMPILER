@@ -32,6 +32,13 @@
 /* errno.h: errno, ERANGE (para detectar overflow en strtoull) */
 #include <errno.h>
 
+/* El parser llama yylex(); el scanner generado queda detrás de este
+ * envoltorio para mostrar solamente los tokens que realmente entrega. */
+#define YY_DECL int yylex_scan(void)
+static int trace_tokens = 0;
+void lexer_set_trace(int enabled);
+int yylex(void);
+
 /* Prototipos de funciones auxiliares */
 static void lexer_update_location(const char *text, int length);
 static char *lexer_strdup(const char *text);
@@ -219,6 +226,22 @@ WHITESPACE  [ \t\r\n]+
 /* ============================================================
  * Definicion de funciones auxiliares
  * ============================================================ */
+
+void lexer_set_trace(int enabled)
+{
+    trace_tokens = enabled;
+}
+
+int yylex(void)
+{
+    int token = yylex_scan();
+    if (trace_tokens && token != 0) {
+        fprintf(stdout, "[Léxico] %d:%d lexema '%s'\n",
+                yylloc.first_line, yylloc.first_column, yytext);
+        fflush(stdout);
+    }
+    return token;
+}
 
 /* Actualiza yylloc (línea/columna) con el texto del token */
 static void lexer_update_location(const char *text, int length)

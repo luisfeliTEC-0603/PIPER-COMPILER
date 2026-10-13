@@ -24,19 +24,6 @@ typedef struct {
 } SourceLocation;
 
 typedef enum {
-    PIPER_TYPE_BOOL,
-    PIPER_TYPE_B8,
-    PIPER_TYPE_UB8,
-    PIPER_TYPE_B16,
-    PIPER_TYPE_UB16,
-    PIPER_TYPE_B32,
-    PIPER_TYPE_UB32,
-
-    /* TODO(rutinas): decidir en qué construcciones representa ausencia. */
-    PIPER_TYPE_NONE
-} PiperType;
-
-typedef enum {
     AST_PROGRAM,
     AST_IMPORT_DECLARATION,
     AST_VARIABLE_DECLARATION,
@@ -98,6 +85,11 @@ struct AstNode {
     SourceLocation location;
     DataType inferred_type;
     DataType element_type;
+    PiperType piper_type;
+    PiperType element_piper_type;
+    /* Un literal entero obtiene su tipo exacto del uso; no es un tipo declarable. */
+    bool has_piper_type;
+    bool has_element_piper_type;
     int array_rank;
     int array_rows, array_cols;
 
