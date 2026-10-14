@@ -13,8 +13,8 @@ static int symbol_size(DataType type, int rows, int cols)
     long long elements = 1;
 
     if (type == TYPE_ARRAY) {
-        elements = (long long)(rows > 0 ? rows : 1)
-                 * (long long)(cols > 0 ? cols : 1);
+        if (rows <= 0 || cols <= 0) return -1;
+        elements = (long long)rows * cols;
     }
 
     if (elements > SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE) {
@@ -73,6 +73,7 @@ SymbolTable *symbol_table_create(void)
     table->all_scopes = table->global_scope;
     table->next_global_address = SYMBOL_GLOBAL_BASE;
     table->scope_counter = 1;
+    table->global_call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     return table;
 }
 
@@ -93,19 +94,22 @@ void symbol_table_destroy(SymbolTable *table)
     free(table);
 }
 
-void symbol_table_open_scope(SymbolTable *table)
+int symbol_table_open_scope(SymbolTable *table)
 {
     Scope *scope;
 
     if (table == NULL || table->current_scope == NULL) {
-        return;
+        return 0;
     }
-    scope = scope_create(table->scope_counter++, 0, table->current_scope);
-    if (scope != NULL) {
-        scope->next_all = table->all_scopes;
-        table->all_scopes = scope;
-        table->current_scope = scope;
+    scope = scope_create(table->scope_counter, 0, table->current_scope);
+    if (scope == NULL) {
+        return 0;
     }
+    table->scope_counter++;
+    scope->next_all = table->all_scopes;
+    table->all_scopes = scope;
+    table->current_scope = scope;
+    return 1;
 }
 
 void symbol_table_close_scope(SymbolTable *table)
@@ -134,6 +138,10 @@ Symbol *symbol_table_lookup(SymbolTable *table, const char *name)
     if (table == NULL || name == NULL) {
         return NULL;
     }
+    /* Visibilidad léxica: comenzar en el ámbito actual y subir por todos sus
+     * padres. El primer símbolo encontrado permite sombrear declaraciones.
+     * all_scopes conserva los ámbitos para liberar/imprimir, no para buscar:
+     * recorrerlo haría visibles variables locales de funciones hermanas. */
     for (scope = table->current_scope; scope != NULL; scope = scope->parent) {
         Symbol *symbol = lookup_scope(scope, name);
         if (symbol != NULL) {
@@ -144,13 +152,19 @@ Symbol *symbol_table_lookup(SymbolTable *table, const char *name)
 }
 
 Symbol *symbol_table_insert(SymbolTable *table, const char *name,
-                            SymbolClass symbol_class, DataType type,
+                            SymbolClass symbol_class, DataType type, PiperType declared_type,
                             int rows, int cols, int line)
 {
     Symbol *symbol;
     int size;
+    int aligned_offset;
 
     if (table == NULL || table->current_scope == NULL || name == NULL
+        || (unsigned)declared_type > (unsigned)PIPER_TYPE_UB32
+        || type == TYPE_VOID
+        || (type == TYPE_BOOL && declared_type != PIPER_TYPE_BOOL)
+        || (type == TYPE_INT && declared_type == PIPER_TYPE_BOOL)
+        || (symbol_class == SYMBOL_FUNC && type == TYPE_ARRAY)
         || symbol_table_lookup_current_scope(table, name) != NULL) {
         return NULL;
     }
@@ -161,7 +175,9 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
     }
     strncpy(symbol->name, name, SYMBOL_NAME_MAX - 1);
     symbol->symbol_class = symbol_class;
+    symbol->call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     symbol->type = type;
+    symbol->declared_type = declared_type;
     symbol->return_type = type;
     symbol->array_rows = rows;
     symbol->array_cols = cols;
@@ -177,20 +193,31 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
             free(symbol);
             return NULL;
         }
+        /* La matriz vive en el ámbito del llamador. El parámetro solo guarda
+         * su dirección base; conservamos filas y columnas para describirla. */
+        if (symbol_class == SYMBOL_PARAM && type == TYPE_ARRAY) {
+            size = SYMBOL_WORD_SIZE;
+        }
         symbol->size_bytes = size;
         if (table->current_scope->is_global) {
             table->next_global_address = align_word(table->next_global_address);
-            if (table->next_global_address > SYMBOL_MEMORY_SIZE - size) {
+            if (table->next_global_address > SYMBOL_GLOBAL_MEMORY_SIZE - size) {
                 free(symbol);
                 return NULL;
             }
             symbol->address_or_offset = table->next_global_address;
             table->next_global_address += size;
         } else {
-            table->current_scope->current_offset =
-                align_word(table->current_scope->current_offset);
-            symbol->address_or_offset = table->current_scope->current_offset;
-            table->current_scope->current_offset += size;
+            aligned_offset = align_word(table->current_scope->current_offset);
+            if (aligned_offset > SYMBOL_STACK_SIZE - size) {
+                free(symbol);
+                return NULL;
+            }
+            symbol->address_or_offset = aligned_offset;
+            table->current_scope->current_offset = aligned_offset + size;
+            if (table->current_scope->current_offset > table->current_scope->max_offset) {
+                table->current_scope->max_offset = table->current_scope->current_offset;
+            }
         }
     }
 
@@ -205,7 +232,7 @@ int symbol_table_set_function_frame(SymbolTable *table, Symbol *function)
         return 0;
     }
     function->total_stack_frame_size =
-        align_word(table->current_scope->current_offset);
+        align_word(table->current_scope->max_offset);
     return 1;
 }
 
@@ -227,17 +254,17 @@ static const char *symbol_class_name(SymbolClass symbol_class)
     return "unknown";
 }
 
-static const char *data_type_name(DataType type)
+static const char *declared_type_name(PiperType type)
 {
     switch (type) {
-    case TYPE_INT:
-        return "int";
-    case TYPE_BOOL:
-        return "bool";
-    case TYPE_ARRAY:
-        return "array";
-    case TYPE_VOID:
-        return "void";
+    case PIPER_TYPE_BOOL: return "bool";
+    case PIPER_TYPE_B8: return "B8";
+    case PIPER_TYPE_UB8: return "uB8";
+    case PIPER_TYPE_B16: return "B16";
+    case PIPER_TYPE_UB16: return "uB16";
+    case PIPER_TYPE_B32: return "B32";
+    case PIPER_TYPE_UB32: return "uB32";
+    case PIPER_TYPE_NONE: return "none";
     }
     return "unknown";
 }
@@ -248,8 +275,9 @@ static void print_memory_address(FILE *output, const Scope *scope,
     if (symbol->symbol_class == SYMBOL_FUNC) {
         fprintf(output, "etiqueta %-20s", symbol->name);
     } else if (scope->is_global) {
-        fprintf(output, "0x%04X                 ",
-                (unsigned int)symbol->address_or_offset);
+        fprintf(output, "offset 0x%04X / física 0x%08X",
+                (unsigned int)symbol->address_or_offset,
+                (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + symbol->address_or_offset));
     } else {
         fprintf(output, "r7 + 0x%04X             ",
                 (unsigned int)symbol->address_or_offset);
@@ -259,27 +287,33 @@ static void print_memory_address(FILE *output, const Scope *scope,
 void symbol_table_print_scope(FILE *output, const Scope *scope)
 {
     const Symbol *symbol;
+    char type_label[40];
 
     if (output == NULL || scope == NULL) {
         return;
     }
     fprintf(output, "\nScope %d%s\n", scope->scope_id,
             scope->is_global ? " (global)" : " (local, base r7)");
-    fprintf(output, "  %-18s %-10s %-16s %s\n",
-            "nombre", "clase", "tipo", "mem_dir");
-    fprintf(output, "  %-18s %-10s %-16s %s\n",
-            "------------------", "----------", "----------------",
+    fprintf(output, "  %-18s %-10s %-16s %-5s %s\n",
+            "nombre", "clase", "tipo", "bytes", "mem_dir");
+    fprintf(output, "  %-18s %-10s %-16s %-5s %s\n",
+            "------------------", "----------", "----------------", "-----",
             "------------------------");
     for (symbol = scope->symbols_head; symbol != NULL; symbol = symbol->next) {
-        fprintf(output, "  %-18s %-10s ", symbol->name,
-                symbol_class_name(symbol->symbol_class));
         if (symbol->is_array) {
-            fprintf(output, "array[%dx%d]      ", symbol->array_rows,
-                    symbol->array_cols);
+            snprintf(type_label, sizeof(type_label), "%s[%dx%d]",
+                     declared_type_name(symbol->declared_type), symbol->array_rows, symbol->array_cols);
         } else {
-            fprintf(output, "%-16s ", data_type_name(symbol->type));
+            snprintf(type_label, sizeof(type_label), "%s",
+                     declared_type_name(symbol->declared_type));
         }
+        fprintf(output, "  %-18s %-10s %-16s %-5d ", symbol->name,
+                symbol_class_name(symbol->symbol_class), type_label,
+                symbol->size_bytes);
         print_memory_address(output, scope, symbol);
+        if (symbol->symbol_class == SYMBOL_PARAM && symbol->is_array) {
+            fputs("(ranura de puntero)", output);
+        }
         fputc('\n', output);
     }
 }
@@ -295,7 +329,10 @@ void symbol_table_print(FILE *output, const SymbolTable *table)
     for (scope = table->all_scopes; scope != NULL; scope = scope->next_all) {
         symbol_table_print_scope(output, scope);
     }
-        fprintf(output, "\nSiguiente direccion global disponible: 0x%04X\n",
-            (unsigned int)table->next_global_address);
+        fprintf(output, "\nBase física de datos: 0x%08X\n",
+            (unsigned int)SYMBOL_DATA_BASE_ADDRESS);
+        fprintf(output, "Siguiente global: offset 0x%04X / física 0x%08X\n",
+            (unsigned int)table->next_global_address,
+            (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + table->next_global_address));
         fprintf(output, "===================================================================================\n");
 }

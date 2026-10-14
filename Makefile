@@ -1,22 +1,55 @@
 CC = gcc
 FLEX ?= flex
 
-# Si el bison de Homebrew existe (macOS Apple Silicon), usarlo por defecto para evitar
-# usar el bison desactualizado del sistema. En Linux/Windows usará 'bison' del PATH.
+# Si el bison de Homebrew existe (macOS Apple Silicon), usarlo por defecto.
+# En Linux/Windows usará 'bison' del PATH.
 ifeq ($(wildcard /opt/homebrew/opt/bison/bin/bison),)
     BISON ?= bison
 else
     BISON ?= /opt/homebrew/opt/bison/bin/bison
 endif
 
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Ibuild
-OBJ = build/parser.o build/lexer.o build/ast.o build/ast_to_json.o build/symbol_table.o build/main.o
+CFLAGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic -Iinclude -Ibuild -I.
+
+# --- Ensamblador PORYGON (compartido con PORYGON) ----------------------------
+PORYGON_ASM_DIR = porygon_assembler
+PORYGON_ASM_SRC = $(wildcard $(PORYGON_ASM_DIR)/*.c)
+PORYGON_ASM_OBJ = $(patsubst $(PORYGON_ASM_DIR)/%.c,build/porygon_assembler/%.o,$(PORYGON_ASM_SRC))
+
+# --- Scheduler (compartido con PORYGON) --------------------------------------
+SCHEDULER_SRC = $(wildcard scheduler/*.c)
+SCHEDULER_OBJ = $(patsubst scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
+
+# --- Compilador --------------------------------------------------------------
 TARGET = bin/pipoc
 
-.DELETE_ON_ERROR:
-.PHONY: all generate conflicts clean
+OBJ = build/parser.o \
+      build/lexer.o \
+      build/ast.o \
+      build/ast_to_json.o \
+      build/symbol_table.o \
+      build/main.o \
+      build/semantic.o \
+      build/binary_format.o \
+      build/codegen.o \
+      build/codegen_context.o \
+      build/codegen_emit.o \
+      build/codegen_labels.o \
+      build/codegen_regs.o \
+      build/codegen_routine.o \
+      build/codegen_expr.o \
+      build/codegen_arithmetic.o \
+      build/codegen_stmt.o \
+      build/codegen_array.o \
+      build/codegen_call.o \
+      build/codegen_crypto.o \
+      $(PORYGON_ASM_OBJ) \
+      $(SCHEDULER_OBJ)
 
-all: $(TARGET)
+.DELETE_ON_ERROR:
+.PHONY: all generate clean
+
+all: $(TARGET) bin/porygon-schedule
 
 generate: build/parser.c build/parser.h build/lexer.c
 
@@ -48,22 +81,81 @@ build/ast_to_json.o: src/ast_to_json.c include/ast_to_json.h include/ast.h
 build/symbol_table.o: src/symbol_table.c include/symbol_table.h
 	$(CC) $(CFLAGS) -c src/symbol_table.c -o $@
 
-build/main.o: src/main.c build/parser.h include/ast.h include/symbol_table.h
+build/semantic.o: src/semantic.c include/semantic.h include/ast.h include/symbol_table.h
+	$(CC) $(CFLAGS) -c src/semantic.c -o $@
+
+build/main.o: include/semantic.h include/binary_format.h src/main.c build/parser.h include/ast.h include/symbol_table.h
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
+build/binary_format.o: src/binary_format.c include/binary_format.h scheduler/scheduler.h
+	$(CC) $(CFLAGS) -c src/binary_format.c -o $@
+
+# --- Codegen -----------------------------------------------------------------
+build/codegen.o: src/codegen/codegen.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen.c -o $@
+
+build/codegen_context.o: src/codegen/codegen_context.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_context.c -o $@
+
+build/codegen_emit.o: src/codegen/codegen_emit.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_emit.c -o $@
+
+build/codegen_labels.o: src/codegen/codegen_labels.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_labels.c -o $@
+
+build/codegen_regs.o: src/codegen/codegen_regs.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_regs.c -o $@
+
+build/codegen_routine.o: src/codegen/codegen_routine.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_routine.c -o $@
+
+build/codegen_expr.o: src/codegen/codegen_expr.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_expr.c -o $@
+
+build/codegen_arithmetic.o: src/codegen/codegen_arithmetic.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_arithmetic.c -o $@
+
+build/codegen_stmt.o: src/codegen/codegen_stmt.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_stmt.c -o $@
+
+build/codegen_array.o: src/codegen/codegen_array.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_array.c -o $@
+
+build/codegen_call.o: src/codegen/codegen_call.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_call.c -o $@
+
+build/codegen_crypto.o: src/codegen/codegen_crypto.c include/codegen.h include/codegen_internal.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/codegen/codegen_crypto.c -o $@
+
+# --- Ensamblador y scheduler (reglas de patrón) ------------------------------
+build/porygon_assembler/%.o: $(PORYGON_ASM_DIR)/%.c $(wildcard $(PORYGON_ASM_DIR)/*.h)
+	@mkdir -p build/porygon_assembler
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/scheduler/%.o: scheduler/%.c $(wildcard scheduler/*.h) $(wildcard $(PORYGON_ASM_DIR)/*.h)
+	@mkdir -p build/scheduler
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# --- Binarios ----------------------------------------------------------------
 $(TARGET): $(OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(OBJ) -o $@
 
-# No silencia conflictos: inspecciona el informe que Bison genera con -v.
-conflicts: build/parser.c
-	@if grep -Eq '[1-9][0-9]* (shift/reduce|reduce/reduce)' build/parser.output; then \
-		echo "Bison reportó conflictos:"; \
-		grep -E '[1-9][0-9]* (shift/reduce|reduce/reduce)' build/parser.output; \
-		exit 1; \
-	else \
-		echo "Bison reportó 0 conflictos."; \
-	fi
+bin/porygon-schedule: tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) scheduler/scheduler.h
+	@mkdir -p bin
+	$(CC) $(CFLAGS) tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) -o $@
 
 clean:
 	rm -rf build bin

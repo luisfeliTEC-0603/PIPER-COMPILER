@@ -7,127 +7,10 @@
 /*
  * Implementación del AST de Piper.
  *
- * El archivo se organiza en representación privada, utilidades comunes,
- * constructores por familia, inspección, impresión y liberación recursiva.
- * Las estructuras permanecen opacas fuera de este módulo.
+ * El archivo se organiza en utilidades comunes, constructores por familia,
+ * inspección, impresión y liberación recursiva. Las estructuras del árbol
+ * y sus listas se definen en ast.h.
  */
-
-/* Representación privada del árbol y de las listas que poseen sus nodos. */
-
-/* Arreglo dinámico que posee todos los nodos agregados exitosamente. */
-struct AstNodeList {
-    AstNode **items;
-    size_t count;
-    size_t capacity;
-};
-
-/*
- * kind identifica el miembro activo de data. Los campos kind y location son
- * comunes a todas las variantes.
- */
-struct AstNode {
-    AstKind kind;
-    SourceLocation location;
-
-    union {
-        struct {
-            AstNodeList *elements;
-        } program;
-
-        struct {
-            char *symbol;
-            char *file_path;
-        } import_declaration;
-
-        struct {
-            PiperType type;
-            char *name;
-            AstNodeList *dimensions;
-        } variable_declaration;
-
-        struct {
-            PiperType type;
-            char *name;
-            AstNodeList *dimensions;
-        } parameter;
-
-        struct {
-            PiperType return_type;
-            char *name;
-            AstNodeList *parameters;
-            AstNode *body;
-        } routine_declaration;
-
-        struct {
-            AstNodeList *statements;
-        } block;
-
-        struct {
-            AstNode *value;
-        } output_statement;
-
-        struct {
-            char *routine_name;
-            AstNodeList *arguments;
-        } call_expression;
-
-        struct {
-            unsigned long long value;
-        } integer_literal;
-
-        struct {
-            bool value;
-        } boolean_literal;
-
-        struct {
-            AstNodeList *elements;
-        } array_literal;
-
-        struct {
-            AstNode *base;
-            AstNodeList *indices;
-        } index_expression;
-
-        struct {
-            char *name;
-        } identifier;
-
-        struct {
-            AstOperator operator;
-            AstNode *operand;
-        } unary_expression;
-
-        struct {
-            AstOperator operator;
-            AstNode *left;
-            AstNode *right;
-        } binary_expression;
-
-        struct {
-            AstNode *target;
-            AstNode *value;
-        } assignment;
-
-        struct {
-            AstNode *condition;
-            AstNode *then_block;
-            AstNode *fallback_block;
-        } when_statement;
-
-        struct {
-            AstNode *condition;
-            AstNode *body;
-        } alwhen_statement;
-
-        struct {
-            char *control_name;
-            AstNode *begin;
-            AstNode *end;
-            AstNode *step;
-            AstNode *body;
-        } loop_statement;
-    } data;
-};
 
 /* Reserva e inicialización de los campos comunes a todos los nodos. */
 static AstNode *ast_node_create(AstKind kind, SourceLocation location)
@@ -139,6 +22,11 @@ static AstNode *ast_node_create(AstKind kind, SourceLocation location)
 
     node->kind = kind;
     node->location = location;
+    node->semantic_scope = NULL;
+    node->inferred_type = TYPE_VOID;
+    node->element_type = TYPE_VOID;
+    node->array_rank = 0;
+    node->array_rows = node->array_cols = 0;
 
     return node;
 }
@@ -1021,24 +909,20 @@ void ast_register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
     DataType data_type = (type == PIPER_TYPE_BOOL) ? TYPE_BOOL : TYPE_INT;
 
     if (dimensions != NULL && dimensions->count > 0) {
+        if (dimensions->count > 2) return;
         data_type = TYPE_ARRAY;
-
-        // 1. Extraer filas (accediendo a items[0])
-        if (dimensions->count >= 1 && dimensions->items[0] != NULL) {
-            if (dimensions->items[0]->kind == AST_INTEGER_LITERAL) {
-                rows = (int)dimensions->items[0]->data.integer_literal.value;
-            }
-        }
-
-        // 2. Extraer columnas (accediendo a items[1])
-        if (dimensions->count >= 2 && dimensions->items[1] != NULL) {
-            if (dimensions->items[1]->kind == AST_INTEGER_LITERAL) {
-                cols = (int)dimensions->items[1]->data.integer_literal.value;
-            }
+        for (size_t i = 0; i < dimensions->count; i++) {
+            const AstNode *dimension = dimensions->items[i];
+            if (dimension == NULL || dimension->kind != AST_INTEGER_LITERAL ||
+                dimension->data.integer_literal.value == 0 ||
+                dimension->data.integer_literal.value >
+                    (unsigned long long)(SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE)) return;
+            if (i == 0) rows = (int)dimension->data.integer_literal.value;
+            else cols = (int)dimension->data.integer_literal.value;
         }
     }
 
-    symbol_table_insert(symbols, name, symbol_class, data_type, rows, cols, line);
+    (void)symbol_table_insert(symbols, name, symbol_class, data_type, type, rows, cols, line);
 }
 
 
@@ -1440,4 +1324,10 @@ void ast_free(AstNode *node)
     }
 
     free(node);
+}
+
+DataType ast_node_inferred_type(const AstNode *node)
+{
+    assert(node != NULL);
+    return node->inferred_type;
 }

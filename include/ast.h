@@ -4,10 +4,9 @@
 /*
  * Contrato público del AST de Piper.
  *
- * Este encabezado permite que parser.y avance en paralelo con ast.c: el
- * parser puede llamar estas funciones aunque su implementación todavía esté
- * pendiente. Las estructuras internas son opacas para que solamente ast.c
- * decida cómo almacenar cada variante.
+ * Las estructuras son públicas para que el análisis semántico y la generación
+ * de código puedan recorrer los hijos de cada nodo a partir de la raíz.
+ * Los constructores y ast_free() administran la memoria del árbol.
  */
 
 #include <stdbool.h>
@@ -23,19 +22,6 @@ typedef struct {
     int last_line;
     int last_column;
 } SourceLocation;
-
-typedef enum {
-    PIPER_TYPE_BOOL,
-    PIPER_TYPE_B8,
-    PIPER_TYPE_UB8,
-    PIPER_TYPE_B16,
-    PIPER_TYPE_UB16,
-    PIPER_TYPE_B32,
-    PIPER_TYPE_UB32,
-
-    /* TODO(rutinas): decidir en qué construcciones representa ausencia. */
-    PIPER_TYPE_NONE
-} PiperType;
 
 typedef enum {
     AST_PROGRAM,
@@ -82,6 +68,132 @@ typedef enum {
     AST_OP_LOGICAL_NOT,
     AST_OP_NEGATE
 } AstOperator;
+
+/* Lista que posee los nodos agregados exitosamente. */
+struct AstNodeList {
+    AstNode **items;
+    size_t count;
+    size_t capacity;
+};
+
+/*
+ * kind identifica el miembro activo de data. Los campos kind y location son
+ * comunes a todas las variantes.
+ */
+struct AstNode {
+    AstKind kind;
+    SourceLocation location;
+    /* Ámbito creado para este nodo por el análisis semántico; no es dueño. */
+    Scope *semantic_scope;
+    DataType inferred_type;
+    DataType element_type;
+    PiperType piper_type;
+    PiperType element_piper_type;
+    /* Un literal entero obtiene su tipo exacto del uso; no es un tipo declarable. */
+    bool has_piper_type;
+    bool has_element_piper_type;
+    int array_rank;
+    int array_rows, array_cols;
+
+    union {
+        struct {
+            AstNodeList *elements;
+        } program;
+
+        struct {
+            char *symbol;
+            char *file_path;
+        } import_declaration;
+
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } variable_declaration;
+
+        struct {
+            PiperType type;
+            char *name;
+            AstNodeList *dimensions;
+        } parameter;
+
+        struct {
+            PiperType return_type;
+            char *name;
+            AstNodeList *parameters;
+            AstNode *body;
+        } routine_declaration;
+
+        struct {
+            AstNodeList *statements;
+        } block;
+
+        struct {
+            AstNode *value;
+        } output_statement;
+
+        struct {
+            char *routine_name;
+            AstNodeList *arguments;
+        } call_expression;
+
+        struct {
+            unsigned long long value;
+        } integer_literal;
+
+        struct {
+            bool value;
+        } boolean_literal;
+
+        struct {
+            AstNodeList *elements;
+        } array_literal;
+
+        struct {
+            AstNode *base;
+            AstNodeList *indices;
+        } index_expression;
+
+        struct {
+            char *name;
+        } identifier;
+
+        struct {
+            AstOperator operator;
+            AstNode *operand;
+        } unary_expression;
+
+        struct {
+            AstOperator operator;
+            AstNode *left;
+            AstNode *right;
+        } binary_expression;
+
+        struct {
+            AstNode *target;
+            AstNode *value;
+        } assignment;
+
+        struct {
+            AstNode *condition;
+            AstNode *then_block;
+            AstNode *fallback_block;
+        } when_statement;
+
+        struct {
+            AstNode *condition;
+            AstNode *body;
+        } alwhen_statement;
+
+        struct {
+            char *control_name;
+            AstNode *begin;
+            AstNode *end;
+            AstNode *step;
+            AstNode *body;
+        } loop_statement;
+    } data;
+};
 
 /* -------------------------------------------------------------------------
  * Ubicaciones
@@ -188,6 +300,7 @@ AstNode *ast_new_binary_expression(AstOperator operator, AstNode *left,
 /* node debe ser distinto de NULL. */
 AstKind ast_node_kind(const AstNode *node);
 SourceLocation ast_node_location(const AstNode *node);
+DataType ast_node_inferred_type(const AstNode *node);
 
 /* Devuelven literales estáticos; los valores inválidos tienen nombre propio. */
 const char *piper_type_name(PiperType type);
