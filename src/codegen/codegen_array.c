@@ -129,13 +129,13 @@ int codegen_array_index_address(CodegenContext *ctx,
     emit_instruction(ctx, "mov r4, r1");
     /* Comparación sin signo: también rechaza índices negativos. */
     emit_instruction(ctx, "ltn r4, r3");
-    emit_instruction(ctx, "jz r4, error_indice");
+    emit_instruction(ctx, "jz r4, " CODEGEN_INTERNAL_LABEL("error_indice"));
     if (indices->count == 2) {
         if (codegen_expression(ctx, indices->items[1], REG_ARG1) == TYPE_VOID) goto done;
         load_immediate(ctx, REG_ARG2, sym->array_cols);
         emit_instruction(ctx, "mov r4, r2");
         emit_instruction(ctx, "ltn r4, r3");
-        emit_instruction(ctx, "jz r4, error_indice");
+        emit_instruction(ctx, "jz r4, " CODEGEN_INTERNAL_LABEL("error_indice"));
         /* Orden por filas: base + (fila * columnas + columna) * 4. */
         emit_instruction(ctx, "mul r1, r3");
         emit_instruction(ctx, "sum r1, r2");

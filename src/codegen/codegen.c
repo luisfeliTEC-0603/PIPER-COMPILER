@@ -84,9 +84,9 @@ CodegenResult codegen_generate(const AstNode *root,
         /* El id cero termina el retorno de main en fin_programa. */
         emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
         emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
-        emit_instruction(ctx, "j main");
+        emit_instruction(ctx, "j " CODEGEN_ROUTINE_LABEL("main"));
     } else if (has_global_statements) {
-        emit_instruction(ctx, "j fin_programa");
+        emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("fin_programa"));
     }
 
     /* Tercera pasada del AST: emitir las rutinas. Si no hubo segunda pasada,

@@ -78,9 +78,9 @@ void emit_typed_order(CodegenContext *ctx, int left, int right, int scratch,
         /* Un signed negativo es menor que cualquier unsigned. Si es positivo,
          * ambos valores se pueden comparar directamente como unsigned. */
         int id = new_label(ctx);
-        char negative[40], end[40];
-        snprintf(negative, sizeof(negative), "comparar_negativo_%d", id);
-        snprintf(end, sizeof(end), "comparar_fin_%d", id);
+        char negative[CODEGEN_LABEL_SIZE], end[CODEGEN_LABEL_SIZE];
+        snprintf(negative, sizeof(negative), CODEGEN_INTERNAL_LABEL("comparar_negativo_%d"), id);
+        snprintf(end, sizeof(end), CODEGEN_INTERNAL_LABEL("comparar_fin_%d"), id);
         emit_instruction(ctx, "mov r%d, r%d", scratch, left_unsigned ? right : left);
         emit_instruction(ctx, "shri r%d, #31", scratch);
         emit_instruction(ctx, "jnz r%d, %s", scratch, negative);

@@ -119,7 +119,7 @@ static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
                                 const AstNode *value)
 {
     Symbol *source = lookup_symbol_or_error(ctx, value->data.identifier.name, -1);
-    char loop[40];
+    char loop[CODEGEN_LABEL_SIZE];
     if (source == NULL || !source->is_array ||
         source->array_rows != dest->array_rows || source->array_cols != dest->array_cols ||
         source->declared_type != dest->declared_type || dest->declared_type == PIPER_TYPE_BOOL) {
@@ -131,7 +131,7 @@ static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
     if (!load_array_base(ctx, dest, REG_RET) ||
         !load_array_base(ctx, source, REG_ARG1)) return;
     load_immediate(ctx, REG_ARG2, (long long)dest->array_rows * dest->array_cols);
-    snprintf(loop, sizeof(loop), "copiar_matriz_%d", new_label(ctx));
+    snprintf(loop, sizeof(loop), CODEGEN_INTERNAL_LABEL("copiar_matriz_%d"), new_label(ctx));
     emit_label(ctx, loop);
     emit_instruction(ctx, "lowi r4, 0(r2)");
     emit_instruction(ctx, "stwi r4, 0(r1)");
@@ -248,12 +248,12 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
 
     /* Etiqueta de salida. */
     if (has_fallback) {
-        char else_label[32];
-        char fin_label[32];
+        char else_label[CODEGEN_LABEL_SIZE];
+        char fin_label[CODEGEN_LABEL_SIZE];
         int else_n = new_label(ctx);
         int fin_n = new_label(ctx);
-        snprintf(else_label, sizeof(else_label), "else_%d", else_n);
-        snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+        snprintf(else_label, sizeof(else_label), CODEGEN_INTERNAL_LABEL("else_%d"), else_n);
+        snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
         /* Si condición falsa, saltar al fallback. */
         emit_instruction(ctx, "jz r%d, %s", temp, else_label);
@@ -273,9 +273,9 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
 
         emit_label(ctx, fin_label);
     } else {
-        char fin_label[32];
+        char fin_label[CODEGEN_LABEL_SIZE];
         int fin_n = new_label(ctx);
-        snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+        snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
         emit_instruction(ctx, "jz r%d, %s", temp, fin_label);
         free_temp(ctx, temp);
@@ -297,8 +297,8 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
     const AstNode *body = stmt->data.alwhen_statement.body;
     int inicio_n = new_label(ctx);
     int fin_n = new_label(ctx);
-    char inicio_label[32];
-    char fin_label[32];
+    char inicio_label[CODEGEN_LABEL_SIZE];
+    char fin_label[CODEGEN_LABEL_SIZE];
     int temp;
 
     if (condition == NULL || body == NULL) {
@@ -306,8 +306,8 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    snprintf(inicio_label, sizeof(inicio_label), "inicio_%d", inicio_n);
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
     /* Empujar etiqueta de fin para break. */
     label_stack_push(ctx, fin_n);
@@ -352,7 +352,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
     const AstNode *body = stmt->data.loop_statement.body;
     Symbol *control_sym;
     int inicio_n, fin_n;
-    char inicio_label[32], fin_label[32];
+    char inicio_label[CODEGEN_LABEL_SIZE], fin_label[CODEGEN_LABEL_SIZE];
     int temp;
 
     if (control_name == NULL || begin == NULL || end == NULL
@@ -384,8 +384,8 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 
     inicio_n = new_label(ctx);
     fin_n = new_label(ctx);
-    snprintf(inicio_label, sizeof(inicio_label), "inicio_%d", inicio_n);
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
     /* control = begin. */
     temp = alloc_temp(ctx);
@@ -489,7 +489,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
 {
     int fin_n;
-    char fin_label[32];
+    char fin_label[CODEGEN_LABEL_SIZE];
 
     (void)stmt;
     fin_n = label_stack_top(ctx);
@@ -497,14 +497,14 @@ static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
         codegen_context_error(ctx, "break fuera de un ciclo");
         return;
     }
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
     emit_instruction(ctx, "j %s", fin_label);
 }
 
 static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *value = stmt->data.output_statement.value;
-    char epilogue_name[SYMBOL_NAME_MAX + 16];
+    char epilogue_name[CODEGEN_LABEL_SIZE];
 
     if (ctx->current_function == NULL || value == NULL) {
         codegen_context_error(ctx, "output fuera de una rutina o sin valor");
@@ -514,7 +514,7 @@ static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
         codegen_expression(ctx, value, REG_RET) == TYPE_VOID)
         return;
 
-    snprintf(epilogue_name, sizeof(epilogue_name), "epilogo_%s",
+    snprintf(epilogue_name, sizeof(epilogue_name), CODEGEN_INTERNAL_LABEL("epilogo_%s"),
              ctx->current_function->name);
     emit_instruction(ctx, "j %s", epilogue_name);
 }

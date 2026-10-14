@@ -41,7 +41,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
                      frame_size + ctx->call_reserve_size);
     load_immediate(ctx, REG_TMP1, CODEGEN_STACK_BOTTOM);
     emit_instruction(ctx, "ltn r%d, r%d", REG_TMP0, REG_TMP1);
-    emit_instruction(ctx, "jnz r%d, error_pila", REG_TMP0);
+    emit_instruction(ctx, "jnz r%d, " CODEGEN_INTERNAL_LABEL("error_pila"), REG_TMP0);
 
     if (frame_size > 0) {
         if (frame_size <= 32767) {
@@ -117,7 +117,7 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
     }
 
     emit_instruction(ctx, "lowi r%d, 0(r%d)", REG_TMP1, REG_FP);
-    emit_instruction(ctx, "j retornos");
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("retornos"));
 }
 
 /*
@@ -127,7 +127,7 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
 void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 {
     const char *name;
-    char epilogue_name[SYMBOL_NAME_MAX + 16];
+    char epilogue_name[CODEGEN_LABEL_SIZE];
     Symbol *func;
     Scope *saved_scope;
     Symbol *saved_function;
@@ -185,7 +185,11 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 
     /* Etiqueta de entrada. */
     emit_blank(ctx);
-    emit_label(ctx, name);
+    {
+        char routine_label[CODEGEN_LABEL_SIZE];
+        snprintf(routine_label, sizeof(routine_label), CODEGEN_ROUTINE_LABEL("%s"), name);
+        emit_label(ctx, routine_label);
+    }
 
     /* Prólogo. */
     codegen_routine_prologue(ctx, routine);
@@ -202,7 +206,7 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 
     /* Etiqueta de epílogo: se usa si hay `output` en el cuerpo. */
     snprintf(epilogue_name, sizeof(epilogue_name),
-             "epilogo_%s", name);
+             CODEGEN_INTERNAL_LABEL("epilogo_%s"), name);
     emit_label(ctx, epilogue_name);
 
     /* Epílogo. */

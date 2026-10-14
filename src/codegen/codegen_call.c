@@ -18,7 +18,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     const AstNodeList *args;
     Symbol *function;
     int id, reserved;
-    char resume_label[40];
+    char resume_label[CODEGEN_LABEL_SIZE];
 
     if (ctx == NULL || call == NULL || call->kind != AST_CALL_EXPRESSION)
         return 0;
@@ -47,7 +47,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     id = ++ctx->call_site_count;
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     reserved = ctx->pending_call_bytes;
-    snprintf(resume_label, sizeof(resume_label), "retorno_%d", id);
+    snprintf(resume_label, sizeof(resume_label), CODEGEN_INTERNAL_LABEL("retorno_%d"), id);
 
     for (int reg = REG_RET; reg <= REG_TMP1; reg++)
         emit_instruction(ctx, "stwi r%d, %d(r%d)", reg,
@@ -90,7 +90,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     }
 
     emit_instruction(ctx, "diffi r%d, #%d", REG_FP, reserved);
-    emit_instruction(ctx, "j %s", function->name);
+    emit_instruction(ctx, "j " CODEGEN_ROUTINE_LABEL("%s"), function->name);
     emit_label(ctx, resume_label);
     emit_instruction(ctx, "stwi r%d, 28(r%d)", REG_RET, REG_FP);
     for (int reg = REG_RET; reg <= REG_TMP1; reg++)
@@ -111,27 +111,27 @@ void codegen_emit_return_dispatch(CodegenContext *ctx)
 {
     if (ctx == NULL) return;
     emit_blank(ctx);
-    emit_label(ctx, "retornos");
-    emit_instruction(ctx, "jz r%d, fin_de_main", REG_TMP1);
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("retornos"));
+    emit_instruction(ctx, "jz r%d, " CODEGEN_INTERNAL_LABEL("fin_de_main"), REG_TMP1);
     for (int id = 1; id <= ctx->call_site_count; id++) {
         emit_instruction(ctx, "mov r%d, r%d", REG_TMP0, REG_TMP1);
         emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0, id);
-        emit_instruction(ctx, "jz r%d, retorno_%d", REG_TMP0, id);
+        emit_instruction(ctx, "jz r%d, " CODEGEN_INTERNAL_LABEL("retorno_%d"), REG_TMP0, id);
     }
-    emit_label(ctx, "error_retorno");
-    emit_instruction(ctx, "j error_retorno");
-    emit_label(ctx, "fin_de_main");
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_retorno"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_retorno"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("fin_de_main"));
     emit_instruction(ctx, "sumi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
-    emit_label(ctx, "fin_programa");
-    emit_instruction(ctx, "j fin_programa");
-    emit_label(ctx, "error_pila");
-    emit_instruction(ctx, "j error_pila");
-    emit_label(ctx, "error_division_cero");
-    emit_instruction(ctx, "j error_division_cero");
-    emit_label(ctx, "error_exponente_negativo");
-    emit_instruction(ctx, "j error_exponente_negativo");
-    emit_label(ctx, "error_aritmetico");
-    emit_instruction(ctx, "j error_aritmetico");
-    emit_label(ctx, "error_indice");
-    emit_instruction(ctx, "j error_indice");
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("fin_programa"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("fin_programa"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_pila"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_pila"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_division_cero"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_division_cero"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_exponente_negativo"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_exponente_negativo"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+    emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_indice"));
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_indice"));
 }

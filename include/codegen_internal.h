@@ -23,6 +23,11 @@
 #define MAX_TEMPORALES   2
 #define MAX_ARGUMENTOS   4
 #define CALL_RECORD_SIZE 32  /* id, r1..r6 y valor de retorno */
+/* Espacios disjuntos: incluso los identificadores que ya contienen estos
+ * prefijos reciben el prefijo de rutina. No se reservan nombres en Piper. */
+#define CODEGEN_INTERNAL_LABEL(name) "_IR_" name
+#define CODEGEN_ROUTINE_LABEL(name) "_R_" name
+#define CODEGEN_LABEL_SIZE (SYMBOL_NAME_MAX + 64)
 #define CODEGEN_DATA_BASE 0x10000
 #define CODEGEN_STACK_TOP (CODEGEN_DATA_BASE + SYMBOL_MEMORY_SIZE)
 #define CODEGEN_STACK_BOTTOM (CODEGEN_STACK_TOP - SYMBOL_STACK_SIZE)
