@@ -432,11 +432,17 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 
         /* Comparar: si control >= end, salir.
          * Calcular control < end en temp2 y luego invertir.
-         * ltn rTemp2, rTemp → temp2 = (control < end) ? 1 : 0
+         * emit_typed_order → temp2 = (control < end) ? 1 : 0,
+         * con máscara del bit 31 para operandos signed.
          * xori rTemp2, #1   → temp2 = !(control < end) = (control >= end)
          * jnz rTemp2, fin   → si control >= end, salir
          */
-        emit_instruction(ctx, "ltn r%d, r%d", temp2, temp);
+        int control_unsigned = control_sym->declared_type == PIPER_TYPE_UB8 ||
+            control_sym->declared_type == PIPER_TYPE_UB16 ||
+            control_sym->declared_type == PIPER_TYPE_UB32;
+        /* r1..r4 no contienen valores vivos entre sentencias de la rutina. */
+        emit_typed_order(ctx, temp2, temp, REG_ARG3, control_unsigned,
+                         codegen_expression_is_unsigned(end), 0);
         emit_instruction(ctx, "xori r%d, #1", temp2);
         emit_instruction(ctx, "jnz r%d, %s", temp2, fin_label);
         free_temp(ctx, temp2);

@@ -704,7 +704,8 @@ static DataType visit(Visitor *v, AstNode *n)
     if (n->kind == AST_BINARY_EXPRESSION) {
         /* Reserva conservadora: también cubre un spill de una operación
          * simple cuando los dos temporales ya contienen resultados vivos. */
-        reserved = 32;
+        AstOperator op = n->data.binary_expression.operator;
+        reserved = (op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ? 64 : 32;
     }
     v->pending_codegen_bytes += reserved;
     if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)

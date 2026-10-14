@@ -92,6 +92,10 @@ void emit_label(CodegenContext *ctx, const char *name);
 void emit_instruction(CodegenContext *ctx, const char *fmt, ...);
 void emit_comment(CodegenContext *ctx, const char *fmt, ...);
 void emit_blank(CodegenContext *ctx);
+/* ALU unsigned: ajusta el orden según los tipos. Modifica left y scratch;
+ * conserva right. Los tres registros deben ser distintos. */
+void emit_typed_order(CodegenContext *ctx, int left, int right, int scratch,
+                      int left_unsigned, int right_unsigned, int greater);
 
 /* ----------------------------------------------------------------
  * codegen_labels.c
@@ -116,6 +120,7 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value);
 int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg);
 int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
                                int dest_reg);
+int codegen_expression_is_unsigned(const AstNode *expr);
 
 /* ----------------------------------------------------------------
  * codegen_stmt.c

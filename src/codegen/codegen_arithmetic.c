@@ -80,6 +80,11 @@ static int unsigned_operand(const AstNode *node)
     return constant_integer(node, &value) && value > 2147483647LL;
 }
 
+int codegen_expression_is_unsigned(const AstNode *expr)
+{
+    return unsigned_operand(expr);
+}
+
 static PiperType result_type(const AstNode *expr)
 {
     if (expr->has_piper_type) return expr->piper_type;

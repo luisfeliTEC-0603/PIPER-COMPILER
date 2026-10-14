@@ -179,6 +179,38 @@ static int codegen_unary_expression(CodegenContext *ctx,
 /* Ya se evaluó el lado izquierdo en dest. Si r5/r6 están ocupados, guardarlo
  * junto con los registros vivos y evaluar el lado derecho con temporales libres.
  * Permite acum + A|i&k| * B|k&j| sin volver a evaluar el lado izquierdo. */
+static int emit_binary_operation(CodegenContext *ctx, const AstNode *expr,
+                                 int left, int right, const char *instruction)
+{
+    AstOperator op = expr->data.binary_expression.operator;
+    if (op < AST_OP_LESS || op > AST_OP_GREATER_EQUAL) {
+        emit_instruction(ctx, "%s r%d, r%d", instruction, left, right);
+        return 1;
+    }
+    int left_unsigned = codegen_expression_is_unsigned(expr->data.binary_expression.left);
+    int right_unsigned = codegen_expression_is_unsigned(expr->data.binary_expression.right);
+    if (left_unsigned && right_unsigned) {
+        emit_instruction(ctx, "%s r%d, r%d", instruction, left, right);
+        return 1;
+    }
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva para mascara de comparacion excedida");
+        return 0;
+    }
+    int scratch = REG_ARG0;
+    while (scratch == left || scratch == right) scratch++;
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    int offset = -ctx->pending_call_bytes + 28;
+    /* Un registro de argumentos puede estar vivo: conservarlo sin requerir
+     * un tercer temporal físico. Los operandos ya se evaluaron una sola vez. */
+    emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, offset);
+    emit_typed_order(ctx, left, right, scratch, left_unsigned, right_unsigned,
+                     op == AST_OP_GREATER || op == AST_OP_LESS_EQUAL);
+    emit_instruction(ctx, "lowi r%d, %d(r7)", scratch, offset);
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
+    return 1;
+}
+
 static int codegen_binary_spilled(CodegenContext *ctx, const AstNode *expr,
                                   int dest, const char *instruction, int invert)
 {
@@ -199,7 +231,7 @@ static int codegen_binary_spilled(CodegenContext *ctx, const AstNode *expr,
     if (codegen_expression(ctx, expr->data.binary_expression.right, REG_RET) == TYPE_VOID)
         goto done;
     emit_instruction(ctx, "lowi r2, %d(r7)", -reserved + 28);
-    emit_instruction(ctx, "%s r2, r1", instruction);
+    if (!emit_binary_operation(ctx, expr, 2, 1, instruction)) goto done;
     if (invert) emit_instruction(ctx, "xori r2, #1");
     if (dest != REG_ARG1) emit_instruction(ctx, "mov r%d, r2", dest);
     for (int reg = REG_RET; reg <= REG_TMP1; reg++)
@@ -245,7 +277,10 @@ static int codegen_binary_emit(CodegenContext *ctx,
 
     /* 4. Emitir la operación. */
     if (instruction != NULL) {
-        emit_instruction(ctx, "%s r%d, r%d", instruction, dest_reg, temp);
+        if (!emit_binary_operation(ctx, expr, dest_reg, temp, instruction)) {
+            free_temp(ctx, temp);
+            return TYPE_VOID;
+        }
     }
 
     /* 5. Invertir si es necesario. */
@@ -264,7 +299,8 @@ static int codegen_binary_emit(CodegenContext *ctx,
 }
 
 /*
- * Comparaciones: se calculan como una instrucción PORYGON.
+ * Orden: los enteros signed invierten el bit 31 antes de comparar en la ALU
+ * unsigned. Igualdad y desigualdad comparan directamente los patrones de bits.
  *   <  -> ltn
  *   >  -> gtn
  *   <= -> gtn + xori #1  (porque a <= b  ==  !(a > b))
