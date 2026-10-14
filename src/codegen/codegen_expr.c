@@ -210,6 +210,42 @@ static int codegen_unary_expression(CodegenContext *ctx,
  * `invert` indica si después hay que invertir el resultado con xori #1.
  *   - Se usa para <=, >=, != (que se calculan como la negación de >, <, =).
  */
+/* Ya se evaluó el lado izquierdo en dest. Si r5/r6 están ocupados, guardarlo
+ * junto con los registros vivos y evaluar el lado derecho con temporales libres.
+ * Permite acum + A|i&k| * B|k&j| sin volver a evaluar el lado izquierdo. */
+static int codegen_binary_spilled(CodegenContext *ctx, const AstNode *expr,
+                                  int dest, const char *instruction, int invert)
+{
+    unsigned int saved = ctx->temp_in_use;
+    unsigned int mask = (0x1eu | (saved << REG_TMP0)) & ~(1u << dest);
+    int reserved, type = TYPE_VOID;
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva de pila para expresion excedida");
+        return TYPE_VOID;
+    }
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    reserved = ctx->pending_call_bytes;
+    emit_instruction(ctx, "stwi r%d, %d(r7)", dest, -reserved + 28);
+    for (int reg = REG_RET; reg <= REG_TMP1; reg++)
+        if (mask & (1u << reg))
+            emit_instruction(ctx, "stwi r%d, %d(r7)", reg, -reserved + reg * 4);
+    reset_temps(ctx);
+    if (codegen_expression(ctx, expr->data.binary_expression.right, REG_RET) == TYPE_VOID)
+        goto done;
+    emit_instruction(ctx, "lowi r2, %d(r7)", -reserved + 28);
+    emit_instruction(ctx, "%s r2, r1", instruction);
+    if (invert) emit_instruction(ctx, "xori r2, #1");
+    if (dest != REG_ARG1) emit_instruction(ctx, "mov r%d, r2", dest);
+    for (int reg = REG_RET; reg <= REG_TMP1; reg++)
+        if (mask & (1u << reg))
+            emit_instruction(ctx, "lowi r%d, %d(r7)", reg, -reserved + reg * 4);
+    type = expr->inferred_type;
+done:
+    ctx->temp_in_use = saved;
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
+    return type;
+}
+
 static int codegen_binary_emit(CodegenContext *ctx,
                                const AstNode *expr, int dest_reg,
                                const char *instruction,
@@ -227,6 +263,8 @@ static int codegen_binary_emit(CodegenContext *ctx,
     }
 
     /* 2. Reservar temporal. */
+    if (ctx->temp_in_use == 3)
+        return codegen_binary_spilled(ctx, expr, dest_reg, instruction, invert);
     temp = alloc_temp(ctx);
     if (temp < 0) {
         return TYPE_VOID;
@@ -313,6 +351,18 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
     if (op == AST_OP_POWER)
         return codegen_general_arithmetic(ctx, expr, dest_reg);
 
+    switch (op) {
+    case AST_OP_ADD: instruction = "sum"; break;
+    case AST_OP_SUBTRACT: instruction = "diff"; break;
+    case AST_OP_MULTIPLY: instruction = "mul"; break;
+    case AST_OP_LOGICAL_AND: instruction = "and"; break;
+    case AST_OP_LOGICAL_OR: instruction = "or"; break;
+    case AST_OP_LOGICAL_XOR: instruction = "xor"; break;
+    default:
+        codegen_context_error(ctx, "operador binario no implementado (op=%d)", op);
+        return TYPE_VOID;
+    }
+
     /* 1. Evaluar left en dest_reg. */
     left_type = codegen_expression(ctx, left, dest_reg);
     if (left_type == TYPE_VOID) {
@@ -320,6 +370,8 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
     }
 
     /* 2. Reservar temporal. */
+    if (ctx->temp_in_use == 3)
+        return codegen_binary_spilled(ctx, expr, dest_reg, instruction, 0);
     temp = alloc_temp(ctx);
     if (temp < 0) {
         return TYPE_VOID;
@@ -333,20 +385,6 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
     }
 
     /* 4. Emitir la operación. */
-    switch (op) {
-    case AST_OP_ADD:      instruction = "sum";  break;
-    case AST_OP_SUBTRACT: instruction = "diff"; break;
-    case AST_OP_MULTIPLY: instruction = "mul";  break;
-    case AST_OP_LOGICAL_AND: instruction = "and"; break;
-    case AST_OP_LOGICAL_OR:  instruction = "or";  break;
-    case AST_OP_LOGICAL_XOR: instruction = "xor"; break;
-    default:
-        codegen_context_error(ctx,
-            "operador binario no implementado (op=%d)", op);
-        free_temp(ctx, temp);
-        return TYPE_VOID;
-    }
-
     emit_instruction(ctx, "%s r%d, r%d", instruction, dest_reg, temp);
     free_temp(ctx, temp);
 

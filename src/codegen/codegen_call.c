@@ -39,7 +39,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     }
     if (ctx->call_site_count >= 32767 ||
         ctx->pending_call_bytes >
-            SYMBOL_STACK_CALL_RESERVE - CALL_RECORD_SIZE) {
+            ctx->call_reserve_size - CALL_RECORD_SIZE) {
         codegen_context_error(ctx, "limite de llamadas anidadas excedido");
         return 0;
     }
@@ -132,4 +132,6 @@ void codegen_emit_return_dispatch(CodegenContext *ctx)
     emit_instruction(ctx, "j error_exponente_negativo");
     emit_label(ctx, "error_aritmetico");
     emit_instruction(ctx, "j error_aritmetico");
+    emit_label(ctx, "error_indice");
+    emit_instruction(ctx, "j error_indice");
 }

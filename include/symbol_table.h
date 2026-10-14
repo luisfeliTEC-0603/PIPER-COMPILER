@@ -56,6 +56,7 @@ typedef struct Symbol {
     int param_count;
     struct Symbol **params;
     int total_stack_frame_size;
+    int call_reserve_size; /* Espacio para llamadas, índices y stores pendientes */
     int line_number;
     Scope *function_scope;
     struct Symbol *next;
@@ -77,6 +78,7 @@ typedef struct SymbolTable {
     Scope *all_scopes;
     int next_global_address;
     int scope_counter;
+    int global_call_reserve_size;
 } SymbolTable;
 
 SymbolTable *symbol_table_create(void);

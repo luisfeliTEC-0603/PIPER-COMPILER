@@ -57,23 +57,37 @@ static void codegen_index_assignment(CodegenContext *ctx,
                                      const AstNode *target,
                                      const AstNode *value)
 {
-    int address_reg = alloc_temp(ctx);
-    int value_reg;
+    int address_reg, value_reg, reserved;
 
-    if (address_reg < 0) return;
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva para store indexado excedida");
+        return;
+    }
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    reserved = ctx->pending_call_bytes;
+    address_reg = alloc_temp(ctx);
+    if (address_reg < 0) goto done;
     if (!codegen_array_index_address(ctx, target, address_reg)) {
         free_temp(ctx, address_reg);
-        return;
+        goto done;
     }
-    value_reg = alloc_temp(ctx);
-    if (value_reg < 0) {
-        free_temp(ctx, address_reg);
-        return;
-    }
-    if (codegen_expression(ctx, value, value_reg) != TYPE_VOID)
-        emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
-    free_temp(ctx, value_reg);
+    /* El valor puede requerir ambos temporales o llamar rutinas. Conservar
+     * la dirección ya calculada en una ranura que esas evaluaciones no pisan. */
+    emit_instruction(ctx, "stwi r%d, %d(r7)", address_reg, -reserved + 28);
     free_temp(ctx, address_reg);
+    value_reg = alloc_temp(ctx);
+    if (value_reg < 0) goto done;
+    if (codegen_expression(ctx, value, value_reg) != TYPE_VOID) {
+        address_reg = alloc_temp(ctx);
+        if (address_reg >= 0) {
+            emit_instruction(ctx, "lowi r%d, %d(r7)", address_reg, -reserved + 28);
+            emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
+            free_temp(ctx, address_reg);
+        }
+    }
+    free_temp(ctx, value_reg);
+done:
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
 }
 
 static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
@@ -83,19 +97,34 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
     const AstNodeList *items = value->data.array_literal.elements;
     int value_reg;
 
-    if (target->array_rank != 1 || sym->declared_type == PIPER_TYPE_BOOL ||
-        items == NULL || items->count != (size_t)sym->array_rows) {
-        codegen_context_error(ctx, "inicializacion de '%s' no soportada en punto 5",
+    if (target->array_rank < 1 || target->array_rank > 2 ||
+        sym->declared_type == PIPER_TYPE_BOOL || items == NULL ||
+        items->count != (size_t)sym->array_rows) {
+        codegen_context_error(ctx, "inicializacion de arreglo/matriz '%s' invalida",
                               sym->name);
         return;
     }
     value_reg = alloc_temp(ctx);
     if (value_reg < 0) return;
-    for (size_t i = 0; i < items->count; i++) {
+    size_t count = (size_t)sym->array_rows * sym->array_cols;
+    for (size_t i = 0; i < count; i++) {
         int base_reg;
         size_t offset = i * SYMBOL_WORD_SIZE;
+        const AstNode *element;
+        if (target->array_rank == 1) {
+            element = items->items[i];
+        } else {
+            const AstNode *row = items->items[i / (size_t)sym->array_cols];
+            if (row == NULL || row->kind != AST_ARRAY_LITERAL ||
+                row->data.array_literal.elements == NULL ||
+                row->data.array_literal.elements->count != (size_t)sym->array_cols) {
+                codegen_context_error(ctx, "fila de matriz '%s' invalida", sym->name);
+                break;
+            }
+            element = row->data.array_literal.elements->items[i % (size_t)sym->array_cols];
+        }
 
-        if (codegen_expression(ctx, items->items[i], value_reg) == TYPE_VOID)
+        if (codegen_expression(ctx, element, value_reg) == TYPE_VOID)
             break;
         base_reg = alloc_temp(ctx);
         if (base_reg < 0) break;
@@ -112,6 +141,32 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
         free_temp(ctx, base_reg);
     }
     free_temp(ctx, value_reg);
+}
+
+static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
+                                const AstNode *value)
+{
+    Symbol *source = lookup_symbol_or_error(ctx, value->data.identifier.name, -1);
+    char loop[40];
+    if (source == NULL || !source->is_array ||
+        source->array_rows != dest->array_rows || source->array_cols != dest->array_cols ||
+        source->declared_type != dest->declared_type || dest->declared_type == PIPER_TYPE_BOOL) {
+        codegen_context_error(ctx, "copia de arreglo/matriz incompatible");
+        return;
+    }
+    /* Las asignaciones son sentencias: no hay argumentos vivos en r1..r4.
+     * Referencias iguales permiten autocopia; no hay vistas parciales en Piper. */
+    if (!load_array_base(ctx, dest, REG_RET) ||
+        !load_array_base(ctx, source, REG_ARG1)) return;
+    load_immediate(ctx, REG_ARG2, (long long)dest->array_rows * dest->array_cols);
+    snprintf(loop, sizeof(loop), "copiar_matriz_%d", new_label(ctx));
+    emit_label(ctx, loop);
+    emit_instruction(ctx, "lowi r4, 0(r2)");
+    emit_instruction(ctx, "stwi r4, 0(r1)");
+    emit_instruction(ctx, "sumi r1, #4");
+    emit_instruction(ctx, "sumi r2, #4");
+    emit_instruction(ctx, "diffi r3, #1");
+    emit_instruction(ctx, "jnz r3, %s", loop);
 }
 
 /* ----------------------------------------------------------------
@@ -141,6 +196,8 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
         if (sym->is_array) {
             if (value->kind == AST_ARRAY_LITERAL)
                 codegen_array_literal_assignment(ctx, sym, target, value);
+            else if (value->kind == AST_IDENTIFIER_EXPRESSION)
+                codegen_array_copy(ctx, sym, value);
             else
                 codegen_context_error(ctx,
                     "asignacion de arreglo '%s' no soportada en punto 5",

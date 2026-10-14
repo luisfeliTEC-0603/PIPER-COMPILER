@@ -59,6 +59,7 @@ typedef struct {
      * argumentos de llamadas anidadas. */
     int call_site_count;
     int pending_call_bytes;
+    int call_reserve_size;
 
     /* Buffer de último error */
     char last_error[256];

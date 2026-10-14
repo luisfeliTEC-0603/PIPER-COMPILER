@@ -57,6 +57,7 @@ typedef struct {
     CallUsage *calls;
     int loops, errors;
     int trace_enabled;
+    long long pending_codegen_bytes;
 } Visitor;
 
 /* Acumula el diagnóstico y permite seguir revisando el resto del árbol. */
@@ -665,7 +666,7 @@ static long long peak_stack(Visitor *v, RoutineUsage *routine)
         if (bytes > child_peak) child_peak = bytes;
     }
     long long known_peak = (long long)routine->symbol->total_stack_frame_size +
-                           SYMBOL_STACK_CALL_RESERVE + child_peak;
+                           routine->symbol->call_reserve_size + child_peak;
     if (known_peak > SYMBOL_STACK_SIZE)
         error(v, routine->declaration,
               "La rutina '%s' puede ocupar %lld bytes de pila entre variables, llamadas y reserva; máximo %d.",
@@ -690,6 +691,27 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Solo aprobar el nodo completo si sus hijos y sus reglas no fallaron. */
     int errors_before = v->errors;
     /* Reiniciar la decoración permite analizar el mismo árbol otra vez. */
+    /* Los índices y stores conservan valores en ranuras de 32 bytes,
+     * igual que llamadas y aritmética general. Contar el máximo simultáneo
+     * para que el prólogo compruebe la pila antes de usar esas ranuras. */
+    int reserved = 0;
+    if (n->kind == AST_CALL_EXPRESSION || n->kind == AST_INDEX_EXPRESSION ||
+        (n->kind == AST_ASSIGNMENT && n->data.assignment.target &&
+         n->data.assignment.target->kind == AST_INDEX_EXPRESSION))
+        reserved = 32;
+    if (n->kind == AST_BINARY_EXPRESSION) {
+        /* Reserva conservadora: también cubre un spill de una operación
+         * simple cuando los dos temporales ya contienen resultados vivos. */
+        reserved = 32;
+    }
+    v->pending_codegen_bytes += reserved;
+    if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)
+        error(v, n, "La evaluación excede los %d bytes de pila.", SYMBOL_STACK_SIZE);
+    else {
+        int *peak = v->function ? &v->function->call_reserve_size
+                                : &v->table->global_call_reserve_size;
+        if (v->pending_codegen_bytes > *peak) *peak = (int)v->pending_codegen_bytes;
+    }
     n->semantic_scope = NULL;
     n->inferred_type = TYPE_VOID;
     n->array_rank = n->array_rows = n->array_cols = 0;
@@ -728,7 +750,9 @@ static DataType visit(Visitor *v, AstNode *n)
         Symbol *old = v->function;
         RoutineUsage *old_routine = v->current_routine;
         int old_loops = v->loops;
+        long long old_pending = v->pending_codegen_bytes;
         if (!open_scope(v, n, 0)) break;
+        v->pending_codegen_bytes = 0;
         v->function = f ? f : &fallback;
         v->current_routine = NULL;
         if (f) {
@@ -783,6 +807,7 @@ static DataType visit(Visitor *v, AstNode *n)
         v->function = old;
         v->current_routine = old_routine;
         v->loops = old_loops;
+        v->pending_codegen_bytes = old_pending;
         break;
     }
     /* Al salir, las declaraciones del bloque dejan de ser visibles. */
@@ -1144,6 +1169,7 @@ static DataType visit(Visitor *v, AstNode *n)
     }
     if (v->errors == errors_before && n->kind >= AST_CALL_EXPRESSION)
         success(v, n, "Decoración de expresión aprobada: tipo inferido %s.", type_name(n->inferred_type));
+    v->pending_codegen_bytes -= reserved;
     return n->inferred_type;
 }
 

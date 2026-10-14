@@ -35,11 +35,11 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
     emit_comment(ctx, "prologo de %s (frame %d bytes)",
                  routine->data.routine_declaration.name, frame_size);
 
-    /* Comprobar antes de escribir el frame. La reserva cubre dos ranuras
-     * simultáneas de llamada, incluso durante la evaluación de argumentos. */
+    /* Comprobar antes de escribir el frame. El semántico calcula una reserva
+     * de al menos 64 bytes para llamadas, stores, índices y spills pendientes. */
     emit_instruction(ctx, "mov r%d, r%d", REG_TMP0, REG_FP);
     emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0,
-                     frame_size + SYMBOL_STACK_CALL_RESERVE);
+                     frame_size + ctx->call_reserve_size);
     emit_instruction(ctx, "mov r%d, r%d", REG_TMP1, REG_ZERO);
     emit_instruction(ctx, "sumi r%d, #15", REG_TMP1);
     emit_instruction(ctx, "shli r%d, #12", REG_TMP1);
@@ -135,6 +135,7 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     Scope *saved_scope;
     Symbol *saved_function;
     int saved_frame_offset;
+    int saved_reserve;
 
     if (ctx == NULL || routine == NULL) {
         return;
@@ -178,10 +179,12 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     saved_scope = ctx->current_scope;
     saved_function = ctx->current_function;
     saved_frame_offset = ctx->frame_offset;
+    saved_reserve = ctx->call_reserve_size;
 
     ctx->current_function = func;
     ctx->current_scope = func->function_scope;
     ctx->frame_offset = func->total_stack_frame_size;
+    ctx->call_reserve_size = func->call_reserve_size;
 
     /* Etiqueta de entrada. */
     emit_blank(ctx);
@@ -211,4 +214,5 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     ctx->current_scope = saved_scope;
     ctx->current_function = saved_function;
     ctx->frame_offset = saved_frame_offset;
+    ctx->call_reserve_size = saved_reserve;
 }

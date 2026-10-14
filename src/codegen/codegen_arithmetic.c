@@ -350,7 +350,7 @@ int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
         int fast = power_two_divmod(ctx, expr, dest_reg);
         if (fast != 0) return fast > 0 ? TYPE_INT : TYPE_VOID;
     }
-    if (ctx->pending_call_bytes > SYMBOL_STACK_CALL_RESERVE - CALL_RECORD_SIZE) {
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
         codegen_context_error(ctx, "reserva de aritmetica y llamadas agotada");
         return TYPE_VOID;
     }

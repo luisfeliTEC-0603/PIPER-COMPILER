@@ -30,10 +30,11 @@ solo los registros que pueden contener valores pendientes. Una expresión
 directa de `output` no guarda registros que el llamador ya conserva.
 Se usa el mismo contador de reservas que las llamadas. `r7` permanece fijo
 durante la evaluación de operandos. Los registros guardados se restauran;
-el registro destino recibe el resultado. La reserva actual de 64 bytes permite
-hasta dos operaciones generales o
-llamadas simultáneamente pendientes; una tercera profundidad produce un error
-de generación. Ampliar esa reserva y los spills generales sigue pendiente.
+el registro destino recibe el resultado. El semántico calcula una reserva
+conservadora por rutina y para la entrada global, con un mínimo de 64 bytes.
+Incluye llamadas, aritmética, índices, stores indexados y spills de expresiones
+binarias. El prólogo comprueba esa reserva junto con el frame. Ya no se limita
+la profundidad a dos ranuras; se conserva el presupuesto de 4096 bytes de pila.
 
 Las comparaciones de magnitudes usan `ltn`/`gtn` sin signo, como están
 implementadas en `PORYGON/hardware/src/alu_unit.sv`; el signo se extrae con
