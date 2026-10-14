@@ -218,15 +218,19 @@ test-extract-wrapper: test-integration
 	@set -eu; \
 	tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/piper-extract.XXXXXX"); \
 	trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
-	./extract.sh call_simple 0x10000 8 "$$tmp/output.bin" >/dev/null; \
+	porygon_dir=$${PORYGON_DIR:-../../ProyectoArqui/PORYGON}; \
+	test -x "$$porygon_dir/extract.sh"; \
+	dump=$$(cd build/runs/call_simple && pwd)/memory.dump.mem; \
+	"$$porygon_dir/extract.sh" "$$dump" \
+		0x10000 8 "$$tmp/output.bin" >/dev/null; \
 	test "$$(wc -c <"$$tmp/output.bin" | tr -d ' ')" = 8; \
 	test "$$(od -An -tx1 "$$tmp/output.bin" | tr -d ' \n')" = 0000000000000000; \
-	./extract.sh build/runs/call_simple/memory.dump.mem 0x10000 8 \
+	"$$porygon_dir/extract.sh" "$$dump" 0x10000 8 \
 		"$$tmp/explicit.bin" >/dev/null; \
 	cmp "$$tmp/output.bin" "$$tmp/explicit.bin"; \
-	if ./extract.sh call_simple 0x10000 8 \
-		build/runs/call_simple/memory.dump.mem >/dev/null 2>&1; then exit 1; fi; \
-	echo "test-extract-wrapper: nombre, ruta explícita, rango y salida correctos"
+	if "$$porygon_dir/extract.sh" "$$dump" 0x10000 8 \
+		"$$dump" >/dev/null 2>&1; then exit 1; fi; \
+	echo "test-extract-wrapper: ruta explícita, rango y salida correctos"
 
 # No silencia conflictos: inspecciona el informe que Bison genera con -v.
 conflicts: build/parser.c

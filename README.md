@@ -53,14 +53,18 @@ contadores presentes en `results.txt`. Los artefactos quedan en
 `build/runs/<programa>/`. El runner detecta PORYGON en la carpeta hermana
 esperada; `PORYGON_DIR=/otra/ruta/PORYGON` permite cambiarla sin editar scripts.
 
-Para extraer un rango del dump generado basta indicar la ejecución, dirección,
-tamaño y archivo de salida:
+La extracción pertenece a PORYGON. Después de una simulación creada con
+`make sim`, basta indicar el programa, la dirección, el tamaño y el archivo de
+salida:
 
 ```sh
-./extract.sh call_simple 0x10000 32 salida.bin
+cd ../../ProyectoArqui/PORYGON
+./extract.sh programa 0x10000 32 salida.bin
 ```
 
-El primer argumento también puede ser una ruta explícita a cualquier dump `.mem`.
+El wrapper lee `sim_output/programa/memory.dump.mem` y guarda la salida junto al
+dump. El primer argumento también puede ser una ruta explícita a cualquier dump
+`.mem`.
 
 ## Ensamblador PORYGON
 
