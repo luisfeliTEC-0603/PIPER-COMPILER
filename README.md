@@ -53,6 +53,15 @@ contadores presentes en `results.txt`. Los artefactos quedan en
 `build/runs/<programa>/`. El runner detecta PORYGON en la carpeta hermana
 esperada; `PORYGON_DIR=/otra/ruta/PORYGON` permite cambiarla sin editar scripts.
 
+Para extraer un rango del dump generado basta indicar la ejecución, dirección,
+tamaño y archivo de salida:
+
+```sh
+./extract.sh call_simple 0x10000 32 salida.bin
+```
+
+El primer argumento también puede ser una ruta explícita a cualquier dump `.mem`.
+
 ## Ensamblador PORYGON
 
 El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/Flujo_assembler.md).

@@ -41,7 +41,8 @@ OBJ = build/parser.o \
       $(SCHEDULER_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate conflicts clean test-scheduler test-scheduler-rtl test-cli-bin test-integration
+.PHONY: all generate conflicts clean test-scheduler test-scheduler-rtl test-cli-bin \
+	test-integration test-extract-wrapper
 
 all: $(TARGET) bin/porygon-schedule
 
@@ -212,6 +213,20 @@ test-cli-bin: bin/pipoc bin/porygon-schedule
 test-integration: bin/pipoc
 	./run.sh tests/codegen/call_simple.rwt 1000 \
 		--expect r1=10 --expect r7=0x20000 --expect errors=0
+
+test-extract-wrapper: test-integration
+	@set -eu; \
+	tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/piper-extract.XXXXXX"); \
+	trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	./extract.sh call_simple 0x10000 8 "$$tmp/output.bin" >/dev/null; \
+	test "$$(wc -c <"$$tmp/output.bin" | tr -d ' ')" = 8; \
+	test "$$(od -An -tx1 "$$tmp/output.bin" | tr -d ' \n')" = 0000000000000000; \
+	./extract.sh build/runs/call_simple/memory.dump.mem 0x10000 8 \
+		"$$tmp/explicit.bin" >/dev/null; \
+	cmp "$$tmp/output.bin" "$$tmp/explicit.bin"; \
+	if ./extract.sh call_simple 0x10000 8 \
+		build/runs/call_simple/memory.dump.mem >/dev/null 2>&1; then exit 1; fi; \
+	echo "test-extract-wrapper: nombre, ruta explícita, rango y salida correctos"
 
 # No silencia conflictos: inspecciona el informe que Bison genera con -v.
 conflicts: build/parser.c
