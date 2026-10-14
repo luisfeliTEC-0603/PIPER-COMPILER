@@ -123,6 +123,10 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value);
  * codegen_expr.c
  * ---------------------------------------------------------------- */
 int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg);
+int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
+                           int left, int right);
+int codegen_checked_step(CodegenContext *ctx, PiperType type, int dest,
+                         int increment);
 int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
                                int dest_reg);
 int codegen_expression_is_unsigned(const AstNode *expr);

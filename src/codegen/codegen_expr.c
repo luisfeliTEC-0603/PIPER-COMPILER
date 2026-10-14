@@ -133,7 +133,9 @@ static int codegen_unary_increment(CodegenContext *ctx,
     /* Cargar valor actual en dest_reg. */
     if (!load_symbol_value(ctx, sym, dest_reg)) return TYPE_VOID;
 
-    /* Sumar o restar 1. */
+    /* Rechazar el extremo del tipo antes de cambiar o almacenar el valor. */
+    if (!codegen_checked_step(ctx, sym->declared_type, dest_reg, is_increment))
+        return TYPE_VOID;
     if (is_increment) {
         emit_instruction(ctx, "sumi r%d, #1", dest_reg);
     } else {
@@ -183,6 +185,8 @@ static int emit_binary_operation(CodegenContext *ctx, const AstNode *expr,
                                  int left, int right, const char *instruction)
 {
     AstOperator op = expr->data.binary_expression.operator;
+    if (op == AST_OP_ADD || op == AST_OP_SUBTRACT || op == AST_OP_MULTIPLY)
+        return codegen_checked_binary(ctx, expr, left, right);
     if (op < AST_OP_LESS || op > AST_OP_GREATER_EQUAL) {
         emit_instruction(ctx, "%s r%d, r%d", instruction, left, right);
         return 1;
@@ -387,7 +391,10 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
     }
 
     /* 4. Emitir la operación. */
-    emit_instruction(ctx, "%s r%d, r%d", instruction, dest_reg, temp);
+    if (!emit_binary_operation(ctx, expr, dest_reg, temp, instruction)) {
+        free_temp(ctx, temp);
+        return TYPE_VOID;
+    }
     free_temp(ctx, temp);
 
     /* Tipo resultante: para lógicos, TYPE_BOOL; para aritmética, TYPE_INT. */

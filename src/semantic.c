@@ -705,7 +705,11 @@ static DataType visit(Visitor *v, AstNode *n)
         /* Reserva conservadora: también cubre un spill de una operación
          * simple cuando los dos temporales ya contienen resultados vivos. */
         AstOperator op = n->data.binary_expression.operator;
-        reserved = (op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ? 64 : 32;
+        /* Un spill puede coexistir con la ranura de comprobación del
+         * resultado. Ambos deben quedar dentro de la guarda de pila. */
+        reserved = ((op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ||
+                    op == AST_OP_ADD || op == AST_OP_SUBTRACT ||
+                    op == AST_OP_MULTIPLY) ? 64 : 32;
     }
     v->pending_codegen_bytes += reserved;
     if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)
