@@ -21,7 +21,25 @@
 #define REG_FP       7   /* r7: frame pointer */
 
 #define MAX_TEMPORALES   2
-#define MAX_ARGUMENTOS   4
+
+/* Convención de llamadas.
+ * - Los primeros MAX_REGISTER_ARGS argumentos viajan en r1..r4.
+ * - Los restantes se depositan en el registro de llamada, encima de él,
+ *   en orden de aparición (arg4 en +CALL_RECORD_SIZE, arg5 en +CALL_RECORD_SIZE+4, ...).
+ * - El llamado los lee desde su r7 con offset frame_size + CALL_RECORD_SIZE + 4·(i-4). */
+#define MAX_REGISTER_ARGS 4
+#define MAX_TOTAL_ARGS    32
+
+/* Desplazamiento, respecto al r7 del llamado tras ajustar el frame,
+ * del i-ésimo argumento que viaja en pila (i >= MAX_REGISTER_ARGS). */
+#define CODEGEN_STACK_ARG_OFFSET(frame_size, i) \
+    ((frame_size) + CALL_RECORD_SIZE + ((i) - MAX_REGISTER_ARGS) * SYMBOL_WORD_SIZE)
+
+/* Tamaño total del registro de llamada (registro + argumentos en pila). */
+#define CODEGEN_CALL_RECORD_SIZE(nargs) \
+    (CALL_RECORD_SIZE + \
+     ((nargs) > MAX_REGISTER_ARGS ? ((nargs) - MAX_REGISTER_ARGS) * SYMBOL_WORD_SIZE : 0))
+
 #define CALL_RECORD_SIZE 32  /* id, r1..r6 y valor de retorno */
 /* Espacios disjuntos: incluso los identificadores que ya contienen estos
  * prefijos reciben el prefijo de rutina. No se reservan nombres en Piper. */

@@ -60,22 +60,51 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
         emit_comment(ctx, "(frame vacio, sin ajuste de r7)");
     }
 
-    if (ctx->current_function != NULL) {
-        Symbol *function = ctx->current_function;
-        if (function->param_count > MAX_ARGUMENTOS ||
-            (function->param_count > 0 && function->params == NULL)) {
-            codegen_context_error(ctx, "firma de '%s' no soportada", function->name);
+    Symbol *function = ctx->current_function;
+    if (function == NULL) return;
+    if (function->param_count > 0 && function->params == NULL) {
+        codegen_context_error(ctx, "firma de '%s' no soportada", function->name);
+        return;
+    }
+    if (function->param_count > MAX_TOTAL_ARGS) {
+        codegen_context_error(ctx,
+            "'%s' tiene mas de %d parametros",
+            function->name, MAX_TOTAL_ARGS);
+        return;
+    }
+
+    /* Parámetros en registro: r1..r4 -> ranura del frame. */
+    int reg_params = function->param_count < MAX_REGISTER_ARGS
+        ? function->param_count : MAX_REGISTER_ARGS;
+    for (int i = 0; i < reg_params; i++) {
+        Symbol *param = function->params[i];
+        if (param == NULL || param->address_or_offset < 0) {
+            codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
             return;
         }
-        for (int i = 0; i < function->param_count; i++) {
-            Symbol *param = function->params[i];
-            if (param == NULL || param->address_or_offset < 0) {
-                codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
-                return;
-            }
-            emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                             REG_ARG0 + i, param->address_or_offset, REG_FP);
+        emit_instruction(ctx, "stwi r%d, %d(r%d)",
+                         REG_ARG0 + i, param->address_or_offset, REG_FP);
+    }
+
+    /* Parámetros en pila: leerlos desde el registro del llamador.
+     * r1 ya quedó libre tras copiar los cuatro primeros. */
+    for (int i = MAX_REGISTER_ARGS; i < function->param_count; i++) {
+        Symbol *param = function->params[i];
+        int offset;
+        if (param == NULL || param->address_or_offset < 0) {
+            codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
+            return;
         }
+        offset = CODEGEN_STACK_ARG_OFFSET(frame_size, i);
+        if (offset <= 32767) {
+            emit_instruction(ctx, "lowi r1, %d(r%d)", offset, REG_FP);
+        } else {
+            load_immediate(ctx, 1, offset);
+            emit_instruction(ctx, "sum r1, r%d", REG_FP);
+            emit_instruction(ctx, "lowi r1, 0(r1)");
+        }
+        emit_instruction(ctx, "stwi r1, %d(r%d)",
+                         param->address_or_offset, REG_FP);
     }
 }
 
@@ -154,9 +183,9 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
             "codegen_routine: '%s' no es una funcion registrada", name);
         return;
     }
-    if (func->param_count > MAX_ARGUMENTOS) {
+    if (func->param_count > MAX_TOTAL_ARGS) {
         codegen_context_error(ctx,
-            "'%s' tiene mas de %d parametros", name, MAX_ARGUMENTOS);
+            "'%s' tiene mas de %d parametros", name, MAX_TOTAL_ARGS);
         return;
     }
 

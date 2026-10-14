@@ -695,12 +695,16 @@ static DataType visit(Visitor *v, AstNode *n)
      * igual que llamadas y aritmética general. Contar el máximo simultáneo
      * para que el prólogo compruebe la pila antes de usar esas ranuras. */
     int reserved = 0;
-    if (n->kind == AST_CALL_EXPRESSION || n->kind == AST_INDEX_EXPRESSION ||
-        n->kind == AST_ASSIGNMENT ||
-        (n->kind == AST_UNARY_EXPRESSION &&
-         (n->data.unary_expression.operator == AST_OP_INCREMENT ||
-          n->data.unary_expression.operator == AST_OP_DECREMENT)))
+    if (n->kind == AST_CALL_EXPRESSION) {
+        int nargs = n->data.call_expression.arguments != NULL
+            ? (int)n->data.call_expression.arguments->count : 0;
+        reserved = 32 + (nargs > 4 ? (nargs - 4) * 4 : 0);
+    } else if (n->kind == AST_INDEX_EXPRESSION || n->kind == AST_ASSIGNMENT ||
+               (n->kind == AST_UNARY_EXPRESSION &&
+                (n->data.unary_expression.operator == AST_OP_INCREMENT ||
+                 n->data.unary_expression.operator == AST_OP_DECREMENT))) {
         reserved = 32;
+    }
     if (n->kind == AST_BINARY_EXPRESSION) {
         /* Reserva conservadora: también cubre un spill de una operación
          * simple cuando los dos temporales ya contienen resultados vivos. */
