@@ -525,7 +525,10 @@ static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
 
 static void codegen_call_statement(CodegenContext *ctx, const AstNode *stmt)
 {
-    (void)codegen_call(ctx, stmt, -1);
+    if (codegen_is_intrinsic(stmt->data.call_expression.routine_name))
+        codegen_intrinsic(ctx, stmt, REG_RET);
+    else
+        (void)codegen_call(ctx, stmt, -1);
 }
 
 /* ----------------------------------------------------------------
