@@ -12,6 +12,12 @@
 
 ## Salida del compilador
 
+Todo programa debe declarar una rutina global `main[]`, sin parámetros.
+Por ejemplo: `routine B32 main[] { output 0. }`.
+El analizador semántico rechaza archivos sin esa entrada, incluso si contienen
+sentencias globales. Los fixtures que solo declaran rutinas necesitan agregar
+`main[]` para pasar el análisis semántico.
+
 `bin/pipoc archivo.rwt` valida el programa sin imprimir el recorrido de las
 fases. Los errores siempre aparecen en la consola. Las opciones de salida son:
 

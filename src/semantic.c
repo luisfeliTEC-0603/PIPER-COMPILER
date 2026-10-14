@@ -722,7 +722,31 @@ static DataType visit(Visitor *v, AstNode *n)
     n->has_element_piper_type = false;
     switch (n->kind) {
     /* Las declaraciones globales se procesan en orden de aparición. */
-    case AST_PROGRAM: list(v, n->data.program.elements); break;
+    case AST_PROGRAM: {
+        AstNodeList *elements = n->data.program.elements;
+        list(v, elements);
+        /* La entrada debe estar en el ámbito global: una rutina anidada
+         * llamada main no puede recibir el salto del arranque de codegen. */
+        AstNode *entry = NULL;
+        if (elements) {
+            for (size_t i = 0; i < elements->count; i++) {
+                AstNode *element = elements->items[i];
+                if (element && element->kind == AST_ROUTINE_DECLARATION &&
+                    strcmp(element->data.routine_declaration.name, "main") == 0) {
+                    entry = element;
+                    break;
+                }
+            }
+        }
+        if (!entry)
+            error(v, n, "El programa debe declarar una rutina global 'main' sin parámetros.");
+        else if (entry->data.routine_declaration.parameters &&
+                 entry->data.routine_declaration.parameters->count != 0)
+            error(v, entry, "La rutina de entrada 'main' no puede recibir parámetros.");
+        else if (v->errors == errors_before)
+            success(v, entry, "Entrada del programa aprobada: rutina global 'main' sin parámetros.");
+        break;
+    }
     /* Sin cargar módulos no se puede validar una firma importada. */
     case AST_IMPORT_DECLARATION:
         error(v, n, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
