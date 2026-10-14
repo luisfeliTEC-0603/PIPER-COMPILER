@@ -12,26 +12,57 @@
 
 ## Salida del compilador
 
-`bin/pipoc archivo.rwt` valida el programa sin imprimir el recorrido de las
-fases. Los errores siempre aparecen en la consola. Las opciones de salida son:
+La invocación mínima ejecuta el pipeline completo y genera `archivo.bin`:
 
-| Opción | Contenido |
+```sh
+bin/pipoc archivo.rwt
+```
+
+Para pedir un artefacto concreto existen cinco comandos simples:
+
+| Comando | Archivos generados |
 | --- | --- |
-| `-l`, `--lexical` | Lexemas y posiciones entregados por el lexer |
-| `-s`, `--syntactic` | Resultado del parser |
-| `-m`, `--symbols` | Tabla de símbolos definitiva y memoria |
-| `-e`, `--semantic` | Recorrido de comprobaciones semánticas |
-| `-a`, `--all` | Las cuatro salidas anteriores |
-| `-t`, `--ast-json` | Exporta el AST a `ast_output.json` |
-| `-o ruta.json`, `--output ruta.json` | Cambia la ruta del JSON de `-t` |
+| `bin/pipoc asm archivo.rwt` | `archivo.asm`, sin calendarizar |
+| `bin/pipoc sch archivo.rwt` | `archivo.bundles`, calendarizado por slots |
+| `bin/pipoc mem archivo.rwt` | `archivo.mem`, compatible con `$readmemh` |
+| `bin/pipoc ins archivo.rwt` | `archivo.ast.json` y `archivo.symbols.txt` |
+| `bin/pipoc all archivo.rwt` | Todos los anteriores y `archivo.bin` |
 
-Se pueden combinar opciones. El AST no se imprime en la consola; para verlo se
-usa `-t`. Por ejemplo: `bin/pipoc -a -t programa.rwt`.
+En `asm`, `sch` y `mem`, `-o` cambia la ruta del único artefacto. `ins` acepta
+`--ast-json` y `--emit-symbols` porque produce dos archivos. En `all`, `-o`
+solo cambia la ruta del `.bin`; las demás rutas pueden controlarse con
+`--emit-asm`, `--emit-bundles`, `--emit-mem`, `--ast-json` y
+`--emit-symbols`.
+
+Las opciones de diagnóstico `-t`, `-m`, `-p` y `-v` continúan disponibles, al
+igual que la interfaz avanzada mostrada por `bin/pipoc --help`.
+
+## Ejecución integrada en PORYGON
+
+Desde la raíz del compilador, un solo comando compila Piper, genera la memoria
+de instrucciones y ejecuta el procesador:
+
+```sh
+./run.sh tests/codegen/call_simple.rwt 1000 \
+  --expect r1=10 --expect r7=0x20000 --expect errors=0
+```
+
+El presupuesto predeterminado es 200 ciclos. `--data archivo.mem` inicializa la
+RAM de datos y `--expect clave=valor` valida registros `r0`–`r7`, `pc` o los
+contadores presentes en `results.txt`. Los artefactos quedan en
+`build/runs/<programa>/`. El runner detecta PORYGON en la carpeta hermana
+esperada; `PORYGON_DIR=/otra/ruta/PORYGON` permite cambiarla sin editar scripts.
 
 ## Ensamblador PORYGON
 
-El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/README.md).
+El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/Flujo_assembler.md).
 El `Makefile` lo compila y enlaza con `pipoc`. Su parser recibe ASM PORYGON
 lineal, escrito a mano o generado desde el AST, y construye el `MachineProgram`
-que consumirá el scheduler. El generador, el scheduler y la emisión final de
-`.mem` aún deben conectarse al ejecutable.
+que consume el scheduler. `bin/porygon-schedule entrada.asm salida.bundles [salida.mem]`
+genera bundles con selección de ALU y, opcionalmente, la imagen hexadecimal
+para el hardware. Este pipeline también está integrado en `pipoc` mediante los
+comandos `sch`, `mem` y `all`.
+
+El formato, las reglas temporales, la API y las pruebas están en
+[`docs/scheduler.md`](docs/scheduler.md). Ejecutar `make test-scheduler` para
+comprobar el calendario y su verificador independiente.
