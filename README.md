@@ -77,7 +77,7 @@ dump. El primer argumento también puede ser una ruta explícita a cualquier dum
 
 ## Ensamblador PORYGON
 
-El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/Flujo_assembler.md).
+El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/).
 El `Makefile` lo compila y enlaza con `pipoc`. Su parser recibe ASM PORYGON
 lineal, escrito a mano o generado desde el AST, y construye el `MachineProgram`
 que consume el scheduler. `bin/porygon-schedule entrada.asm salida.bundles [salida.mem]`
@@ -85,6 +85,4 @@ genera bundles con selección de ALU y, opcionalmente, la imagen hexadecimal
 para el hardware. Este pipeline también está integrado en `pipoc` mediante los
 comandos `sch`, `mem` y `all`.
 
-El formato, las reglas temporales, la API y las referencias de validación están
-en [`docs/scheduler.md`](docs/scheduler.md). La suite de pruebas se conserva
-fuera del repositorio.
+La suite de pruebas se conserva fuera del repositorio.
