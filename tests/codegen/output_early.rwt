@@ -1,8 +1,0 @@
-routine B32 salida_temprana[] {
-    create B32 valor.
-    valor store 3.
-    when [valor > 0] {
-        output valor.
-    }
-    output 0.
-}

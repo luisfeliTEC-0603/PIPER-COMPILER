@@ -1,7 +1,0 @@
-routine B32 potencia_constante[] {
-    create B32 base.
-    create B32 resultado.
-    base store 3.
-    resultado store base ^ 3.
-    output resultado.
-}

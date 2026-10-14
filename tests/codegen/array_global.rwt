@@ -1,9 +1,0 @@
-create B32 reserva.
-create B32|2| valores.
-
-routine B32 arreglo_global[] {
-    create B32 resultado.
-    valores|0| store 5.
-    resultado store valores|0|.
-    output resultado.
-}

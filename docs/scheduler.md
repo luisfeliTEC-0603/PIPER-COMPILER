@@ -745,9 +745,9 @@ I0–I7 ni comentarios agregados. El parser actual admite etiquetas y líneas va
 pero no comentarios ni bundles como entrada. Deberías obtener **8 instrucciones
 y 12 bundles**, con `inicio` en 0 y `fin` en 11.
 
-El argumento `.mem` es opcional. También está disponible el ejemplo más largo
-[control_memory.asm](../tests/porygon/control_memory.asm), con inicialización de
-registros, un bucle y accesos de memoria. `pipoc` mantiene su interfaz para Piper;
+El argumento `.mem` es opcional. El ejemplo más largo `control_memory.asm`, con
+inicialización de registros, un bucle y accesos de memoria, se conserva en la
+carpeta externa de pruebas. `pipoc` mantiene su interfaz para Piper;
 esta CLI permite trabajar sin esperar al generador de código del frontend.
 
 ### Si algo te sorprende, empezá por aquí

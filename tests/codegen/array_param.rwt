@@ -1,5 +1,0 @@
-routine B32 arreglo_param[B32|2| valores] {
-    create B32 resultado.
-    resultado store valores|1|.
-    output resultado.
-}

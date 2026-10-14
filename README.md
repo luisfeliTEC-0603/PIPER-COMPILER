@@ -48,8 +48,11 @@ igual que la interfaz avanzada mostrada por `bin/pipoc --help`.
 Desde la raíz del compilador, un solo comando compila Piper, genera la memoria
 de instrucciones y ejecuta el procesador:
 
+Las pruebas se conservan fuera del repositorio. Para usar los ejemplos de esta
+sección, definir `PIPER_TESTS_DIR` con la ruta a la carpeta externa de pruebas.
+
 ```sh
-./run.sh tests/codegen/call_simple.rwt 1000 \
+./run.sh "$PIPER_TESTS_DIR/codegen/call_simple.rwt" 1000 \
   --expect r1=10 --expect r7=0x20000 --expect errors=0
 ```
 
@@ -82,6 +85,6 @@ genera bundles con selección de ALU y, opcionalmente, la imagen hexadecimal
 para el hardware. Este pipeline también está integrado en `pipoc` mediante los
 comandos `sch`, `mem` y `all`.
 
-El formato, las reglas temporales, la API y las pruebas están en
-[`docs/scheduler.md`](docs/scheduler.md). Ejecutar `make test-scheduler` para
-comprobar el calendario y su verificador independiente.
+El formato, las reglas temporales, la API y las referencias de validación están
+en [`docs/scheduler.md`](docs/scheduler.md). La suite de pruebas se conserva
+fuera del repositorio.

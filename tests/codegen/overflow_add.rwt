@@ -1,2 +1,0 @@
-routine B32 sumar[B32 a, B32 b] { output a + b. }
-routine B32 main[] { output sumar[2147483647, 1]. }

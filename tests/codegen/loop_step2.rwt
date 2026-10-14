@@ -1,9 +1,0 @@
-routine B32 paso_dos[] {
-    create B32 i.
-    create B32 suma.
-    suma store 0.
-    loop[i & 0 -> 5 & 2] {
-        suma store suma + i.
-    }
-    output suma.
-}

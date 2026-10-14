@@ -1,9 +1,0 @@
-routine B32 suma_hasta[B32 n] {
-    create B32 i.
-    create B32 suma.
-    suma store 0.
-    loop[i & 0 -> n & 1] {
-        suma store suma + i.
-    }
-    output suma.
-}

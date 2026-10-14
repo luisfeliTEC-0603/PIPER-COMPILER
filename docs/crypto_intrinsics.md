@@ -64,7 +64,9 @@ El scheduler existente introduce las esperas necesarias para leer ambos resultad
 
 ## Ejemplo reproducible
 
-El archivo conservado es [`crypto_feistel_pipeline.rwt`](../tests/codegen/crypto_feistel_pipeline.rwt):
+El ejemplo `crypto_feistel_pipeline.rwt` se conserva en la carpeta externa de
+pruebas. Definir `PIPER_TESTS_DIR` con la ruta a esa carpeta para los comandos
+de esta sección. Su contenido es:
 
 ```piper
 create B32|2| block.
@@ -105,9 +107,7 @@ Desde `PIPER-COMPILER`, con `make`, GCC, Flex, Bison, Icarus Verilog (`iverilog`
 
 ```sh
 make clean && make all
-make test-cli-bin
-make test-scheduler
-./run.sh tests/codegen/crypto_feistel_pipeline.rwt 500 \
+./run.sh "$PIPER_TESTS_DIR/codegen/crypto_feistel_pipeline.rwt" 500 \
   --expect errors=0 --expect r1=0x751eef3b \
   --expect r7=0x20000 --expect authenticated=0
 ```
@@ -144,7 +144,7 @@ PY
 python3 "$PORYGON_DIR/tools/data_loader/load_file.py" \
   --input build/crypto-loader/input.bin --output build/crypto-loader/data.mem \
   --address 0x10000 --width 8 --mem-base 0x10000
-./run.sh tests/codegen/crypto_feistel_pipeline.rwt 500 \
+./run.sh "$PIPER_TESTS_DIR/codegen/crypto_feistel_pipeline.rwt" 500 \
   --data build/crypto-loader/data.mem --out build/crypto-loader/run \
   --expect errors=0 --expect r1=0x631ce6e1 --expect authenticated=0
 "$PORYGON_DIR/extract.sh" build/crypto-loader/run/memory.dump.mem \
@@ -163,6 +163,9 @@ Para usar un archivo propio, sustituir `input.bin` y ajustar la expectativa de
 `r1`; este programa procesa exactamente un bloque de ocho bytes.
 
 ## Validación realizada
+
+Esta sección registra la validación histórica; la suite de pruebas se conserva
+fuera del repositorio.
 
 Pasaron la compilación limpia, `test-cli-bin` y `test-scheduler` (incluidos sus
 100 programas diferenciales). Las comprobaciones temporales cubrieron 27
