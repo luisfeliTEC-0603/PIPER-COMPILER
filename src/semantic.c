@@ -120,6 +120,12 @@ static void close_scope(Visitor *v, AstNode *n, int block)
 }
 
 static DataType visit(Visitor *v, AstNode *n);
+static int crypto_arity(const char *name)
+{
+    if (!strcmp(name, "crypto_auth")) return 4;
+    if (!strcmp(name, "crypto_write_key") || !strcmp(name, "crypto_feistel")) return 3;
+    return !strcmp(name, "crypto_revoke") ? 0 : -1;
+}
 /* El orden importa: una declaración se vuelve visible cuando se visita. */
 static void list(Visitor *v, AstNodeList *nodes)
 {
@@ -516,6 +522,7 @@ static Symbol *declare(Visitor *v, AstNode *n)
     int errors_before = v->errors;
     int parameter = n->kind == AST_PARAMETER;
     const char *name = parameter ? n->data.parameter.name : n->data.variable_declaration.name;
+    if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
     PiperType type = parameter ? n->data.parameter.type : n->data.variable_declaration.type;
     AstNodeList *dims = parameter ? n->data.parameter.dimensions : n->data.variable_declaration.dimensions;
     int sizes[2] = {1, 1};
@@ -764,6 +771,7 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Registrar la función antes del cuerpo permite llamadas recursivas. */
     case AST_ROUTINE_DECLARATION: {
         const char *name = n->data.routine_declaration.name;
+        if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
         if (symbol_table_lookup_current_scope(v->table, name)) {
             error(v, n, "Declaración duplicada de '%s' en el mismo ámbito.", name);
         }
@@ -933,6 +941,32 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Los argumentos se resuelven en el ámbito de la llamada. Se compara
      * su tipo con la firma; aquí no se vuelve a recorrer el cuerpo llamado. */
     case AST_CALL_EXPRESSION: {
+        const char *name = n->data.call_expression.routine_name;
+        int arity = crypto_arity(name);
+        if (arity >= 0) {
+            AstNodeList *args = n->data.call_expression.arguments;
+            int feistel = !strcmp(name, "crypto_feistel");
+            if ((int)args->count != arity)
+                error(v, n, "'%s' requiere %d argumentos; recibió %zu.", name, arity, args->count);
+            for (size_t i = 0; i < args->count; i++) {
+                AstNode *arg = args->items[i];
+                visit(v, arg);
+                if (feistel && i == 0) {
+                    if (arg->kind != AST_IDENTIFIER_EXPRESSION || arg->inferred_type != TYPE_ARRAY ||
+                        arg->array_rank != 1 || arg->array_rows != 2 ||
+                        !arg->has_element_piper_type || arg->element_piper_type != PIPER_TYPE_B32)
+                        error(v, arg, "'%s' requiere un arreglo modificable B32|2|.", name);
+                } else if (arg->inferred_type != TYPE_INT)
+                    error(v, arg, "El argumento %zu de '%s' debe ser entero.", i + 1, name);
+                if (arity == 3 && i > 0 && (arg->kind != AST_INTEGER_LITERAL ||
+                    arg->data.integer_literal.value > 3))
+                    error(v, arg, "El índice de '%s' debe ser un literal entero entre 0 y 3.", name);
+            }
+            n->inferred_type = TYPE_VOID;
+            n->piper_type = PIPER_TYPE_NONE;
+            n->has_piper_type = true;
+            break;
+        }
         Symbol *f = lookup(v, n, n->data.call_expression.routine_name);
         AstNodeList *args = n->data.call_expression.arguments;
         if (!f || f->symbol_class != SYMBOL_FUNC) {
