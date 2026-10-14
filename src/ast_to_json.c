@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 int ast_export_json(const AstNode *root, const char *filename) {
+    int failed = 0;
     if (!root || !filename) return 0;
 
     FILE *out = fopen(filename, "w");
@@ -11,8 +12,12 @@ int ast_export_json(const AstNode *root, const char *filename) {
     }
 
     ast_print_json(out, root);
-    fputc('\n', out);
+    if (fputc('\n', out) == EOF || ferror(out)) {
+        failed = 1;
+    }
 
-    fclose(out);
-    return 1;
+    if (fclose(out) != 0) {
+        failed = 1;
+    }
+    return !failed;
 }

@@ -273,8 +273,9 @@ static void print_memory_address(FILE *output, const Scope *scope,
     if (symbol->symbol_class == SYMBOL_FUNC) {
         fprintf(output, "etiqueta %-20s", symbol->name);
     } else if (scope->is_global) {
-        fprintf(output, "0x%04X                 ",
-                (unsigned int)symbol->address_or_offset);
+        fprintf(output, "offset 0x%04X / física 0x%08X",
+                (unsigned int)symbol->address_or_offset,
+                (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + symbol->address_or_offset));
     } else {
         fprintf(output, "r7 + 0x%04X             ",
                 (unsigned int)symbol->address_or_offset);
@@ -326,7 +327,10 @@ void symbol_table_print(FILE *output, const SymbolTable *table)
     for (scope = table->all_scopes; scope != NULL; scope = scope->next_all) {
         symbol_table_print_scope(output, scope);
     }
-        fprintf(output, "\nSiguiente direccion global disponible: 0x%04X\n",
-            (unsigned int)table->next_global_address);
+        fprintf(output, "\nBase física de datos: 0x%08X\n",
+            (unsigned int)SYMBOL_DATA_BASE_ADDRESS);
+        fprintf(output, "Siguiente global: offset 0x%04X / física 0x%08X\n",
+            (unsigned int)table->next_global_address,
+            (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + table->next_global_address));
         fprintf(output, "===================================================================================\n");
 }
