@@ -9,21 +9,7 @@
 
 static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
 {
-    Scope *owner = find_owner_scope(ctx, sym);
-
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", sym->name);
-        return;
-    }
-
-    if (owner->is_global) {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         src_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         src_reg, sym->address_or_offset, REG_FP);
-    }
+    store_symbol_value(ctx, sym, src_reg);
 }
 
 /* ----------------------------------------------------------------
@@ -32,21 +18,7 @@ static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
 
 static int load_symbol(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
-    Scope *owner = find_owner_scope(ctx, sym);
-
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", sym->name);
-        return 0;
-    }
-    if (owner->is_global) {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_FP);
-    }
-    return 1;
+    return load_symbol_value(ctx, sym, dest_reg);
 }
 
 /* ----------------------------------------------------------------

@@ -41,7 +41,6 @@ static int codegen_identifier_load(CodegenContext *ctx,
 {
     const char *name = expr->data.identifier.name;
     Symbol *sym = lookup_symbol_or_error(ctx, name, -1);
-    Scope *owner;
 
     if (sym == NULL) {
         return TYPE_VOID;
@@ -62,20 +61,7 @@ static int codegen_identifier_load(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    owner = find_owner_scope(ctx, sym);
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", name);
-        return TYPE_VOID;
-    }
-
-    if (owner->is_global) {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_FP);
-    }
+    if (!load_symbol_value(ctx, sym, dest_reg)) return TYPE_VOID;
     return sym->type;
 }
 
@@ -136,7 +122,6 @@ static int codegen_unary_increment(CodegenContext *ctx,
 
     const char *name = operand->data.identifier.name;
     Symbol *sym = lookup_symbol_or_error(ctx, name, -1);
-    Scope *owner;
 
     if (sym == NULL || sym->symbol_class == SYMBOL_FUNC
         || sym->is_array || sym->type == TYPE_ARRAY) {
@@ -145,21 +130,8 @@ static int codegen_unary_increment(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    owner = find_owner_scope(ctx, sym);
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", name);
-        return TYPE_VOID;
-    }
-
     /* Cargar valor actual en dest_reg. */
-    if (owner->is_global) {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_FP);
-    }
+    if (!load_symbol_value(ctx, sym, dest_reg)) return TYPE_VOID;
 
     /* Sumar o restar 1. */
     if (is_increment) {
@@ -169,13 +141,7 @@ static int codegen_unary_increment(CodegenContext *ctx,
     }
 
     /* Almacenar de vuelta. */
-    if (owner->is_global) {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_FP);
-    }
+    store_symbol_value(ctx, sym, dest_reg);
     return sym->type;
 }
 

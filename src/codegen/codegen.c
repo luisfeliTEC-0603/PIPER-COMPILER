@@ -66,9 +66,7 @@ CodegenResult codegen_generate(const AstNode *root,
     }
 
     if (entry != NULL || has_global_statements) {
-        emit_instruction(ctx, "mov r%d, r%d", REG_FP, REG_ZERO);
-        emit_instruction(ctx, "sumi r%d, #1", REG_FP);
-        emit_instruction(ctx, "shli r%d, #16", REG_FP);
+        load_immediate(ctx, REG_FP, CODEGEN_STACK_TOP);
     }
     /* Segunda pasada del AST, si hay código global: procesa en orden todos
      * los elementos salvo rutinas. Incluye declaraciones e imports mediante

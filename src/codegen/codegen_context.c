@@ -174,3 +174,50 @@ Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym)
     }
     return NULL;
 }
+
+/* La tabla conserva offsets lógicos. Solo codegen traduce globales a
+ * direcciones físicas; locales y parámetros siguen siendo relativos a r7. */
+int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg)
+{
+    Scope *owner = find_owner_scope(ctx, sym);
+    if (owner == NULL || sym->address_or_offset < 0) {
+        codegen_context_error(ctx, "simbolo sin direccion de lectura valida");
+        return 0;
+    }
+    if (owner->is_global) {
+        if (!load_immediate(ctx, dest_reg, CODEGEN_DATA_BASE + sym->address_or_offset))
+            return 0;
+        emit_instruction(ctx, "lowi r%d, 0(r%d)", dest_reg, dest_reg);
+    } else {
+        emit_instruction(ctx, "lowi r%d, %d(r%d)", dest_reg,
+                         sym->address_or_offset, REG_FP);
+    }
+    return 1;
+}
+
+void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
+{
+    Scope *owner = find_owner_scope(ctx, sym);
+    if (owner == NULL || sym->address_or_offset < 0) {
+        codegen_context_error(ctx, "simbolo sin direccion de escritura valida");
+        return;
+    }
+    if (!owner->is_global) {
+        emit_instruction(ctx, "stwi r%d, %d(r%d)", src_reg,
+                         sym->address_or_offset, REG_FP);
+        return;
+    }
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva para escritura global excedida");
+        return;
+    }
+    int scratch = src_reg == REG_ARG0 ? REG_ARG1 : REG_ARG0;
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    int saved_offset = -ctx->pending_call_bytes + 28;
+    /* No consumir otro temporal ni pisar argumentos preparados por el llamador. */
+    emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, saved_offset);
+    load_immediate(ctx, scratch, CODEGEN_DATA_BASE + sym->address_or_offset);
+    emit_instruction(ctx, "stwi r%d, 0(r%d)", src_reg, scratch);
+    emit_instruction(ctx, "lowi r%d, %d(r7)", scratch, saved_offset);
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
+}

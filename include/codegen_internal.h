@@ -23,6 +23,9 @@
 #define MAX_TEMPORALES   2
 #define MAX_ARGUMENTOS   4
 #define CALL_RECORD_SIZE 32  /* id, r1..r6 y valor de retorno */
+#define CODEGEN_DATA_BASE 0x10000
+#define CODEGEN_STACK_TOP (CODEGEN_DATA_BASE + SYMBOL_MEMORY_SIZE)
+#define CODEGEN_STACK_BOTTOM (CODEGEN_STACK_TOP - SYMBOL_STACK_SIZE)
 
 /* ----------------------------------------------------------------
  * Pila de etiquetas para break
@@ -79,6 +82,8 @@ Symbol *lookup_symbol_or_error(CodegenContext *ctx,
                                const char *name,
                                int expected_class);
 Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym);
+int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg);
+void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg);
 
 /* ----------------------------------------------------------------
  * codegen_emit.c

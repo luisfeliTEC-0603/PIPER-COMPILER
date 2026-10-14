@@ -696,8 +696,10 @@ static DataType visit(Visitor *v, AstNode *n)
      * para que el prólogo compruebe la pila antes de usar esas ranuras. */
     int reserved = 0;
     if (n->kind == AST_CALL_EXPRESSION || n->kind == AST_INDEX_EXPRESSION ||
-        (n->kind == AST_ASSIGNMENT && n->data.assignment.target &&
-         n->data.assignment.target->kind == AST_INDEX_EXPRESSION))
+        n->kind == AST_ASSIGNMENT ||
+        (n->kind == AST_UNARY_EXPRESSION &&
+         (n->data.unary_expression.operator == AST_OP_INCREMENT ||
+          n->data.unary_expression.operator == AST_OP_DECREMENT)))
         reserved = 32;
     if (n->kind == AST_BINARY_EXPRESSION) {
         /* Reserva conservadora: también cubre un spill de una operación

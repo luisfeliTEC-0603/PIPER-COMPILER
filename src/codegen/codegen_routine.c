@@ -2,8 +2,7 @@
 
 #include <string.h>
 
-#define STACK_BOTTOM (SYMBOL_MEMORY_SIZE - SYMBOL_STACK_SIZE)
-_Static_assert(STACK_BOTTOM == 15 * 4096, "actualizar carga de limite de pila");
+_Static_assert(CODEGEN_STACK_BOTTOM == 0x1F000, "revisar mapa fisico de pila");
 
 /*
  * Emite el prólogo de una rutina.
@@ -40,9 +39,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
     emit_instruction(ctx, "mov r%d, r%d", REG_TMP0, REG_FP);
     emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0,
                      frame_size + ctx->call_reserve_size);
-    emit_instruction(ctx, "mov r%d, r%d", REG_TMP1, REG_ZERO);
-    emit_instruction(ctx, "sumi r%d, #15", REG_TMP1);
-    emit_instruction(ctx, "shli r%d, #12", REG_TMP1);
+    load_immediate(ctx, REG_TMP1, CODEGEN_STACK_BOTTOM);
     emit_instruction(ctx, "ltn r%d, r%d", REG_TMP0, REG_TMP1);
     emit_instruction(ctx, "jnz r%d, error_pila", REG_TMP0);
 

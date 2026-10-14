@@ -36,8 +36,10 @@ int load_array_base(CodegenContext *ctx, Symbol *sym, int dest_reg)
         emit_instruction(ctx, "lowi r%d, %d(r%d)", dest_reg,
                          sym->address_or_offset, REG_FP);
     } else {
-        emit_instruction(ctx, "mov r%d, r%d", dest_reg,
-                         owner->is_global ? REG_ZERO : REG_FP);
+        if (owner->is_global) {
+            return load_immediate(ctx, dest_reg, CODEGEN_DATA_BASE + sym->address_or_offset);
+        }
+        emit_instruction(ctx, "mov r%d, r%d", dest_reg, REG_FP);
         add_offset(ctx, dest_reg, sym->address_or_offset);
     }
     return 1;
