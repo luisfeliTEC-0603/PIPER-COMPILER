@@ -10,3 +10,7 @@ routine B32 mayor[B32 izquierda, B32 derecha] {
         output derecha.
     }
 }
+
+routine B32 main[]{
+    output mayor[3,4].
+}

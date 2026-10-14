@@ -73,6 +73,7 @@ SymbolTable *symbol_table_create(void)
     table->all_scopes = table->global_scope;
     table->next_global_address = SYMBOL_GLOBAL_BASE;
     table->scope_counter = 1;
+    table->global_call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     return table;
 }
 
@@ -174,6 +175,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
     }
     strncpy(symbol->name, name, SYMBOL_NAME_MAX - 1);
     symbol->symbol_class = symbol_class;
+    symbol->call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     symbol->type = type;
     symbol->declared_type = declared_type;
     symbol->return_type = type;

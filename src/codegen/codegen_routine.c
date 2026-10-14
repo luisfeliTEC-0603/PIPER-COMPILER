@@ -2,8 +2,7 @@
 
 #include <string.h>
 
-#define STACK_BOTTOM (SYMBOL_MEMORY_SIZE - SYMBOL_STACK_SIZE)
-_Static_assert(STACK_BOTTOM == 15 * 4096, "actualizar carga de limite de pila");
+_Static_assert(CODEGEN_STACK_BOTTOM == 0x1F000, "revisar mapa fisico de pila");
 
 /*
  * Emite el prólogo de una rutina.
@@ -35,16 +34,14 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
     emit_comment(ctx, "prologo de %s (frame %d bytes)",
                  routine->data.routine_declaration.name, frame_size);
 
-    /* Comprobar antes de escribir el frame. La reserva cubre dos ranuras
-     * simultáneas de llamada, incluso durante la evaluación de argumentos. */
+    /* Comprobar antes de escribir el frame. El semántico calcula una reserva
+     * de al menos 64 bytes para llamadas, stores, índices y spills pendientes. */
     emit_instruction(ctx, "mov r%d, r%d", REG_TMP0, REG_FP);
     emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0,
-                     frame_size + SYMBOL_STACK_CALL_RESERVE);
-    emit_instruction(ctx, "mov r%d, r%d", REG_TMP1, REG_ZERO);
-    emit_instruction(ctx, "sumi r%d, #15", REG_TMP1);
-    emit_instruction(ctx, "shli r%d, #12", REG_TMP1);
+                     frame_size + ctx->call_reserve_size);
+    load_immediate(ctx, REG_TMP1, CODEGEN_STACK_BOTTOM);
     emit_instruction(ctx, "ltn r%d, r%d", REG_TMP0, REG_TMP1);
-    emit_instruction(ctx, "jnz r%d, error_pila", REG_TMP0);
+    emit_instruction(ctx, "jnz r%d, " CODEGEN_INTERNAL_LABEL("error_pila"), REG_TMP0);
 
     if (frame_size > 0) {
         if (frame_size <= 32767) {
@@ -63,22 +60,51 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
         emit_comment(ctx, "(frame vacio, sin ajuste de r7)");
     }
 
-    if (ctx->current_function != NULL) {
-        Symbol *function = ctx->current_function;
-        if (function->param_count > MAX_ARGUMENTOS ||
-            (function->param_count > 0 && function->params == NULL)) {
-            codegen_context_error(ctx, "firma de '%s' no soportada", function->name);
+    Symbol *function = ctx->current_function;
+    if (function == NULL) return;
+    if (function->param_count > 0 && function->params == NULL) {
+        codegen_context_error(ctx, "firma de '%s' no soportada", function->name);
+        return;
+    }
+    if (function->param_count > MAX_TOTAL_ARGS) {
+        codegen_context_error(ctx,
+            "'%s' tiene mas de %d parametros",
+            function->name, MAX_TOTAL_ARGS);
+        return;
+    }
+
+    /* Parámetros en registro: r1..r4 -> ranura del frame. */
+    int reg_params = function->param_count < MAX_REGISTER_ARGS
+        ? function->param_count : MAX_REGISTER_ARGS;
+    for (int i = 0; i < reg_params; i++) {
+        Symbol *param = function->params[i];
+        if (param == NULL || param->address_or_offset < 0) {
+            codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
             return;
         }
-        for (int i = 0; i < function->param_count; i++) {
-            Symbol *param = function->params[i];
-            if (param == NULL || param->address_or_offset < 0) {
-                codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
-                return;
-            }
-            emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                             REG_ARG0 + i, param->address_or_offset, REG_FP);
+        emit_instruction(ctx, "stwi r%d, %d(r%d)",
+                         REG_ARG0 + i, param->address_or_offset, REG_FP);
+    }
+
+    /* Parámetros en pila: leerlos desde el registro del llamador.
+     * r1 ya quedó libre tras copiar los cuatro primeros. */
+    for (int i = MAX_REGISTER_ARGS; i < function->param_count; i++) {
+        Symbol *param = function->params[i];
+        int offset;
+        if (param == NULL || param->address_or_offset < 0) {
+            codegen_context_error(ctx, "parametro sin ranura en '%s'", function->name);
+            return;
         }
+        offset = CODEGEN_STACK_ARG_OFFSET(frame_size, i);
+        if (offset <= 32767) {
+            emit_instruction(ctx, "lowi r1, %d(r%d)", offset, REG_FP);
+        } else {
+            load_immediate(ctx, 1, offset);
+            emit_instruction(ctx, "sum r1, r%d", REG_FP);
+            emit_instruction(ctx, "lowi r1, 0(r1)");
+        }
+        emit_instruction(ctx, "stwi r1, %d(r%d)",
+                         param->address_or_offset, REG_FP);
     }
 }
 
@@ -120,7 +146,7 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
     }
 
     emit_instruction(ctx, "lowi r%d, 0(r%d)", REG_TMP1, REG_FP);
-    emit_instruction(ctx, "j retornos");
+    emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("retornos"));
 }
 
 /*
@@ -130,11 +156,12 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
 void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 {
     const char *name;
-    char epilogue_name[SYMBOL_NAME_MAX + 16];
+    char epilogue_name[CODEGEN_LABEL_SIZE];
     Symbol *func;
     Scope *saved_scope;
     Symbol *saved_function;
     int saved_frame_offset;
+    int saved_reserve;
 
     if (ctx == NULL || routine == NULL) {
         return;
@@ -156,9 +183,9 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
             "codegen_routine: '%s' no es una funcion registrada", name);
         return;
     }
-    if (func->param_count > MAX_ARGUMENTOS) {
+    if (func->param_count > MAX_TOTAL_ARGS) {
         codegen_context_error(ctx,
-            "'%s' tiene mas de %d parametros", name, MAX_ARGUMENTOS);
+            "'%s' tiene mas de %d parametros", name, MAX_TOTAL_ARGS);
         return;
     }
 
@@ -178,14 +205,20 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     saved_scope = ctx->current_scope;
     saved_function = ctx->current_function;
     saved_frame_offset = ctx->frame_offset;
+    saved_reserve = ctx->call_reserve_size;
 
     ctx->current_function = func;
     ctx->current_scope = func->function_scope;
     ctx->frame_offset = func->total_stack_frame_size;
+    ctx->call_reserve_size = func->call_reserve_size;
 
     /* Etiqueta de entrada. */
     emit_blank(ctx);
-    emit_label(ctx, name);
+    {
+        char routine_label[CODEGEN_LABEL_SIZE];
+        snprintf(routine_label, sizeof(routine_label), CODEGEN_ROUTINE_LABEL("%s"), name);
+        emit_label(ctx, routine_label);
+    }
 
     /* Prólogo. */
     codegen_routine_prologue(ctx, routine);
@@ -202,7 +235,7 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 
     /* Etiqueta de epílogo: se usa si hay `output` en el cuerpo. */
     snprintf(epilogue_name, sizeof(epilogue_name),
-             "epilogo_%s", name);
+             CODEGEN_INTERNAL_LABEL("epilogo_%s"), name);
     emit_label(ctx, epilogue_name);
 
     /* Epílogo. */
@@ -211,4 +244,5 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     ctx->current_scope = saved_scope;
     ctx->current_function = saved_function;
     ctx->frame_offset = saved_frame_offset;
+    ctx->call_reserve_size = saved_reserve;
 }

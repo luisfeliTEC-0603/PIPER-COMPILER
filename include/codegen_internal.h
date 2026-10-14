@@ -21,8 +21,34 @@
 #define REG_FP       7   /* r7: frame pointer */
 
 #define MAX_TEMPORALES   2
-#define MAX_ARGUMENTOS   4
+
+/* Convención de llamadas.
+ * - Los primeros MAX_REGISTER_ARGS argumentos viajan en r1..r4.
+ * - Los restantes se depositan en el registro de llamada, encima de él,
+ *   en orden de aparición (arg4 en +CALL_RECORD_SIZE, arg5 en +CALL_RECORD_SIZE+4, ...).
+ * - El llamado los lee desde su r7 con offset frame_size + CALL_RECORD_SIZE + 4·(i-4). */
+#define MAX_REGISTER_ARGS 4
+#define MAX_TOTAL_ARGS    32
+
+/* Desplazamiento, respecto al r7 del llamado tras ajustar el frame,
+ * del i-ésimo argumento que viaja en pila (i >= MAX_REGISTER_ARGS). */
+#define CODEGEN_STACK_ARG_OFFSET(frame_size, i) \
+    ((frame_size) + CALL_RECORD_SIZE + ((i) - MAX_REGISTER_ARGS) * SYMBOL_WORD_SIZE)
+
+/* Tamaño total del registro de llamada (registro + argumentos en pila). */
+#define CODEGEN_CALL_RECORD_SIZE(nargs) \
+    (CALL_RECORD_SIZE + \
+     ((nargs) > MAX_REGISTER_ARGS ? ((nargs) - MAX_REGISTER_ARGS) * SYMBOL_WORD_SIZE : 0))
+
 #define CALL_RECORD_SIZE 32  /* id, r1..r6 y valor de retorno */
+/* Espacios disjuntos: incluso los identificadores que ya contienen estos
+ * prefijos reciben el prefijo de rutina. No se reservan nombres en Piper. */
+#define CODEGEN_INTERNAL_LABEL(name) "_IR_" name
+#define CODEGEN_ROUTINE_LABEL(name) "_R_" name
+#define CODEGEN_LABEL_SIZE (SYMBOL_NAME_MAX + 64)
+#define CODEGEN_DATA_BASE 0x10000
+#define CODEGEN_STACK_TOP (CODEGEN_DATA_BASE + SYMBOL_MEMORY_SIZE)
+#define CODEGEN_STACK_BOTTOM (CODEGEN_STACK_TOP - SYMBOL_STACK_SIZE)
 
 /* ----------------------------------------------------------------
  * Pila de etiquetas para break
@@ -59,6 +85,7 @@ typedef struct {
      * argumentos de llamadas anidadas. */
     int call_site_count;
     int pending_call_bytes;
+    int call_reserve_size;
 
     /* Buffer de último error */
     char last_error[256];
@@ -78,6 +105,8 @@ Symbol *lookup_symbol_or_error(CodegenContext *ctx,
                                const char *name,
                                int expected_class);
 Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym);
+int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg);
+void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg);
 
 /* ----------------------------------------------------------------
  * codegen_emit.c
@@ -86,6 +115,10 @@ void emit_label(CodegenContext *ctx, const char *name);
 void emit_instruction(CodegenContext *ctx, const char *fmt, ...);
 void emit_comment(CodegenContext *ctx, const char *fmt, ...);
 void emit_blank(CodegenContext *ctx);
+/* ALU unsigned: ajusta el orden según los tipos. Modifica left y scratch;
+ * conserva right. Los tres registros deben ser distintos. */
+void emit_typed_order(CodegenContext *ctx, int left, int right, int scratch,
+                      int left_unsigned, int right_unsigned, int greater);
 
 /* ----------------------------------------------------------------
  * codegen_labels.c
@@ -108,8 +141,13 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value);
  * codegen_expr.c
  * ---------------------------------------------------------------- */
 int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg);
+int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
+                           int left, int right);
+int codegen_checked_step(CodegenContext *ctx, PiperType type, int dest,
+                         int increment);
 int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
                                int dest_reg);
+int codegen_expression_is_unsigned(const AstNode *expr);
 
 /* ----------------------------------------------------------------
  * codegen_stmt.c

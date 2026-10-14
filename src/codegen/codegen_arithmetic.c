@@ -80,6 +80,11 @@ static int unsigned_operand(const AstNode *node)
     return constant_integer(node, &value) && value > 2147483647LL;
 }
 
+int codegen_expression_is_unsigned(const AstNode *expr)
+{
+    return unsigned_operand(expr);
+}
+
 static PiperType result_type(const AstNode *expr)
 {
     if (expr->has_piper_type) return expr->piper_type;
@@ -101,7 +106,7 @@ static void check_magnitude(CodegenContext *ctx, PiperType type)
 {
     int bits = integer_bits(type);
     if (unsigned_type(type)) {
-        emit_instruction(ctx, "jnz r4, error_aritmetico");
+        emit_instruction(ctx, "jnz r4, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
         if (bits == 32) return;
         load_immediate(ctx, 5, (1LL << bits) - 1);
     } else {
@@ -110,7 +115,7 @@ static void check_magnitude(CodegenContext *ctx, PiperType type)
     }
     emit_instruction(ctx, "mov r6, r1");
     emit_instruction(ctx, "gtn r6, r5");
-    emit_instruction(ctx, "jnz r6, error_aritmetico");
+    emit_instruction(ctx, "jnz r6, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
 }
 
 static void emit_divmod(CodegenContext *ctx, const AstNode *expr, int reserved)
@@ -120,12 +125,12 @@ static void emit_divmod(CodegenContext *ctx, const AstNode *expr, int reserved)
     int left_unsigned = unsigned_operand(expr->data.binary_expression.left);
     int right_unsigned = unsigned_operand(expr->data.binary_expression.right);
     int needs_sign = !left_unsigned || (!remainder && !right_unsigned);
-    char loop[40], subtract[40], next[40];
-    snprintf(loop, sizeof(loop), "division_%d", id);
-    snprintf(subtract, sizeof(subtract), "division_restar_%d", id);
-    snprintf(next, sizeof(next), "division_siguiente_%d", id);
+    char loop[CODEGEN_LABEL_SIZE], subtract[CODEGEN_LABEL_SIZE], next[CODEGEN_LABEL_SIZE];
+    snprintf(loop, sizeof(loop), CODEGEN_INTERNAL_LABEL("division_%d"), id);
+    snprintf(subtract, sizeof(subtract), CODEGEN_INTERNAL_LABEL("division_restar_%d"), id);
+    snprintf(next, sizeof(next), CODEGEN_INTERNAL_LABEL("division_siguiente_%d"), id);
 
-    emit_instruction(ctx, "jz r2, error_division_cero");
+    emit_instruction(ctx, "jz r2, " CODEGEN_INTERNAL_LABEL("error_division_cero"));
     if (left_unsigned && needs_sign) emit_instruction(ctx, "mov r4, r0");
     if (!left_unsigned) {
         emit_instruction(ctx, "mov r4, r1");
@@ -170,8 +175,8 @@ static void emit_divmod(CodegenContext *ctx, const AstNode *expr, int reserved)
     if (needs_sign) emit_instruction(ctx, "lowi r4, %d(r7)", -reserved + 28);
     /* Un residuo cero no conserva signo negativo. */
     if (needs_sign) {
-        char sign[40];
-        snprintf(sign, sizeof(sign), "division_signo_%d", id);
+        char sign[CODEGEN_LABEL_SIZE];
+        snprintf(sign, sizeof(sign), CODEGEN_INTERNAL_LABEL("division_signo_%d"), id);
         emit_instruction(ctx, "jnz r1, %s", sign);
         emit_instruction(ctx, "mov r4, r0");
         emit_label(ctx, sign);
@@ -242,13 +247,31 @@ static int power_two_divmod(CodegenContext *ctx, const AstNode *expr, int dest)
     return 1;
 }
 
+/* Para 8/16 bits, reconstruir la extensión canónica y compararla con el
+ * resultado de 32 bits. No basta para B32: su desborde se comprueba aparte.
+ * Solo modifica r4; conserva dest. */
+static void check_width(CodegenContext *ctx, int dest, PiperType type)
+{
+    int bits = integer_bits(type);
+    if (bits == 32) return;
+    emit_instruction(ctx, "mov r4, r%d", dest);
+    if (unsigned_type(type)) {
+        emit_instruction(ctx, "shri r4, #%d", bits);
+        emit_instruction(ctx, "jnz r4, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+    } else {
+        emit_instruction(ctx, "shli r4, #%d", 32 - bits);
+        emit_instruction(ctx, "sari r4, #%d", 32 - bits);
+        emit_instruction(ctx, "eor r4, r%d", dest);
+        emit_instruction(ctx, "jz r4, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+    }
+}
+
 /* Multiplica dest por factor, conservando factor. mulh devuelve la mitad
  * alta firmada; para uB32 se corrige sumando los operandos con bit 31 activo.
- * r4/r5/r6 son auxiliares; r2 conserva el exponente. */
+ * r4/r5 son auxiliares; r2 conserva el exponente. */
 static void checked_multiply(CodegenContext *ctx, int dest, int factor,
                              PiperType type)
 {
-    int bits = integer_bits(type);
     emit_instruction(ctx, "mov r5, r%d", dest);
     emit_instruction(ctx, "mulh r5, r%d", factor);
     if (unsigned_type(type)) {
@@ -267,44 +290,124 @@ static void checked_multiply(CodegenContext *ctx, int dest, int factor,
         emit_instruction(ctx, "sari r4, #31");
         emit_instruction(ctx, "xor r5, r4");
     }
-    emit_instruction(ctx, "jnz r5, error_aritmetico");
-    if (bits < 32) {
-        emit_instruction(ctx, "mov r4, r%d", dest);
-        if (unsigned_type(type)) {
-            emit_instruction(ctx, "shri r4, #%d", bits);
-            emit_instruction(ctx, "jnz r4, error_aritmetico");
-        } else {
-            emit_instruction(ctx, "shli r4, #%d", 32 - bits);
-            emit_instruction(ctx, "sari r4, #%d", 32 - bits);
-            emit_instruction(ctx, "eor r4, r%d", dest);
-            emit_instruction(ctx, "jz r4, error_aritmetico");
-        }
+    emit_instruction(ctx, "jnz r5, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+    check_width(ctx, dest, type);
+}
+
+/* Los operandos ya se evaluaron: no repetir llamadas, índices ni ++.
+ * Guardar los registros que usa el algoritmo permite aplicarlo también
+ * dentro de argumentos, matrices y expresiones que ya hicieron un spill.
+ * La ranura 0 guarda left, la 28 right y las 4..20 guardan r1..r5. */
+int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
+                           int left, int right)
+{
+    AstOperator op = expr->data.binary_expression.operator;
+    PiperType type = result_type(expr);
+    long long constant;
+    /* Los árboles de literales ya se comprobaron en el semántico y no
+     * tienen efectos: evitarles la secuencia dinámica de comprobación. */
+    if (constant_integer(expr, &constant))
+        return load_immediate(ctx, left, constant);
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva de comprobacion aritmetica agotada");
+        return 0;
     }
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    int base = -ctx->pending_call_bytes;
+    emit_instruction(ctx, "stwi r%d, %d(r7)", left, base);
+    emit_instruction(ctx, "stwi r%d, %d(r7)", right, base + 28);
+    for (int reg = 1; reg <= 5; reg++)
+        if (reg != left)
+            emit_instruction(ctx, "stwi r%d, %d(r7)", reg, base + reg * 4);
+    emit_instruction(ctx, "lowi r1, %d(r7)", base);
+    emit_instruction(ctx, "lowi r2, %d(r7)", base + 28);
+
+    if (op == AST_OP_MULTIPLY) {
+        checked_multiply(ctx, 1, 2, type);
+    } else {
+        emit_instruction(ctx, "mov r3, r1");
+        emit_instruction(ctx, "%s r1, r2", op == AST_OP_ADD ? "sum" : "diff");
+        if (unsigned_type(type)) {
+            /* Suma: resultado < a implica acarreo. Resta: a < b implica
+             * préstamo. ltn debe seguir comparando SIN signo en la ISA. */
+            if (op == AST_OP_ADD) {
+                emit_instruction(ctx, "mov r4, r1");
+                emit_instruction(ctx, "ltn r4, r3");
+            } else {
+                emit_instruction(ctx, "mov r4, r3");
+                emit_instruction(ctx, "ltn r4, r2");
+            }
+            emit_instruction(ctx, "jnz r4, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+        } else {
+            /* Suma: (a^resultado)&(b^resultado).
+             * Resta: (a^b)&(a^resultado). Bit 31 activo => overflow. */
+            emit_instruction(ctx, "mov r4, r3");
+            emit_instruction(ctx, "xor r4, r1");
+            emit_instruction(ctx, "mov r5, r2");
+            emit_instruction(ctx, "xor r5, r%d", op == AST_OP_ADD ? 1 : 3);
+            emit_instruction(ctx, "and r4, r5");
+            emit_instruction(ctx, "shri r4, #31");
+            emit_instruction(ctx, "jnz r4, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
+        }
+        check_width(ctx, 1, type);
+    }
+    if (left != 1) emit_instruction(ctx, "mov r%d, r1", left);
+    for (int reg = 1; reg <= 5; reg++)
+        if (reg != left)
+            emit_instruction(ctx, "lowi r%d, %d(r7)", reg, base + reg * 4);
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
+    return 1;
+}
+
+/* ++ y -- solo pueden desbordar al estar ya en el extremo del tipo.
+ * Comprobarlo antes de emitir la actualización evita escribir un valor
+ * inválido incluso en una variable global. No requiere otro temporal libre. */
+int codegen_checked_step(CodegenContext *ctx, PiperType type, int dest,
+                         int increment)
+{
+    int bits = integer_bits(type);
+    long long boundary = increment
+        ? (unsigned_type(type) ? (1LL << bits) - 1 : (1LL << (bits - 1)) - 1)
+        : (unsigned_type(type) ? 0 : -(1LL << (bits - 1)));
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva de comprobacion de incremento agotada");
+        return 0;
+    }
+    int scratch = dest == 1 ? 2 : 1;
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    int offset = -ctx->pending_call_bytes + 28;
+    emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, offset);
+    load_immediate(ctx, scratch, boundary);
+    emit_instruction(ctx, "eor r%d, r%d", scratch, dest);
+    emit_instruction(ctx, "jnz r%d, " CODEGEN_INTERNAL_LABEL("error_aritmetico"), scratch);
+    emit_instruction(ctx, "lowi r%d, %d(r7)", scratch, offset);
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
+    return 1;
 }
 
 static void emit_power(CodegenContext *ctx, const AstNode *expr)
 {
     int id = new_label(ctx);
-    char loop[40], square[40], end[40];
+    char loop[CODEGEN_LABEL_SIZE], square[CODEGEN_LABEL_SIZE], end[CODEGEN_LABEL_SIZE];
     PiperType type = result_type(expr);
-    snprintf(loop, sizeof(loop), "potencia_%d", id);
-    snprintf(square, sizeof(square), "potencia_cuadrado_%d", id);
-    snprintf(end, sizeof(end), "potencia_fin_%d", id);
+    snprintf(loop, sizeof(loop), CODEGEN_INTERNAL_LABEL("potencia_%d"), id);
+    snprintf(square, sizeof(square), CODEGEN_INTERNAL_LABEL("potencia_cuadrado_%d"), id);
+    snprintf(end, sizeof(end), CODEGEN_INTERNAL_LABEL("potencia_fin_%d"), id);
     if (!unsigned_operand(expr->data.binary_expression.right)) {
         emit_instruction(ctx, "mov r4, r2");
         emit_instruction(ctx, "sari r4, #31");
-        emit_instruction(ctx, "jnz r4, error_exponente_negativo");
+        emit_instruction(ctx, "jnz r4, " CODEGEN_INTERNAL_LABEL("error_exponente_negativo"));
     }
     if (unsigned_type(type) &&
         !unsigned_operand(expr->data.binary_expression.left)) {
-        char magnitude[40];
-        snprintf(magnitude, sizeof(magnitude), "potencia_magnitud_%d", id);
+        char magnitude[CODEGEN_LABEL_SIZE];
+        snprintf(magnitude, sizeof(magnitude), CODEGEN_INTERNAL_LABEL("potencia_magnitud_%d"), id);
         emit_instruction(ctx, "mov r4, r1");
         emit_instruction(ctx, "sari r4, #31");
         emit_instruction(ctx, "jz r4, %s", magnitude);
         emit_instruction(ctx, "mov r5, r2");
         emit_instruction(ctx, "andi r5, #1");
-        emit_instruction(ctx, "jnz r5, error_aritmetico");
+        emit_instruction(ctx, "jnz r5, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
         /* Un árbol de literales puede producir uB32 con base negativa y
          * exponente par, por ejemplo (-3)^20. Multiplicar su magnitud. */
         emit_instruction(ctx, "xor r1, r4");
@@ -350,7 +453,7 @@ int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
         int fast = power_two_divmod(ctx, expr, dest_reg);
         if (fast != 0) return fast > 0 ? TYPE_INT : TYPE_VOID;
     }
-    if (ctx->pending_call_bytes > SYMBOL_STACK_CALL_RESERVE - CALL_RECORD_SIZE) {
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
         codegen_context_error(ctx, "reserva de aritmetica y llamadas agotada");
         return TYPE_VOID;
     }

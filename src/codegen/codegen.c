@@ -66,9 +66,7 @@ CodegenResult codegen_generate(const AstNode *root,
     }
 
     if (entry != NULL || has_global_statements) {
-        emit_instruction(ctx, "mov r%d, r%d", REG_FP, REG_ZERO);
-        emit_instruction(ctx, "sumi r%d, #2", REG_FP);
-        emit_instruction(ctx, "shli r%d, #16", REG_FP);
+        load_immediate(ctx, REG_FP, CODEGEN_STACK_TOP);
     }
     /* Segunda pasada del AST, si hay código global: procesa en orden todos
      * los elementos salvo rutinas. Incluye declaraciones e imports mediante
@@ -86,9 +84,9 @@ CodegenResult codegen_generate(const AstNode *root,
         /* El id cero termina el retorno de main en fin_programa. */
         emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
         emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
-        emit_instruction(ctx, "j main");
+        emit_instruction(ctx, "j " CODEGEN_ROUTINE_LABEL("main"));
     } else if (has_global_statements) {
-        emit_instruction(ctx, "j fin_programa");
+        emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("fin_programa"));
     }
 
     /* Tercera pasada del AST: emitir las rutinas. Si no hubo segunda pasada,

@@ -57,6 +57,7 @@ typedef struct {
     CallUsage *calls;
     int loops, errors;
     int trace_enabled;
+    long long pending_codegen_bytes;
 } Visitor;
 
 /* Acumula el diagnóstico y permite seguir revisando el resto del árbol. */
@@ -665,7 +666,7 @@ static long long peak_stack(Visitor *v, RoutineUsage *routine)
         if (bytes > child_peak) child_peak = bytes;
     }
     long long known_peak = (long long)routine->symbol->total_stack_frame_size +
-                           SYMBOL_STACK_CALL_RESERVE + child_peak;
+                           routine->symbol->call_reserve_size + child_peak;
     if (known_peak > SYMBOL_STACK_SIZE)
         error(v, routine->declaration,
               "La rutina '%s' puede ocupar %lld bytes de pila entre variables, llamadas y reserva; máximo %d.",
@@ -690,6 +691,38 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Solo aprobar el nodo completo si sus hijos y sus reglas no fallaron. */
     int errors_before = v->errors;
     /* Reiniciar la decoración permite analizar el mismo árbol otra vez. */
+    /* Los índices y stores conservan valores en ranuras de 32 bytes,
+     * igual que llamadas y aritmética general. Contar el máximo simultáneo
+     * para que el prólogo compruebe la pila antes de usar esas ranuras. */
+    int reserved = 0;
+    if (n->kind == AST_CALL_EXPRESSION) {
+        int nargs = n->data.call_expression.arguments != NULL
+            ? (int)n->data.call_expression.arguments->count : 0;
+        reserved = 32 + (nargs > 4 ? (nargs - 4) * 4 : 0);
+    } else if (n->kind == AST_INDEX_EXPRESSION || n->kind == AST_ASSIGNMENT ||
+               (n->kind == AST_UNARY_EXPRESSION &&
+                (n->data.unary_expression.operator == AST_OP_INCREMENT ||
+                 n->data.unary_expression.operator == AST_OP_DECREMENT))) {
+        reserved = 32;
+    }
+    if (n->kind == AST_BINARY_EXPRESSION) {
+        /* Reserva conservadora: también cubre un spill de una operación
+         * simple cuando los dos temporales ya contienen resultados vivos. */
+        AstOperator op = n->data.binary_expression.operator;
+        /* Un spill puede coexistir con la ranura de comprobación del
+         * resultado. Ambos deben quedar dentro de la guarda de pila. */
+        reserved = ((op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ||
+                    op == AST_OP_ADD || op == AST_OP_SUBTRACT ||
+                    op == AST_OP_MULTIPLY) ? 64 : 32;
+    }
+    v->pending_codegen_bytes += reserved;
+    if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)
+        error(v, n, "La evaluación excede los %d bytes de pila.", SYMBOL_STACK_SIZE);
+    else {
+        int *peak = v->function ? &v->function->call_reserve_size
+                                : &v->table->global_call_reserve_size;
+        if (v->pending_codegen_bytes > *peak) *peak = (int)v->pending_codegen_bytes;
+    }
     n->semantic_scope = NULL;
     n->inferred_type = TYPE_VOID;
     n->array_rank = n->array_rows = n->array_cols = 0;
@@ -698,7 +731,31 @@ static DataType visit(Visitor *v, AstNode *n)
     n->has_element_piper_type = false;
     switch (n->kind) {
     /* Las declaraciones globales se procesan en orden de aparición. */
-    case AST_PROGRAM: list(v, n->data.program.elements); break;
+    case AST_PROGRAM: {
+        AstNodeList *elements = n->data.program.elements;
+        list(v, elements);
+        /* La entrada debe estar en el ámbito global: una rutina anidada
+         * llamada main no puede recibir el salto del arranque de codegen. */
+        AstNode *entry = NULL;
+        if (elements) {
+            for (size_t i = 0; i < elements->count; i++) {
+                AstNode *element = elements->items[i];
+                if (element && element->kind == AST_ROUTINE_DECLARATION &&
+                    strcmp(element->data.routine_declaration.name, "main") == 0) {
+                    entry = element;
+                    break;
+                }
+            }
+        }
+        if (!entry)
+            error(v, n, "El programa debe declarar una rutina global 'main' sin parámetros.");
+        else if (entry->data.routine_declaration.parameters &&
+                 entry->data.routine_declaration.parameters->count != 0)
+            error(v, entry, "La rutina de entrada 'main' no puede recibir parámetros.");
+        else if (v->errors == errors_before)
+            success(v, entry, "Entrada del programa aprobada: rutina global 'main' sin parámetros.");
+        break;
+    }
     /* Sin cargar módulos no se puede validar una firma importada. */
     case AST_IMPORT_DECLARATION:
         error(v, n, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
@@ -728,7 +785,9 @@ static DataType visit(Visitor *v, AstNode *n)
         Symbol *old = v->function;
         RoutineUsage *old_routine = v->current_routine;
         int old_loops = v->loops;
+        long long old_pending = v->pending_codegen_bytes;
         if (!open_scope(v, n, 0)) break;
+        v->pending_codegen_bytes = 0;
         v->function = f ? f : &fallback;
         v->current_routine = NULL;
         if (f) {
@@ -783,6 +842,7 @@ static DataType visit(Visitor *v, AstNode *n)
         v->function = old;
         v->current_routine = old_routine;
         v->loops = old_loops;
+        v->pending_codegen_bytes = old_pending;
         break;
     }
     /* Al salir, las declaraciones del bloque dejan de ser visibles. */
@@ -1144,6 +1204,7 @@ static DataType visit(Visitor *v, AstNode *n)
     }
     if (v->errors == errors_before && n->kind >= AST_CALL_EXPRESSION)
         success(v, n, "Decoración de expresión aprobada: tipo inferido %s.", type_name(n->inferred_type));
+    v->pending_codegen_bytes -= reserved;
     return n->inferred_type;
 }
 

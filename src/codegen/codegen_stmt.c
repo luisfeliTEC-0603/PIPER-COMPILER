@@ -9,21 +9,7 @@
 
 static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
 {
-    Scope *owner = find_owner_scope(ctx, sym);
-
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", sym->name);
-        return;
-    }
-
-    if (owner->is_global) {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         src_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)",
-                         src_reg, sym->address_or_offset, REG_FP);
-    }
+    store_symbol_value(ctx, sym, src_reg);
 }
 
 /* ----------------------------------------------------------------
@@ -32,21 +18,7 @@ static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
 
 static int load_symbol(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
-    Scope *owner = find_owner_scope(ctx, sym);
-
-    if (owner == NULL) {
-        codegen_context_error(ctx,
-            "no se pudo determinar el ambito de '%s'", sym->name);
-        return 0;
-    }
-    if (owner->is_global) {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_ZERO);
-    } else {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)",
-                         dest_reg, sym->address_or_offset, REG_FP);
-    }
-    return 1;
+    return load_symbol_value(ctx, sym, dest_reg);
 }
 
 /* ----------------------------------------------------------------
@@ -57,23 +29,37 @@ static void codegen_index_assignment(CodegenContext *ctx,
                                      const AstNode *target,
                                      const AstNode *value)
 {
-    int address_reg = alloc_temp(ctx);
-    int value_reg;
+    int address_reg, value_reg, reserved;
 
-    if (address_reg < 0) return;
+    if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
+        codegen_context_error(ctx, "reserva para store indexado excedida");
+        return;
+    }
+    ctx->pending_call_bytes += CALL_RECORD_SIZE;
+    reserved = ctx->pending_call_bytes;
+    address_reg = alloc_temp(ctx);
+    if (address_reg < 0) goto done;
     if (!codegen_array_index_address(ctx, target, address_reg)) {
         free_temp(ctx, address_reg);
-        return;
+        goto done;
     }
-    value_reg = alloc_temp(ctx);
-    if (value_reg < 0) {
-        free_temp(ctx, address_reg);
-        return;
-    }
-    if (codegen_expression(ctx, value, value_reg) != TYPE_VOID)
-        emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
-    free_temp(ctx, value_reg);
+    /* El valor puede requerir ambos temporales o llamar rutinas. Conservar
+     * la dirección ya calculada en una ranura que esas evaluaciones no pisan. */
+    emit_instruction(ctx, "stwi r%d, %d(r7)", address_reg, -reserved + 28);
     free_temp(ctx, address_reg);
+    value_reg = alloc_temp(ctx);
+    if (value_reg < 0) goto done;
+    if (codegen_expression(ctx, value, value_reg) != TYPE_VOID) {
+        address_reg = alloc_temp(ctx);
+        if (address_reg >= 0) {
+            emit_instruction(ctx, "lowi r%d, %d(r7)", address_reg, -reserved + 28);
+            emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
+            free_temp(ctx, address_reg);
+        }
+    }
+    free_temp(ctx, value_reg);
+done:
+    ctx->pending_call_bytes -= CALL_RECORD_SIZE;
 }
 
 static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
@@ -83,19 +69,34 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
     const AstNodeList *items = value->data.array_literal.elements;
     int value_reg;
 
-    if (target->array_rank != 1 || sym->declared_type == PIPER_TYPE_BOOL ||
-        items == NULL || items->count != (size_t)sym->array_rows) {
-        codegen_context_error(ctx, "inicializacion de '%s' no soportada en punto 5",
+    if (target->array_rank < 1 || target->array_rank > 2 ||
+        sym->declared_type == PIPER_TYPE_BOOL || items == NULL ||
+        items->count != (size_t)sym->array_rows) {
+        codegen_context_error(ctx, "inicializacion de arreglo/matriz '%s' invalida",
                               sym->name);
         return;
     }
     value_reg = alloc_temp(ctx);
     if (value_reg < 0) return;
-    for (size_t i = 0; i < items->count; i++) {
+    size_t count = (size_t)sym->array_rows * sym->array_cols;
+    for (size_t i = 0; i < count; i++) {
         int base_reg;
         size_t offset = i * SYMBOL_WORD_SIZE;
+        const AstNode *element;
+        if (target->array_rank == 1) {
+            element = items->items[i];
+        } else {
+            const AstNode *row = items->items[i / (size_t)sym->array_cols];
+            if (row == NULL || row->kind != AST_ARRAY_LITERAL ||
+                row->data.array_literal.elements == NULL ||
+                row->data.array_literal.elements->count != (size_t)sym->array_cols) {
+                codegen_context_error(ctx, "fila de matriz '%s' invalida", sym->name);
+                break;
+            }
+            element = row->data.array_literal.elements->items[i % (size_t)sym->array_cols];
+        }
 
-        if (codegen_expression(ctx, items->items[i], value_reg) == TYPE_VOID)
+        if (codegen_expression(ctx, element, value_reg) == TYPE_VOID)
             break;
         base_reg = alloc_temp(ctx);
         if (base_reg < 0) break;
@@ -112,6 +113,32 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
         free_temp(ctx, base_reg);
     }
     free_temp(ctx, value_reg);
+}
+
+static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
+                                const AstNode *value)
+{
+    Symbol *source = lookup_symbol_or_error(ctx, value->data.identifier.name, -1);
+    char loop[CODEGEN_LABEL_SIZE];
+    if (source == NULL || !source->is_array ||
+        source->array_rows != dest->array_rows || source->array_cols != dest->array_cols ||
+        source->declared_type != dest->declared_type || dest->declared_type == PIPER_TYPE_BOOL) {
+        codegen_context_error(ctx, "copia de arreglo/matriz incompatible");
+        return;
+    }
+    /* Las asignaciones son sentencias: no hay argumentos vivos en r1..r4.
+     * Referencias iguales permiten autocopia; no hay vistas parciales en Piper. */
+    if (!load_array_base(ctx, dest, REG_RET) ||
+        !load_array_base(ctx, source, REG_ARG1)) return;
+    load_immediate(ctx, REG_ARG2, (long long)dest->array_rows * dest->array_cols);
+    snprintf(loop, sizeof(loop), CODEGEN_INTERNAL_LABEL("copiar_matriz_%d"), new_label(ctx));
+    emit_label(ctx, loop);
+    emit_instruction(ctx, "lowi r4, 0(r2)");
+    emit_instruction(ctx, "stwi r4, 0(r1)");
+    emit_instruction(ctx, "sumi r1, #4");
+    emit_instruction(ctx, "sumi r2, #4");
+    emit_instruction(ctx, "diffi r3, #1");
+    emit_instruction(ctx, "jnz r3, %s", loop);
 }
 
 /* ----------------------------------------------------------------
@@ -141,6 +168,8 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
         if (sym->is_array) {
             if (value->kind == AST_ARRAY_LITERAL)
                 codegen_array_literal_assignment(ctx, sym, target, value);
+            else if (value->kind == AST_IDENTIFIER_EXPRESSION)
+                codegen_array_copy(ctx, sym, value);
             else
                 codegen_context_error(ctx,
                     "asignacion de arreglo '%s' no soportada en punto 5",
@@ -219,12 +248,12 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
 
     /* Etiqueta de salida. */
     if (has_fallback) {
-        char else_label[32];
-        char fin_label[32];
+        char else_label[CODEGEN_LABEL_SIZE];
+        char fin_label[CODEGEN_LABEL_SIZE];
         int else_n = new_label(ctx);
         int fin_n = new_label(ctx);
-        snprintf(else_label, sizeof(else_label), "else_%d", else_n);
-        snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+        snprintf(else_label, sizeof(else_label), CODEGEN_INTERNAL_LABEL("else_%d"), else_n);
+        snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
         /* Si condición falsa, saltar al fallback. */
         emit_instruction(ctx, "jz r%d, %s", temp, else_label);
@@ -244,9 +273,9 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
 
         emit_label(ctx, fin_label);
     } else {
-        char fin_label[32];
+        char fin_label[CODEGEN_LABEL_SIZE];
         int fin_n = new_label(ctx);
-        snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+        snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
         emit_instruction(ctx, "jz r%d, %s", temp, fin_label);
         free_temp(ctx, temp);
@@ -268,8 +297,8 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
     const AstNode *body = stmt->data.alwhen_statement.body;
     int inicio_n = new_label(ctx);
     int fin_n = new_label(ctx);
-    char inicio_label[32];
-    char fin_label[32];
+    char inicio_label[CODEGEN_LABEL_SIZE];
+    char fin_label[CODEGEN_LABEL_SIZE];
     int temp;
 
     if (condition == NULL || body == NULL) {
@@ -277,8 +306,8 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    snprintf(inicio_label, sizeof(inicio_label), "inicio_%d", inicio_n);
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
     /* Empujar etiqueta de fin para break. */
     label_stack_push(ctx, fin_n);
@@ -323,7 +352,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
     const AstNode *body = stmt->data.loop_statement.body;
     Symbol *control_sym;
     int inicio_n, fin_n;
-    char inicio_label[32], fin_label[32];
+    char inicio_label[CODEGEN_LABEL_SIZE], fin_label[CODEGEN_LABEL_SIZE];
     int temp;
 
     if (control_name == NULL || begin == NULL || end == NULL
@@ -355,8 +384,8 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 
     inicio_n = new_label(ctx);
     fin_n = new_label(ctx);
-    snprintf(inicio_label, sizeof(inicio_label), "inicio_%d", inicio_n);
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
     /* control = begin. */
     temp = alloc_temp(ctx);
@@ -403,11 +432,17 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 
         /* Comparar: si control >= end, salir.
          * Calcular control < end en temp2 y luego invertir.
-         * ltn rTemp2, rTemp → temp2 = (control < end) ? 1 : 0
+         * emit_typed_order → temp2 = (control < end) ? 1 : 0,
+         * con máscara del bit 31 para operandos signed.
          * xori rTemp2, #1   → temp2 = !(control < end) = (control >= end)
          * jnz rTemp2, fin   → si control >= end, salir
          */
-        emit_instruction(ctx, "ltn r%d, r%d", temp2, temp);
+        int control_unsigned = control_sym->declared_type == PIPER_TYPE_UB8 ||
+            control_sym->declared_type == PIPER_TYPE_UB16 ||
+            control_sym->declared_type == PIPER_TYPE_UB32;
+        /* r1..r4 no contienen valores vivos entre sentencias de la rutina. */
+        emit_typed_order(ctx, temp2, temp, REG_ARG3, control_unsigned,
+                         codegen_expression_is_unsigned(end), 0);
         emit_instruction(ctx, "xori r%d, #1", temp2);
         emit_instruction(ctx, "jnz r%d, %s", temp2, fin_label);
         free_temp(ctx, temp2);
@@ -454,7 +489,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
 {
     int fin_n;
-    char fin_label[32];
+    char fin_label[CODEGEN_LABEL_SIZE];
 
     (void)stmt;
     fin_n = label_stack_top(ctx);
@@ -462,14 +497,14 @@ static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
         codegen_context_error(ctx, "break fuera de un ciclo");
         return;
     }
-    snprintf(fin_label, sizeof(fin_label), "fin_%d", fin_n);
+    snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
     emit_instruction(ctx, "j %s", fin_label);
 }
 
 static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *value = stmt->data.output_statement.value;
-    char epilogue_name[SYMBOL_NAME_MAX + 16];
+    char epilogue_name[CODEGEN_LABEL_SIZE];
 
     if (ctx->current_function == NULL || value == NULL) {
         codegen_context_error(ctx, "output fuera de una rutina o sin valor");
@@ -479,7 +514,7 @@ static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
         codegen_expression(ctx, value, REG_RET) == TYPE_VOID)
         return;
 
-    snprintf(epilogue_name, sizeof(epilogue_name), "epilogo_%s",
+    snprintf(epilogue_name, sizeof(epilogue_name), CODEGEN_INTERNAL_LABEL("epilogo_%s"),
              ctx->current_function->name);
     emit_instruction(ctx, "j %s", epilogue_name);
 }
