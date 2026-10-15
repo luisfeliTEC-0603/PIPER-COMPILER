@@ -4,18 +4,12 @@
 
 _Static_assert(CODEGEN_STACK_BOTTOM == 0x1F000, "revisar mapa fisico de pila");
 
-/*
- * Emite el prólogo de una rutina.
- *
- * Convención acordada:
+/* Convención de las rutinas:
  *   - r7 apunta al tope del frame de la rutina.
  *   - Los offsets de locales/params son positivos desde r7.
  *   - El llamador conserva r1..r6 en la ranura de llamada.
  *   - Los parámetros llegan por r1..r4 y se copian al frame local.
  *   - La dirección de retorno se representa por un id de continuación.
- *
- * Por ahora, como las rutinas pueden tener frame 0, el prólogo solo
- * ajusta r7 si total_stack_frame_size > 0.
  */
 
 void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
@@ -26,7 +20,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
         return;
     }
 
-    /* El tamaño del frame lo calculó la Persona 1 al analizar la rutina. */
+    /* El análisis semántico calcula el tamaño del frame. */
     frame_size = ctx->current_function != NULL
         ? ctx->current_function->total_stack_frame_size
         : 0;
@@ -34,8 +28,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
     emit_comment(ctx, "prologo de %s (frame %d bytes)",
                  routine->data.routine_declaration.name, frame_size);
 
-    /* Comprobar antes de escribir el frame. El semántico calcula una reserva
-     * de al menos 64 bytes para llamadas, stores, índices y spills pendientes. */
+    /* Comprobar que el frame y su reserva temporal quepan en el segmento de stack. */
     emit_instruction(ctx, "mov r%d, r%d", REG_TMP0, REG_FP);
     emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0,
                      frame_size + ctx->call_reserve_size);
@@ -47,7 +40,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
         if (frame_size <= 32767) {
             emit_instruction(ctx, "diffi r%d, #%d", REG_FP, frame_size);
         } else {
-            /* Frame grande: construir el valor en un temporal y restar. */
+            /* Un frame grande no cabe en el inmediato de diffi. */
             int tmp = alloc_temp(ctx);
             if (tmp < 0) {
                 return;
@@ -73,7 +66,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
         return;
     }
 
-    /* Parámetros en registro: r1..r4 -> ranura del frame. */
+    /* Copiar los cuatro primeros parámetros desde r1..r4 al frame. */
     int reg_params = function->param_count < MAX_REGISTER_ARGS
         ? function->param_count : MAX_REGISTER_ARGS;
     for (int i = 0; i < reg_params; i++) {
@@ -86,8 +79,7 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
                          REG_ARG0 + i, param->address_or_offset, REG_FP);
     }
 
-    /* Parámetros en pila: leerlos desde el registro del llamador.
-     * r1 ya quedó libre tras copiar los cuatro primeros. */
+    /* Los demás parámetros están después del call record del llamador. */
     for (int i = MAX_REGISTER_ARGS; i < function->param_count; i++) {
         Symbol *param = function->params[i];
         int offset;
@@ -108,12 +100,8 @@ void codegen_routine_prologue(CodegenContext *ctx, const AstNode *routine)
     }
 }
 
-/*
- * Emite el epílogo de una rutina.
- *
- * Se llega aquí por caída natural o por un salto desde `output`.
+/* Se llega al epílogo por caída natural o desde una sentencia output.
  * El valor de retorno, si existe, ya está en r1.
- * Se restaura r7, se lee el id de continuación y se salta al despachador.
  */
 
 void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
@@ -149,10 +137,7 @@ void codegen_routine_epilogue(CodegenContext *ctx, const AstNode *routine)
     emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("retornos"));
 }
 
-/*
- * Emite una rutina completa: etiqueta, prólogo, cuerpo, epílogo.
- */
-
+/* Activa el ámbito de la rutina, emite sus cuatro secciones y restaura el contexto. */
 void codegen_routine(CodegenContext *ctx, const AstNode *routine)
 {
     const char *name;
@@ -189,7 +174,7 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
         return;
     }
 
-    /* Validar también arreglos que aparecen solo en la firma. */
+    /* Los parámetros de arreglo también deben cumplir el contrato del codegen. */
     if (routine->data.routine_declaration.parameters != NULL) {
         AstNodeList *params = routine->data.routine_declaration.parameters;
         for (size_t i = 0; i < params->count; i++) {
@@ -207,12 +192,12 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
     saved_frame_offset = ctx->frame_offset;
     saved_reserve = ctx->call_reserve_size;
 
+    /* Activar el estado semántico y de stack propio de la rutina. */
     ctx->current_function = func;
     ctx->current_scope = func->function_scope;
     ctx->frame_offset = func->total_stack_frame_size;
     ctx->call_reserve_size = func->call_reserve_size;
 
-    /* Etiqueta de entrada. */
     emit_blank(ctx);
     {
         char routine_label[CODEGEN_LABEL_SIZE];
@@ -220,10 +205,8 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
         emit_label(ctx, routine_label);
     }
 
-    /* Prólogo. */
     codegen_routine_prologue(ctx, routine);
 
-    /* Cuerpo. */
     if (routine->data.routine_declaration.body != NULL) {
         AstNode *body = routine->data.routine_declaration.body;
         if (body->kind == AST_BLOCK) {
@@ -233,14 +216,14 @@ void codegen_routine(CodegenContext *ctx, const AstNode *routine)
         }
     }
 
-    /* Etiqueta de epílogo: se usa si hay `output` en el cuerpo. */
+    /* Todas las sentencias output saltan a este mismo epílogo. */
     snprintf(epilogue_name, sizeof(epilogue_name),
              CODEGEN_INTERNAL_LABEL("epilogo_%s"), name);
     emit_label(ctx, epilogue_name);
 
-    /* Epílogo. */
     codegen_routine_epilogue(ctx, routine);
 
+    /* Regresar al ámbito que estaba activo antes de emitir la rutina. */
     ctx->current_scope = saved_scope;
     ctx->current_function = saved_function;
     ctx->frame_offset = saved_frame_offset;

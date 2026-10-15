@@ -5,10 +5,7 @@
 #include "symbol_table.h"
 #include <stdio.h>
 
-/*
- * Resultado de la generación de código.
- * Cada valor distinto de CODEGEN_OK indica una clase de fallo.
- */
+/* Resultado de la generación de código. */
 
 typedef enum {
     CODEGEN_OK = 0,
@@ -19,25 +16,14 @@ typedef enum {
     CODEGEN_ERROR_INTERNO
 } CodegenResult;
 
-/*
- * Opciones de generación. Se pasan como puntero; NULL usa valores por defecto.
- */
+/* Si options es NULL se usan los valores por defecto. */
 
 typedef struct {
-    int emitir_comentarios;   /* 1 = incluir ; comentarios en el ASM */
-    int optimizar_temporales; /* Reservado para futuro */
+    int emitir_comentarios;   /* Incluye comentarios en el ASM. */
+    int optimizar_temporales; /* Sin uso actualmente. */
 } CodegenOptions;
 
-/*
- * Punto de entrada único del generador de código.
- *
- * - root:     AST ya validado semánticamente.
- * - table:    tabla de símbolos ya poblada (con offsets/direcciones).
- * - output:   archivo destino del ASM (abierto por el llamador).
- * - options:  puede ser NULL para valores por defecto.
- *
- * Retorna CODEGEN_OK si todo salió bien.
- */
+/* Genera ASM a partir de un AST validado y su tabla de símbolos. */
 
 CodegenResult codegen_generate(const AstNode *root,
                                const SymbolTable *table,

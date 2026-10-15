@@ -12,10 +12,6 @@
  *   - Si la expresión es un lvalue, se carga su valor, no su dirección.
  */
 
-/* ----------------------------------------------------------------
- * Literales e identificadores
- * ---------------------------------------------------------------- */
-
 static int codegen_integer_literal(CodegenContext *ctx,
                                    const AstNode *expr, int dest_reg)
 {
@@ -65,16 +61,12 @@ static int codegen_identifier_load(CodegenContext *ctx,
     return sym->type;
 }
 
-/* ----------------------------------------------------------------
- * Operadores unarios
- * ---------------------------------------------------------------- */
-
 static int codegen_unary_negate(CodegenContext *ctx,
                                 const AstNode *expr, int dest_reg)
 {
     const AstNode *operand = expr->data.unary_expression.operand;
 
-    /* Optimización: literal entero. */
+    /* Evitar emitir la negación cuando el valor ya es constante. */
     if (operand != NULL && operand->kind == AST_INTEGER_LITERAL) {
         long long v = (long long)operand->data.integer_literal.value;
         if (v <= 2147483648LL) {
@@ -88,7 +80,7 @@ static int codegen_unary_negate(CodegenContext *ctx,
     if (codegen_expression(ctx, operand, dest_reg) == TYPE_VOID) {
         return TYPE_VOID;
     }
-    /* En MATH, diff rA, rB calcula rA-rB. El complemento a dos da -rA. */
+    /* Complemento a dos: -x = ~x + 1. */
     emit_instruction(ctx, "not r%d", dest_reg);
     emit_instruction(ctx, "sumi r%d, #1", dest_reg);
     return TYPE_INT;
@@ -101,12 +93,12 @@ static int codegen_unary_logical_not(CodegenContext *ctx,
     if (codegen_expression(ctx, operand, dest_reg) == TYPE_VOID) {
         return TYPE_VOID;
     }
-    /* Asumimos que la expresión ya produce 0 o 1.
-     * xori #1 invierte: 0->1, 1->0. */
+    /* Las expresiones booleanas ya están normalizadas a cero o uno. */
     emit_instruction(ctx, "xori r%d, #1", dest_reg);
     return TYPE_BOOL;
 }
 
+/* Incrementa o decrementa una variable, comprueba su límite y guarda el resultado. */
 static int codegen_unary_increment(CodegenContext *ctx,
                                    const AstNode *expr, int dest_reg,
                                    int is_increment)
@@ -130,10 +122,9 @@ static int codegen_unary_increment(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    /* Cargar valor actual en dest_reg. */
     if (!load_symbol_value(ctx, sym, dest_reg)) return TYPE_VOID;
 
-    /* Rechazar el extremo del tipo antes de cambiar o almacenar el valor. */
+    /* Comprobar el límite antes de modificar la variable. */
     if (!codegen_checked_step(ctx, sym->declared_type, dest_reg, is_increment))
         return TYPE_VOID;
     if (is_increment) {
@@ -142,7 +133,6 @@ static int codegen_unary_increment(CodegenContext *ctx,
         emit_instruction(ctx, "diffi r%d, #1", dest_reg);
     }
 
-    /* Almacenar de vuelta. */
     store_symbol_value(ctx, sym, dest_reg);
     return sym->type;
 }
@@ -168,19 +158,7 @@ static int codegen_unary_expression(CodegenContext *ctx,
     }
 }
 
-/* ----------------------------------------------------------------
- * Operadores binarios
- * ---------------------------------------------------------------- */
-
-/*
- * Emite la secuencia para una operación binaria.
- * `instruction` es el mnemónico PORYGON: sum, diff, mul, and, or, xor.
- * `invert` indica si después hay que invertir el resultado con xori #1.
- *   - Se usa para <=, >=, != (que se calculan como la negación de >, <, =).
- */
-/* Ya se evaluó el lado izquierdo en dest. Si r5/r6 están ocupados, guardarlo
- * junto con los registros vivos y evaluar el lado derecho con temporales libres.
- * Permite acum + A|i&k| * B|k&j| sin volver a evaluar el lado izquierdo. */
+/* Emite una operación sobre operandos ya evaluados y aplica sus comprobaciones. */
 static int emit_binary_operation(CodegenContext *ctx, const AstNode *expr,
                                  int left, int right, const char *instruction)
 {
@@ -205,8 +183,7 @@ static int emit_binary_operation(CodegenContext *ctx, const AstNode *expr,
     while (scratch == left || scratch == right) scratch++;
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     int offset = -ctx->pending_call_bytes + 28;
-    /* Un registro de argumentos puede estar vivo: conservarlo sin requerir
-     * un tercer temporal físico. Los operandos ya se evaluaron una sola vez. */
+    /* Conservar el registro auxiliar porque puede pertenecer a una expresión externa. */
     emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, offset);
     emit_typed_order(ctx, left, right, scratch, left_unsigned, right_unsigned,
                      op == AST_OP_GREATER || op == AST_OP_LESS_EQUAL);
@@ -215,6 +192,7 @@ static int emit_binary_operation(CodegenContext *ctx, const AstNode *expr,
     return 1;
 }
 
+/* Guarda el operando izquierdo y los registros vivos cuando no queda un temporal. */
 static int codegen_binary_spilled(CodegenContext *ctx, const AstNode *expr,
                                   int dest, const char *instruction, int invert)
 {
@@ -227,17 +205,23 @@ static int codegen_binary_spilled(CodegenContext *ctx, const AstNode *expr,
     }
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     reserved = ctx->pending_call_bytes;
+
+    /* Liberar los temporales exige guardar primero el operando y registros vivos. */
     emit_instruction(ctx, "stwi r%d, %d(r7)", dest, -reserved + 28);
     for (int reg = REG_RET; reg <= REG_TMP1; reg++)
         if (mask & (1u << reg))
             emit_instruction(ctx, "stwi r%d, %d(r7)", reg, -reserved + reg * 4);
     reset_temps(ctx);
+
+    /* r1 recibe el lado derecho y r2 recupera el izquierdo. */
     if (codegen_expression(ctx, expr->data.binary_expression.right, REG_RET) == TYPE_VOID)
         goto done;
     emit_instruction(ctx, "lowi r2, %d(r7)", -reserved + 28);
     if (!emit_binary_operation(ctx, expr, 2, 1, instruction)) goto done;
     if (invert) emit_instruction(ctx, "xori r2, #1");
     if (dest != REG_ARG1) emit_instruction(ctx, "mov r%d, r2", dest);
+
+    /* Restaurar todos los registros excepto el destino que contiene el resultado. */
     for (int reg = REG_RET; reg <= REG_TMP1; reg++)
         if (mask & (1u << reg))
             emit_instruction(ctx, "lowi r%d, %d(r7)", reg, -reserved + reg * 4);
@@ -248,6 +232,7 @@ done:
     return type;
 }
 
+/* Evalúa ambos operandos una sola vez y usa un temporal o un spill para el derecho. */
 static int codegen_binary_emit(CodegenContext *ctx,
                                const AstNode *expr, int dest_reg,
                                const char *instruction,
@@ -258,13 +243,11 @@ static int codegen_binary_emit(CodegenContext *ctx,
     int temp;
     int left_type, right_type;
 
-    /* 1. Evaluar left en dest_reg. */
     left_type = codegen_expression(ctx, left, dest_reg);
     if (left_type == TYPE_VOID) {
         return TYPE_VOID;
     }
 
-    /* 2. Reservar temporal. */
     if (ctx->temp_in_use == 3)
         return codegen_binary_spilled(ctx, expr, dest_reg, instruction, invert);
     temp = alloc_temp(ctx);
@@ -272,14 +255,12 @@ static int codegen_binary_emit(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    /* 3. Evaluar right en temp. */
     right_type = codegen_expression(ctx, right, temp);
     if (right_type == TYPE_VOID) {
         free_temp(ctx, temp);
         return TYPE_VOID;
     }
 
-    /* 4. Emitir la operación. */
     if (instruction != NULL) {
         if (!emit_binary_operation(ctx, expr, dest_reg, temp, instruction)) {
             free_temp(ctx, temp);
@@ -287,15 +268,12 @@ static int codegen_binary_emit(CodegenContext *ctx,
         }
     }
 
-    /* 5. Invertir si es necesario. */
     if (invert) {
         emit_instruction(ctx, "xori r%d, #1", dest_reg);
     }
 
-    /* 6. Liberar temporal. */
     free_temp(ctx, temp);
 
-    /* 7. Retornar el tipo. */
     return expr->inferred_type != TYPE_VOID
         ? expr->inferred_type
         : (left_type == TYPE_BOOL && right_type == TYPE_BOOL
@@ -337,11 +315,7 @@ static int codegen_binary_comparison(CodegenContext *ctx,
     }
 }
 
-/* ----------------------------------------------------------------
- * Aritmética y lógica binaria
- * ---------------------------------------------------------------- */
-
-/* +, -, *, and, or y xor usan instrucciones directas de la ISA. */
+/* Selecciona entre instrucciones directas y los algoritmos de división o potencia. */
 static int codegen_binary_arithmetic(CodegenContext *ctx,
                                      const AstNode *expr, int dest_reg)
 {
@@ -369,13 +343,11 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    /* 1. Evaluar left en dest_reg. */
     left_type = codegen_expression(ctx, left, dest_reg);
     if (left_type == TYPE_VOID) {
         return TYPE_VOID;
     }
 
-    /* 2. Reservar temporal. */
     if (ctx->temp_in_use == 3)
         return codegen_binary_spilled(ctx, expr, dest_reg, instruction, 0);
     temp = alloc_temp(ctx);
@@ -383,21 +355,18 @@ static int codegen_binary_arithmetic(CodegenContext *ctx,
         return TYPE_VOID;
     }
 
-    /* 3. Evaluar right en temp. */
     right_type = codegen_expression(ctx, right, temp);
     if (right_type == TYPE_VOID) {
         free_temp(ctx, temp);
         return TYPE_VOID;
     }
 
-    /* 4. Emitir la operación. */
     if (!emit_binary_operation(ctx, expr, dest_reg, temp, instruction)) {
         free_temp(ctx, temp);
         return TYPE_VOID;
     }
     free_temp(ctx, temp);
 
-    /* Tipo resultante: para lógicos, TYPE_BOOL; para aritmética, TYPE_INT. */
     if (op == AST_OP_LOGICAL_AND || op == AST_OP_LOGICAL_OR
         || op == AST_OP_LOGICAL_XOR) {
         return TYPE_BOOL;
@@ -434,10 +403,6 @@ static int codegen_binary_expression(CodegenContext *ctx,
         return TYPE_VOID;
     }
 }
-
-/* ----------------------------------------------------------------
- * Punto de entrada
- * ---------------------------------------------------------------- */
 
 static int codegen_expression_impl(CodegenContext *ctx, const AstNode *expr,
                                    int dest_reg)
@@ -477,6 +442,7 @@ static int codegen_expression_impl(CodegenContext *ctx, const AstNode *expr,
     }
 }
 
+/* Mantiene la profundidad para que expresiones anidadas preserven registros externos. */
 int codegen_expression(CodegenContext *ctx, const AstNode *expr, int dest_reg)
 {
     int type;

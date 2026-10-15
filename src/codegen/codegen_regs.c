@@ -1,9 +1,5 @@
 #include "codegen_internal.h"
 
-/* ----------------------------------------------------------------
- * Administración de registros temporales
- * ---------------------------------------------------------------- */
-
 #define TEMP_BIT(reg) (1u << ((reg) - REG_TMP0))
 
 int alloc_temp(CodegenContext *ctx)
@@ -54,11 +50,8 @@ void reset_temps(CodegenContext *ctx)
  *   - -32768:              mov dest, r0 ; sumi dest, #-32768
  *   - resto de 32 bits:     construir dos mitades con shli y sumi
  *
- * Nota: el parser representa números negativos como AST_UNARY_EXPRESSION
- * (NEGATE) sobre un AST_INTEGER_LITERAL positivo. Por eso `value` llega
- * aquí normalmente como positivo; los negativos aparecen cuando el
- * llamador ya resolvió el signo (por ejemplo, en un contexto constante).
- * De todas formas, esta función maneja ambos signos por completitud.
+ * Los valores negativos pueden llegar después de resolver una expresión
+ * unaria o una constante.
  */
 int load_immediate(CodegenContext *ctx, int dest_reg, long long value)
 {
@@ -97,8 +90,7 @@ int load_immediate(CodegenContext *ctx, int dest_reg, long long value)
         high = ((long long)bits - low) / 65536;
         if (high >= 32768) high -= 65536;
         emit_instruction(ctx, "mov r%d, r0", dest_reg);
-        /* Ajustar la mitad alta permite sumar la baja con signo. Tampoco
-         * depende de cómo la ALU extienda los inmediatos lógicos. */
+        /* La mitad alta se ajusta porque la mitad baja se suma con signo. */
         if (high != 0) {
             emit_instruction(ctx, "sumi r%d, #%lld", dest_reg, high);
             emit_instruction(ctx, "shli r%d, #16", dest_reg);

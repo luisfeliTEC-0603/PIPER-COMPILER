@@ -4,10 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ----------------------------------------------------------------
- * Pila de etiquetas
- * ---------------------------------------------------------------- */
-
 static LabelStack *label_stack_create(void)
 {
     LabelStack *stack = calloc(1, sizeof(*stack));
@@ -32,10 +28,6 @@ static void label_stack_destroy(LabelStack *stack)
     free(stack->items);
     free(stack);
 }
-
-/* ----------------------------------------------------------------
- * Ciclo de vida del contexto
- * ---------------------------------------------------------------- */
 
 CodegenContext *codegen_context_create(const AstNode *root,
                                        const SymbolTable *table,
@@ -93,10 +85,6 @@ void codegen_context_destroy(CodegenContext *ctx)
     free(ctx);
 }
 
-/* ----------------------------------------------------------------
- * Acumulación y busqueda de errores
- * ---------------------------------------------------------------- */
-
 void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
 {
     va_list args;
@@ -107,12 +95,11 @@ void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
 
     ctx->error_count++;
 
-    /* Guardar el último error para diagnóstico */
+    /* Conservar el último mensaje disponible para diagnóstico. */
     va_start(args, fmt);
     vsnprintf(ctx->last_error, sizeof(ctx->last_error), fmt, args);
     va_end(args);
 
-    /* También emitir a stderr para visibilidad inmediata */
     fprintf(stderr, "[codegen] error: %s\n", ctx->last_error);
 }
 
@@ -121,6 +108,7 @@ int codegen_has_errors(const CodegenContext *ctx)
     return ctx == NULL || ctx->error_count > 0;
 }
 
+/* Busca un nombre desde el ámbito actual hacia sus padres y valida su clase. */
 Symbol *lookup_symbol_or_error(CodegenContext *ctx,
                                const char *name,
                                int expected_class)
@@ -132,7 +120,7 @@ Symbol *lookup_symbol_or_error(CodegenContext *ctx,
         return NULL;
     }
 
-    /* Búsqueda léxica desde el ámbito actual del contexto hacia arriba. */
+    /* La búsqueda respeta el anidamiento léxico de la tabla de símbolos. */
     for (scope = ctx->current_scope; scope != NULL; scope = scope->parent) {
         for (Symbol *it = scope->symbols_head; it != NULL; it = it->next) {
             if (strcmp(it->name, name) == 0) {
@@ -158,6 +146,7 @@ found:
     return sym;
 }
 
+/* Determina el ámbito que posee un símbolo visible desde la posición actual. */
 Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym)
 {
     Scope *scope;
@@ -195,6 +184,7 @@ int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg)
     return 1;
 }
 
+/* Escribe un escalar local directamente o calcula primero su dirección global. */
 void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
 {
     Scope *owner = find_owner_scope(ctx, sym);
@@ -214,7 +204,7 @@ void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
     int scratch = src_reg == REG_ARG0 ? REG_ARG1 : REG_ARG0;
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     int saved_offset = -ctx->pending_call_bytes + 28;
-    /* No consumir otro temporal ni pisar argumentos preparados por el llamador. */
+    /* Usar un registro de argumentos evita consumir uno de los dos temporales. */
     emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, saved_offset);
     load_immediate(ctx, scratch, CODEGEN_DATA_BASE + sym->address_or_offset);
     emit_instruction(ctx, "stwi r%d, 0(r%d)", src_reg, scratch);

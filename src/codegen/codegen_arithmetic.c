@@ -73,6 +73,7 @@ static int constant_integer(const AstNode *node, long long *value)
     return *value >= -2147483648LL && *value <= 4294967295LL;
 }
 
+/* Determina si el operando se interpreta sin signo por su tipo o valor constante. */
 static int unsigned_operand(const AstNode *node)
 {
     long long value;
@@ -118,6 +119,7 @@ static void check_magnitude(CodegenContext *ctx, PiperType type)
     emit_instruction(ctx, "jnz r6, " CODEGEN_INTERNAL_LABEL("error_aritmetico"));
 }
 
+/* Emite división o residuo por software y deja el resultado comprobado en r1. */
 static void emit_divmod(CodegenContext *ctx, const AstNode *expr, int reserved)
 {
     int id = new_label(ctx);
@@ -314,6 +316,8 @@ int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
     }
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     int base = -ctx->pending_call_bytes;
+
+    /* El algoritmo usa r1..r5, por eso conserva operandos y registros vivos. */
     emit_instruction(ctx, "stwi r%d, %d(r7)", left, base);
     emit_instruction(ctx, "stwi r%d, %d(r7)", right, base + 28);
     for (int reg = 1; reg <= 5; reg++)
@@ -322,6 +326,7 @@ int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
     emit_instruction(ctx, "lowi r1, %d(r7)", base);
     emit_instruction(ctx, "lowi r2, %d(r7)", base + 28);
 
+    /* Multiplicación y suma/resta requieren comprobaciones de overflow distintas. */
     if (op == AST_OP_MULTIPLY) {
         checked_multiply(ctx, 1, 2, type);
     } else {
@@ -351,6 +356,8 @@ int codegen_checked_binary(CodegenContext *ctx, const AstNode *expr,
         }
         check_width(ctx, 1, type);
     }
+
+    /* Devolver el resultado al registro solicitado y recuperar los auxiliares. */
     if (left != 1) emit_instruction(ctx, "mov r%d, r1", left);
     for (int reg = 1; reg <= 5; reg++)
         if (reg != left)
@@ -385,6 +392,7 @@ int codegen_checked_step(CodegenContext *ctx, PiperType type, int dest,
     return 1;
 }
 
+/* Emite exponenciación binaria y comprueba cada multiplicación intermedia. */
 static void emit_power(CodegenContext *ctx, const AstNode *expr)
 {
     int id = new_label(ctx);
@@ -432,6 +440,7 @@ static void emit_power(CodegenContext *ctx, const AstNode *expr)
     emit_instruction(ctx, "mov r1, r3");
 }
 
+/* Evalúa los operandos y emite división, residuo o potencia preservando registros vivos. */
 int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
                                int dest_reg)
 {
@@ -474,16 +483,21 @@ int codegen_general_arithmetic(CodegenContext *ctx, const AstNode *expr,
             emit_instruction(ctx, "stwi r%d, %d(r7)", reg, -reserved + reg * 4);
     }
     reset_temps(ctx);
+
+    /* Evaluar una sola vez cada operando y colocarlos en r1 y r2. */
     if (codegen_expression(ctx, left, 1) == TYPE_VOID) goto done;
     emit_instruction(ctx, "stwi r1, %d(r7)", -reserved + 28);
     if (codegen_expression(ctx, right, 2) == TYPE_VOID) goto done;
     emit_instruction(ctx, "lowi r1, %d(r7)", -reserved + 28);
 
+    /* Ambos algoritmos dejan su resultado en r1. */
     if (expr->data.binary_expression.operator == AST_OP_POWER)
         emit_power(ctx, expr);
     else
         emit_divmod(ctx, expr, reserved);
     if (dest_reg != REG_RET) emit_instruction(ctx, "mov r%d, r1", dest_reg);
+
+    /* Restaurar el estado que pertenecía a la expresión exterior. */
     for (int reg = REG_RET; reg <= REG_TMP1; reg++) {
         if (save_mask & (1u << reg))
             emit_instruction(ctx, "lowi r%d, %d(r7)", reg, -reserved + reg * 4);
