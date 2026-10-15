@@ -1,0 +1,58 @@
+{
+  "name": "piper-language",
+  "displayName": "PIPER Language",
+  "description": "Sintaxis, snippets y compilación de Piper (.rwt) con pipoc.",
+  "version": "0.1.0",
+  "publisher": "piper-local",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:piper"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Compilar ejecuta pipoc y requiere un espacio de trabajo de confianza.",
+      "restrictedConfigurations": ["piper.compilerPath", "piper.compileOnSave"]
+    },
+    "virtualWorkspaces": { "supported": false }
+  },
+  "contributes": {
+    "languages": [{
+      "id": "piper",
+      "aliases": ["Piper", "piper"],
+      "extensions": [".rwt"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "piper",
+      "scopeName": "source.piper",
+      "path": "./syntaxes/piper.tmLanguage.json"
+    }],
+    "snippets": [{ "language": "piper", "path": "./snippets/piper.json" }],
+    "commands": [
+      { "command": "piper.compile", "title": "Piper: Compilar archivo", "enablement": "editorLangId == piper && isWorkspaceTrusted" },
+      { "command": "piper.compileAs", "title": "Piper: Compilar eligiendo salida…", "enablement": "editorLangId == piper && isWorkspaceTrusted" }
+    ],
+    "menus": {
+      "editor/title": [{ "command": "piper.compile", "when": "editorLangId == piper && isWorkspaceTrusted", "group": "navigation" }]
+    },
+    "configuration": {
+      "title": "Piper",
+      "properties": {
+        "piper.compilerPath": {
+          "type": "string", "default": "", "scope": "resource",
+          "description": "Ruta de pipoc (absoluta o relativa a la carpeta del proyecto). Vacía: busca bin/pipoc en el proyecto y después pipoc en PATH."
+        },
+        "piper.outputFormat": {
+          "type": "string", "enum": ["bin", "asm", "sch", "mem", "ins", "all"], "default": "bin", "scope": "resource",
+          "description": "Salida del comando Compilar archivo. Los artefactos se guardan en build/vscode/."
+        },
+        "piper.compileOnSave": {
+          "type": "boolean", "default": false, "scope": "resource",
+          "description": "Compilar al guardar archivos Piper. Genera artefactos usando outputFormat."
+        }
+      }
+    }
+  }
+}

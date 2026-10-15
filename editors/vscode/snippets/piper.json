@@ -1,0 +1,32 @@
+{
+  "Programa principal": {
+    "prefix": "main",
+    "body": ["routine B32 main[] {", "\t$0", "\toutput 0.", "}"],
+    "description": "Punto de entrada de Piper"
+  },
+  "Rutina": {
+    "prefix": "routine",
+    "body": ["routine ${1:B32} ${2:nombre}[${3}] {", "\t$0", "\toutput ${4:0}.", "}"]
+  },
+  "Variable": { "prefix": "create", "body": "create ${1:B32} ${2:variable}." },
+  "Arreglo": { "prefix": "array", "body": "create ${1:B32}|${2:4}| ${3:arreglo}." },
+  "Matriz": { "prefix": "matrix", "body": "create ${1:B32}|${2:3}&${3:4}| ${4:matriz}." },
+  "Asignación": { "prefix": "store", "body": "${1:variable} store ${2:0}." },
+  "Condicional": {
+    "prefix": "when",
+    "body": ["when [${1:true}] {", "\t$0", "}"]
+  },
+  "Condicional con alternativa": {
+    "prefix": "whenfallback",
+    "body": ["when [${1:true}] {", "\t${2}", "} fallback {", "\t$0", "}"]
+  },
+  "Ciclo condicional": {
+    "prefix": "alwhen",
+    "body": ["alwhen [${1:true}] {", "\t$0", "}"]
+  },
+  "Ciclo contado": {
+    "prefix": "loop",
+    "body": ["create B32 ${1:i}.", "loop [${1:i} & ${2:0} -> ${3:10} & ${4:1}] {", "\t$0", "}"]
+  },
+  "Retorno": { "prefix": "output", "body": "output ${1:0}." }
+}
