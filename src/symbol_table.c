@@ -3,24 +3,42 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int align_word(int value)
+static int align_to(int value, int alignment)
 {
-    return (value + SYMBOL_WORD_SIZE - 1) & ~(SYMBOL_WORD_SIZE - 1);
+    return (value + alignment - 1) & ~(alignment - 1);
 }
 
-static int symbol_size(DataType type, int rows, int cols)
+int piper_type_storage_size(PiperType type)
+{
+    switch (type) {
+    case PIPER_TYPE_B8:
+    case PIPER_TYPE_UB8: return 1;
+    case PIPER_TYPE_B16:
+    case PIPER_TYPE_UB16: return 2;
+    case PIPER_TYPE_BOOL:
+    case PIPER_TYPE_B32:
+    case PIPER_TYPE_UB32: return SYMBOL_WORD_SIZE;
+    case PIPER_TYPE_NONE: return 0;
+    }
+    return 0;
+}
+
+static int symbol_size(DataType type, PiperType declared_type, int rows, int cols)
 {
     long long elements = 1;
+    int width = piper_type_storage_size(declared_type);
+
+    if (width == 0) return -1;
 
     if (type == TYPE_ARRAY) {
         if (rows <= 0 || cols <= 0) return -1;
         elements = (long long)rows * cols;
     }
 
-    if (elements > SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE) {
+    if (elements > SYMBOL_MEMORY_SIZE / width) {
         return -1;
     }
-    return (int)(elements * SYMBOL_WORD_SIZE);
+    return (int)(elements * width);
 }
 
 static Scope *scope_create(int scope_id, int is_global, Scope *parent)
@@ -188,7 +206,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
         symbol->size_bytes = 0;
         symbol->address_or_offset = -1;
     } else {
-        size = symbol_size(type, rows, cols);
+        size = symbol_size(type, declared_type, rows, cols);
         if (size < 0) {
             free(symbol);
             return NULL;
@@ -199,8 +217,10 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
             size = SYMBOL_WORD_SIZE;
         }
         symbol->size_bytes = size;
+        int alignment = symbol_class == SYMBOL_PARAM && type == TYPE_ARRAY
+            ? SYMBOL_WORD_SIZE : piper_type_storage_size(declared_type);
         if (table->current_scope->is_global) {
-            table->next_global_address = align_word(table->next_global_address);
+            table->next_global_address = align_to(table->next_global_address, alignment);
             if (table->next_global_address > SYMBOL_GLOBAL_MEMORY_SIZE - size) {
                 free(symbol);
                 return NULL;
@@ -208,7 +228,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
             symbol->address_or_offset = table->next_global_address;
             table->next_global_address += size;
         } else {
-            aligned_offset = align_word(table->current_scope->current_offset);
+            aligned_offset = align_to(table->current_scope->current_offset, alignment);
             if (aligned_offset > SYMBOL_STACK_SIZE - size) {
                 free(symbol);
                 return NULL;
@@ -232,7 +252,7 @@ int symbol_table_set_function_frame(SymbolTable *table, Symbol *function)
         return 0;
     }
     function->total_stack_frame_size =
-        align_word(table->current_scope->max_offset);
+        align_to(table->current_scope->max_offset, SYMBOL_WORD_SIZE);
     return 1;
 }
 

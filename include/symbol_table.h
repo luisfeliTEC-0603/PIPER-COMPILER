@@ -11,6 +11,7 @@
 #define SYMBOL_WORD_SIZE 4
 #define SYMBOL_STACK_SIZE 4096
 #define SYMBOL_GLOBAL_MEMORY_SIZE (SYMBOL_MEMORY_SIZE - SYMBOL_STACK_SIZE)
+#define SYMBOL_CALL_RECORD_SIZE 32
 /* Presupuesto por llamada para retorno, registros guardados y temporales. */
 #define SYMBOL_STACK_CALL_RESERVE 64
 
@@ -37,6 +38,9 @@ typedef enum {
     PIPER_TYPE_UB32,
     PIPER_TYPE_NONE
 } PiperType;
+
+/* Bytes que ocupa un valor en memoria; los parametros de arreglo son punteros de 4 bytes. */
+int piper_type_storage_size(PiperType type);
 
 typedef struct Scope Scope;
 

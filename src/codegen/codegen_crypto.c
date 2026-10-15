@@ -13,6 +13,7 @@ int codegen_is_intrinsic(const char *name)
         || strcmp(name, "crypto_revoke") == 0;
 }
 
+/* Traduce cada intrínseca a su secuencia de instrucciones PORYGON. */
 void codegen_intrinsic(CodegenContext *ctx, const AstNode *call, int dest_reg)
 {
     (void)dest_reg;

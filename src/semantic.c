@@ -532,7 +532,9 @@ static Symbol *declare(Visitor *v, AstNode *n)
         AstNode *d = dims->items[i];
         visit(v, d);
         if (d->kind != AST_INTEGER_LITERAL || d->data.integer_literal.value == 0 ||
-            d->data.integer_literal.value > SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE) {
+            piper_type_storage_size(type) == 0 ||
+            d->data.integer_literal.value >
+                (unsigned long long)(SYMBOL_MEMORY_SIZE / piper_type_storage_size(type))) {
             error(v, d, "La dimensión de '%s' debe ser un entero constante positivo válido.", name);
         } else {
             if (i < 2) sizes[i] = (int)d->data.integer_literal.value;
@@ -687,6 +689,17 @@ static void check_stack(Visitor *v)
 {
     for (RoutineUsage *routine = v->routines; routine; routine = routine->next)
         if (routine->state == 0) peak_stack(v, routine);
+    /* Antes de entrar en main, el arranque ya bajo r7 un registro de llamada.
+     * peak_stack cuenta frames y reservas de las rutinas, no este registro. */
+    for (RoutineUsage *routine = v->routines; routine; routine = routine->next) {
+        if (strcmp(routine->symbol->name, "main") == 0 &&
+            routine->peak_bytes >= 0 &&
+            routine->peak_bytes > SYMBOL_STACK_SIZE - SYMBOL_CALL_RECORD_SIZE) {
+            error(v, routine->declaration,
+                  "La ejecucion de main puede ocupar %lld bytes de pila incluido su registro de entrada; maximo %d.",
+                  routine->peak_bytes + SYMBOL_CALL_RECORD_SIZE, SYMBOL_STACK_SIZE);
+        }
+    }
 }
 
 /* Visitor del AST: cada case conoce los hijos de su variante y los visita.
@@ -705,12 +718,13 @@ static DataType visit(Visitor *v, AstNode *n)
     if (n->kind == AST_CALL_EXPRESSION) {
         int nargs = n->data.call_expression.arguments != NULL
             ? (int)n->data.call_expression.arguments->count : 0;
-        reserved = 32 + (nargs > 4 ? (nargs - 4) * 4 : 0);
+        reserved = SYMBOL_CALL_RECORD_SIZE +
+            (nargs > 4 ? (nargs - 4) * SYMBOL_WORD_SIZE : 0);
     } else if (n->kind == AST_INDEX_EXPRESSION || n->kind == AST_ASSIGNMENT ||
                (n->kind == AST_UNARY_EXPRESSION &&
                 (n->data.unary_expression.operator == AST_OP_INCREMENT ||
                  n->data.unary_expression.operator == AST_OP_DECREMENT))) {
-        reserved = 32;
+        reserved = SYMBOL_CALL_RECORD_SIZE;
     }
     if (n->kind == AST_BINARY_EXPRESSION) {
         /* Reserva conservadora: también cubre un spill de una operación
@@ -720,7 +734,8 @@ static DataType visit(Visitor *v, AstNode *n)
          * resultado. Ambos deben quedar dentro de la guarda de pila. */
         reserved = ((op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ||
                     op == AST_OP_ADD || op == AST_OP_SUBTRACT ||
-                    op == AST_OP_MULTIPLY) ? 64 : 32;
+                    op == AST_OP_MULTIPLY) ? 2 * SYMBOL_CALL_RECORD_SIZE :
+                                           SYMBOL_CALL_RECORD_SIZE;
     }
     v->pending_codegen_bytes += reserved;
     if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)

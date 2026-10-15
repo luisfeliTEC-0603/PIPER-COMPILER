@@ -2,11 +2,8 @@
 
 #include <stdio.h>
 
-/* ----------------------------------------------------------------
- * Llamadas con identificador de continuación
- * ---------------------------------------------------------------- */
-
-/* El registro r7 permanece en el frame del llamador mientras se evalúan los
+/* Prepara argumentos, transfiere el control y restaura el estado al regresar.
+ * El registro r7 permanece en el frame del llamador mientras se evalúan los
  * argumentos. Los registros se guardan debajo de ese frame; una llamada
  * anidada usa una ranura más profunda. Al saltar, r7 baja hasta la ranura
  * actual y el llamado construye su propio frame debajo de ella.
@@ -27,6 +24,8 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
         codegen_context_error(ctx, "registro de destino invalido en llamada");
         return 0;
     }
+
+    /* Resolver la firma determina cuántos argumentos y bytes necesita la llamada. */
     function = lookup_symbol_or_error(ctx,
         call->data.call_expression.routine_name, SYMBOL_FUNC);
     if (function == NULL) return 0;
@@ -52,6 +51,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
         return 0;
     }
 
+    /* Reservar el call record y conservar los registros del llamador. */
     id = ++ctx->call_site_count;
     ctx->pending_call_bytes += record_size;
     reserved = ctx->pending_call_bytes;
@@ -67,6 +67,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     }
     emit_instruction(ctx, "stwi r%d, %d(r%d)", REG_RET, -reserved, REG_FP);
 
+    /* Cada argumento se evalúa en su registro o en su ranura del stack. */
     if (args != NULL) {
         for (size_t i = 0; i < args->count; i++) {
             const AstNode *arg = args->items[i];
@@ -79,7 +80,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
                 return 0;
             }
 
-            /* Offset del argumento en pila dentro de este registro de llamada. */
+            /* Los argumentos posteriores a r4 se guardan después del call record. */
             int stack_off = -record_size + CALL_RECORD_SIZE
                           + (slot - MAX_REGISTER_ARGS) * SYMBOL_WORD_SIZE;
 
@@ -103,7 +104,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
                     return 0;
                 }
             } else {
-                /* Argumento de pila: evaluar en un temporal y bajarlo. */
+                /* El temporal conserva el argumento hasta escribirlo en el stack. */
                 int temp = alloc_temp(ctx);
                 if (temp < 0) {
                     ctx->pending_call_bytes -= record_size;
@@ -135,6 +136,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
         }
     }
 
+    /* Entrar a la rutina y, al regresar, restaurar el estado del llamador. */
     emit_instruction(ctx, "diffi r%d, #%d", REG_FP, reserved);
     emit_instruction(ctx, "j " CODEGEN_ROUTINE_LABEL("%s"), function->name);
     emit_label(ctx, resume_label);
@@ -149,10 +151,7 @@ int codegen_call(CodegenContext *ctx, const AstNode *call, int dest_reg)
     return 1;
 }
 
-/* ----------------------------------------------------------------
- * Despacho de retornos
- * ---------------------------------------------------------------- */
-
+/* Emite el despachador que conecta cada id de continuación con su punto de retorno. */
 void codegen_emit_return_dispatch(CodegenContext *ctx)
 {
     if (ctx == NULL) return;
@@ -164,6 +163,8 @@ void codegen_emit_return_dispatch(CodegenContext *ctx)
         emit_instruction(ctx, "diffi r%d, #%d", REG_TMP0, id);
         emit_instruction(ctx, "jz r%d, " CODEGEN_INTERNAL_LABEL("retorno_%d"), REG_TMP0, id);
     }
+
+    /* Los errores de ejecución terminan en ciclos de parada identificables. */
     emit_label(ctx, CODEGEN_INTERNAL_LABEL("error_retorno"));
     emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("error_retorno"));
     emit_label(ctx, CODEGEN_INTERNAL_LABEL("fin_de_main"));

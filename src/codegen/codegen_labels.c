@@ -2,11 +2,7 @@
 
 #include <stdlib.h>
 
-/*
- * Genera un identificador de etiqueta único.
- * El contador es parte del contexto para que dos rutinas nunca compartan
- * el mismo número, incluso si se generan etiquetas en distinto orden.
- */
+/* El contador compartido evita repetir etiquetas entre rutinas. */
 
 int new_label(CodegenContext *ctx)
 {
@@ -15,10 +11,6 @@ int new_label(CodegenContext *ctx)
     }
     return ctx->label_counter++;
 }
-
-/* ----------------------------------------------------------------
- * Pila de etiquetas para break
- * ---------------------------------------------------------------- */
 
 static int label_stack_grow(LabelStack *stack)
 {

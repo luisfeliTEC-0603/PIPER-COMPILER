@@ -2,14 +2,8 @@
 
 #include <stdarg.h>
 
-/*
- * Todas las funciones de emisión escriben directamente en ctx->output.
- * El formato sigue la sintaxis ASM lineal de la Persona 2:
- *   - Etiquetas: sin indentación, con ':' al final.
- *   - Instrucciones: 4 espacios de indentación.
- *   - Comentarios: 4 espacios + ';'.
- *   - Líneas en blanco: solo '\n'.
- */
+/* Las etiquetas no llevan sangría; las instrucciones y comentarios usan
+ * cuatro espacios para mantener legible el ASM generado. */
 
 void emit_label(CodegenContext *ctx, const char *name)
 {
@@ -60,6 +54,7 @@ void emit_blank(CodegenContext *ctx)
     fputc('\n', ctx->output);
 }
 
+/* Emite una comparación ordenada respetando el signo de ambos operandos. */
 void emit_typed_order(CodegenContext *ctx, int left, int right, int scratch,
                       int left_unsigned, int right_unsigned, int greater)
 {

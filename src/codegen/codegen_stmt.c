@@ -3,33 +3,25 @@
 #include <stdio.h>
 #include <string.h>
 
-/* ----------------------------------------------------------------
- * Almacenamiento en un lvalue escalar
- * ---------------------------------------------------------------- */
-
 static void store_to_symbol(CodegenContext *ctx, Symbol *sym, int src_reg)
 {
     store_symbol_value(ctx, sym, src_reg);
 }
-
-/* ----------------------------------------------------------------
- * Lectura de un símbolo escalar
- * ---------------------------------------------------------------- */
 
 static int load_symbol(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
     return load_symbol_value(ctx, sym, dest_reg);
 }
 
-/* ----------------------------------------------------------------
- * Asignaciones a arreglos
- * ---------------------------------------------------------------- */
-
+/* Calcula la dirección indexada antes de evaluar el valor que se almacenará. */
 static void codegen_index_assignment(CodegenContext *ctx,
                                      const AstNode *target,
                                      const AstNode *value)
 {
     int address_reg, value_reg, reserved;
+    const AstNode *base = target->data.index_expression.base;
+    Symbol *sym = lookup_symbol_or_error(ctx, base->data.identifier.name, -1);
+    if (sym == NULL) return;
 
     if (ctx->pending_call_bytes > ctx->call_reserve_size - CALL_RECORD_SIZE) {
         codegen_context_error(ctx, "reserva para store indexado excedida");
@@ -53,7 +45,7 @@ static void codegen_index_assignment(CodegenContext *ctx,
         address_reg = alloc_temp(ctx);
         if (address_reg >= 0) {
             emit_instruction(ctx, "lowi r%d, %d(r7)", address_reg, -reserved + 28);
-            emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, address_reg);
+            emit_typed_store(ctx, sym->declared_type, value_reg, 0, address_reg);
             free_temp(ctx, address_reg);
         }
     }
@@ -62,6 +54,7 @@ done:
     ctx->pending_call_bytes -= CALL_RECORD_SIZE;
 }
 
+/* Recorre un literal de arreglo o matriz y almacena sus elementos en orden de filas. */
 static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
                                              const AstNode *target,
                                              const AstNode *value)
@@ -81,7 +74,7 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
     size_t count = (size_t)sym->array_rows * sym->array_cols;
     for (size_t i = 0; i < count; i++) {
         int base_reg;
-        size_t offset = i * SYMBOL_WORD_SIZE;
+        size_t offset = i * (size_t)piper_type_storage_size(sym->declared_type);
         const AstNode *element;
         if (target->array_rank == 1) {
             element = items->items[i];
@@ -109,17 +102,19 @@ static void codegen_array_literal_assignment(CodegenContext *ctx, Symbol *sym,
             emit_instruction(ctx, "sumi r%d, #%d", base_reg, chunk);
             offset -= (size_t)chunk;
         }
-        emit_instruction(ctx, "stwi r%d, 0(r%d)", value_reg, base_reg);
+        emit_typed_store(ctx, sym->declared_type, value_reg, 0, base_reg);
         free_temp(ctx, base_reg);
     }
     free_temp(ctx, value_reg);
 }
 
+/* Emite un ciclo que copia todos los elementos entre arreglos compatibles. */
 static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
                                 const AstNode *value)
 {
     Symbol *source = lookup_symbol_or_error(ctx, value->data.identifier.name, -1);
     char loop[CODEGEN_LABEL_SIZE];
+    int width = piper_type_storage_size(dest->declared_type);
     if (source == NULL || !source->is_array ||
         source->array_rows != dest->array_rows || source->array_cols != dest->array_cols ||
         source->declared_type != dest->declared_type || dest->declared_type == PIPER_TYPE_BOOL) {
@@ -133,18 +128,15 @@ static void codegen_array_copy(CodegenContext *ctx, Symbol *dest,
     load_immediate(ctx, REG_ARG2, (long long)dest->array_rows * dest->array_cols);
     snprintf(loop, sizeof(loop), CODEGEN_INTERNAL_LABEL("copiar_matriz_%d"), new_label(ctx));
     emit_label(ctx, loop);
-    emit_instruction(ctx, "lowi r4, 0(r2)");
-    emit_instruction(ctx, "stwi r4, 0(r1)");
-    emit_instruction(ctx, "sumi r1, #4");
-    emit_instruction(ctx, "sumi r2, #4");
+    emit_typed_load(ctx, source->declared_type, REG_ARG3, 0, REG_ARG1);
+    emit_typed_store(ctx, dest->declared_type, REG_ARG3, 0, REG_RET);
+    emit_instruction(ctx, "sumi r1, #%d", width);
+    emit_instruction(ctx, "sumi r2, #%d", width);
     emit_instruction(ctx, "diffi r3, #1");
     emit_instruction(ctx, "jnz r3, %s", loop);
 }
 
-/* ----------------------------------------------------------------
- * AST_ASSIGNMENT
- * ---------------------------------------------------------------- */
-
+/* Distingue asignaciones escalares, indexadas y de arreglos completos. */
 static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *target = stmt->data.assignment.target;
@@ -157,6 +149,7 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
+    /* La forma del destino decide si se almacena un escalar, elemento o arreglo. */
     if (target->kind == AST_IDENTIFIER_EXPRESSION) {
         sym = lookup_symbol_or_error(ctx, target->data.identifier.name, -1);
         if (sym == NULL) return;
@@ -185,6 +178,7 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
+    /* Una asignación escalar evalúa primero el valor y luego lo almacena. */
     temp = alloc_temp(ctx);
     if (temp < 0) return;
 
@@ -197,10 +191,6 @@ static void codegen_assignment(CodegenContext *ctx, const AstNode *stmt)
     free_temp(ctx, temp);
     emit_comment(ctx, "%s = <expresion>", sym->name);
 }
-
-/* ----------------------------------------------------------------
- * AST_VARIABLE_DECLARATION
- * ---------------------------------------------------------------- */
 
 static void codegen_variable_declaration(CodegenContext *ctx,
                                          const AstNode *stmt)
@@ -219,10 +209,7 @@ static void codegen_variable_declaration(CodegenContext *ctx,
     emit_comment(ctx, "declaracion escalar '%s' (sin codigo)", name);
 }
 
-/* ----------------------------------------------------------------
- * WHEN / FALLBACK
- * ---------------------------------------------------------------- */
-
+/* Emite una bifurcación con bloque principal y fallback opcional. */
 static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *condition = stmt->data.when_statement.condition;
@@ -236,18 +223,17 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    /* Reservar temporal para la condición. */
+    /* La condición se consume en el salto y deja libre su temporal. */
     temp = alloc_temp(ctx);
     if (temp < 0) return;
 
-    /* Evaluar la condición. */
     if (codegen_expression(ctx, condition, temp) == TYPE_VOID) {
         free_temp(ctx, temp);
         return;
     }
 
-    /* Etiqueta de salida. */
     if (has_fallback) {
+        /* Con fallback se necesitan destinos separados para else y fin. */
         char else_label[CODEGEN_LABEL_SIZE];
         char fin_label[CODEGEN_LABEL_SIZE];
         int else_n = new_label(ctx);
@@ -255,18 +241,14 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
         snprintf(else_label, sizeof(else_label), CODEGEN_INTERNAL_LABEL("else_%d"), else_n);
         snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
-        /* Si condición falsa, saltar al fallback. */
         emit_instruction(ctx, "jz r%d, %s", temp, else_label);
         free_temp(ctx, temp);
 
-        /* Cuerpo del then. */
         emit_comment(ctx, "then de when");
         codegen_statement(ctx, then_block);
 
-        /* Saltar al final. */
         emit_instruction(ctx, "j %s", fin_label);
 
-        /* Cuerpo del fallback. */
         emit_label(ctx, else_label);
         emit_comment(ctx, "fallback de when");
         codegen_statement(ctx, fallback_block);
@@ -287,10 +269,7 @@ static void codegen_when(CodegenContext *ctx, const AstNode *stmt)
     }
 }
 
-/* ----------------------------------------------------------------
- * ALWHEN
- * ---------------------------------------------------------------- */
-
+/* Emite un ciclo que repite el cuerpo mientras la condición sea verdadera. */
 static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *condition = stmt->data.alwhen_statement.condition;
@@ -309,12 +288,12 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
     snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
     snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
-    /* Empujar etiqueta de fin para break. */
+    /* Los break de este ciclo saltan a fin_label. */
     label_stack_push(ctx, fin_n);
 
     emit_label(ctx, inicio_label);
 
-    /* Evaluar condición. */
+    /* La condición se vuelve a evaluar al inicio de cada iteración. */
     temp = alloc_temp(ctx);
     if (temp < 0) {
         label_stack_pop(ctx);
@@ -328,21 +307,16 @@ static void codegen_alwhen(CodegenContext *ctx, const AstNode *stmt)
     emit_instruction(ctx, "jz r%d, %s", temp, fin_label);
     free_temp(ctx, temp);
 
-    /* Cuerpo. */
     emit_comment(ctx, "cuerpo de alwhen");
     codegen_statement(ctx, body);
 
-    /* Saltar al inicio. */
     emit_instruction(ctx, "j %s", inicio_label);
 
     emit_label(ctx, fin_label);
     label_stack_pop(ctx);
 }
 
-/* ----------------------------------------------------------------
- * LOOP
- * ---------------------------------------------------------------- */
-
+/* Emite un ciclo contado desde begin hasta end, con límite superior exclusivo. */
 static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
 {
     const char *control_name = stmt->data.loop_statement.control_name;
@@ -361,7 +335,6 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    /* Buscar la variable de control. */
     control_sym = lookup_symbol_or_error(ctx, control_name, -1);
     if (control_sym == NULL) return;
     if (control_sym->symbol_class == SYMBOL_FUNC
@@ -373,7 +346,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    /* Verificar que step sea una constante positiva. */
+    /* El lenguaje solo admite pasos positivos constantes. */
     if (step->kind != AST_INTEGER_LITERAL
         || (long long)step->data.integer_literal.value <= 0) {
         codegen_context_error(ctx,
@@ -387,7 +360,7 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
     snprintf(inicio_label, sizeof(inicio_label), CODEGEN_INTERNAL_LABEL("inicio_%d"), inicio_n);
     snprintf(fin_label, sizeof(fin_label), CODEGEN_INTERNAL_LABEL("fin_%d"), fin_n);
 
-    /* control = begin. */
+    /* Inicializar la variable de control con begin antes de entrar al ciclo. */
     temp = alloc_temp(ctx);
     if (temp < 0) return;
     if (codegen_expression(ctx, begin, temp) == TYPE_VOID) {
@@ -398,12 +371,12 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
     free_temp(ctx, temp);
     emit_comment(ctx, "%s = begin", control_name);
 
-    /* Empujar etiqueta de fin para break. */
+    /* Los break de este ciclo saltan a fin_label. */
     label_stack_push(ctx, fin_n);
 
     emit_label(ctx, inicio_label);
 
-    /* Evaluar end en temp1. */
+    /* end se evalúa en cada vuelta antes de comparar el límite. */
     temp = alloc_temp(ctx);
     if (temp < 0) {
         label_stack_pop(ctx);
@@ -415,7 +388,6 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
         return;
     }
 
-    /* Cargar control en temp2. */
     {
         int temp2 = alloc_temp(ctx);
         if (temp2 < 0) {
@@ -430,17 +402,11 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
             return;
         }
 
-        /* Comparar: si control >= end, salir.
-         * Calcular control < end en temp2 y luego invertir.
-         * emit_typed_order → temp2 = (control < end) ? 1 : 0,
-         * con máscara del bit 31 para operandos signed.
-         * xori rTemp2, #1   → temp2 = !(control < end) = (control >= end)
-         * jnz rTemp2, fin   → si control >= end, salir
-         */
+        /* Invertir control < end produce la condición de salida control >= end. */
         int control_unsigned = control_sym->declared_type == PIPER_TYPE_UB8 ||
             control_sym->declared_type == PIPER_TYPE_UB16 ||
             control_sym->declared_type == PIPER_TYPE_UB32;
-        /* r1..r4 no contienen valores vivos entre sentencias de la rutina. */
+        /* r4 está libre entre sentencias y puede usarse como auxiliar. */
         emit_typed_order(ctx, temp2, temp, REG_ARG3, control_unsigned,
                          codegen_expression_is_unsigned(end), 0);
         emit_instruction(ctx, "xori r%d, #1", temp2);
@@ -449,11 +415,10 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
     }
     free_temp(ctx, temp);
 
-    /* Cuerpo. */
     emit_comment(ctx, "cuerpo de loop");
     codegen_statement(ctx, body);
 
-    /* control = control + step. */
+    /* Avanzar la variable de control con el paso declarado. */
     {
         int t = alloc_temp(ctx);
         if (t >= 0) {
@@ -476,15 +441,10 @@ static void codegen_loop(CodegenContext *ctx, const AstNode *stmt)
         }
     }
 
-    /* Saltar al inicio. */
     emit_instruction(ctx, "j %s", inicio_label);
     emit_label(ctx, fin_label);
     label_stack_pop(ctx);
 }
-
-/* ----------------------------------------------------------------
- * break y output
- * ---------------------------------------------------------------- */
 
 static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
 {
@@ -501,6 +461,7 @@ static void codegen_break(CodegenContext *ctx, const AstNode *stmt)
     emit_instruction(ctx, "j %s", fin_label);
 }
 
+/* Evalúa el valor de retorno en r1 y salta al epílogo de la rutina actual. */
 static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
 {
     const AstNode *value = stmt->data.output_statement.value;
@@ -519,10 +480,6 @@ static void codegen_output(CodegenContext *ctx, const AstNode *stmt)
     emit_instruction(ctx, "j %s", epilogue_name);
 }
 
-/* ----------------------------------------------------------------
- * Llamadas pendientes
- * ---------------------------------------------------------------- */
-
 static void codegen_call_statement(CodegenContext *ctx, const AstNode *stmt)
 {
     if (codegen_is_intrinsic(stmt->data.call_expression.routine_name))
@@ -531,10 +488,7 @@ static void codegen_call_statement(CodegenContext *ctx, const AstNode *stmt)
         (void)codegen_call(ctx, stmt, -1);
 }
 
-/* ----------------------------------------------------------------
- * Ámbito de bloques
- * ---------------------------------------------------------------- */
-
+/* Cambia al ámbito semántico del bloque mientras emite sus sentencias. */
 static void codegen_block(CodegenContext *ctx, const AstNode *block)
 {
     Scope *saved_scope = ctx->current_scope;
@@ -549,10 +503,7 @@ static void codegen_block(CodegenContext *ctx, const AstNode *block)
     ctx->current_scope = saved_scope;
 }
 
-/* ----------------------------------------------------------------
- * Punto de entrada
- * ---------------------------------------------------------------- */
-
+/* Envía cada clase de nodo al generador especializado que le corresponde. */
 void codegen_statement(CodegenContext *ctx, const AstNode *stmt)
 {
     if (ctx == NULL || stmt == NULL) {
