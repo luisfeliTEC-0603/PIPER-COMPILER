@@ -42,6 +42,21 @@ por Git. `make clean` elimina ambas carpetas, incluidos los resultados en
 
 ## Salida del compilador
 
+### Extensión de VS Code
+
+Hay una [extensión local de Piper](editors/vscode/README.md) con colores para
+`.rwt`, snippets y comandos de compilación con errores en el panel Problemas.
+Para empaquetarla e instalarla desde la raíz del repositorio:
+
+```sh
+python3 editors/vscode/package.py
+code --install-extension build/vscode-extension/piper-language-0.1.0.vsix
+```
+
+Para compilar desde el editor, ejecutar primero `make all`. La extensión busca
+`bin/pipoc` en el proyecto o `pipoc` en PATH y guarda las salidas en
+`build/vscode/`. También se puede configurar `piper.compilerPath`.
+
 Todo programa debe declarar una rutina global `main[]`, sin parámetros.
 Por ejemplo: `routine B32 main[] { output 0. }`.
 El analizador semántico rechaza archivos sin esa entrada, incluso si contienen
