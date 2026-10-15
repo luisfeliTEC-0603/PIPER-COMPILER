@@ -1,9 +1,5 @@
 #include "codegen_internal.h"
 
-/* ----------------------------------------------------------------
- * Desplazamientos de arreglos
- * ---------------------------------------------------------------- */
-
 /* Agrega un desplazamiento no negativo sin exceder el inmediato de 16 bits. */
 static void add_offset(CodegenContext *ctx, int reg, int offset)
 {
@@ -14,10 +10,7 @@ static void add_offset(CodegenContext *ctx, int reg, int offset)
     }
 }
 
-/* ----------------------------------------------------------------
- * Base del arreglo
- * ---------------------------------------------------------------- */
-
+/* Calcula la dirección base de un arreglo global, local o recibido como parámetro. */
 int load_array_base(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
     Scope *owner;
@@ -45,10 +38,7 @@ int load_array_base(CodegenContext *ctx, Symbol *sym, int dest_reg)
     return 1;
 }
 
-/* ----------------------------------------------------------------
- * Declaración de arreglos
- * ---------------------------------------------------------------- */
-
+/* Comprueba que la declaración use un tipo y una cantidad de dimensiones soportados. */
 void codegen_array_declaration(CodegenContext *ctx, const AstNode *decl)
 {
     const AstNodeList *dimensions;
@@ -74,13 +64,10 @@ void codegen_array_declaration(CodegenContext *ctx, const AstNode *decl)
                               name);
         return;
     }
-    /* La tabla de simbolos reservo elementos o la ranura del puntero. */
+    /* El espacio del arreglo o de su puntero ya pertenece a la tabla de símbolos. */
 }
 
-/* ----------------------------------------------------------------
- * Dirección de un elemento
- * ---------------------------------------------------------------- */
-
+/* Convierte uno o dos índices en la dirección del elemento y valida sus límites. */
 int codegen_array_index_address(CodegenContext *ctx,
                                 const AstNode *index_expr, int dest_reg)
 {
@@ -113,8 +100,7 @@ int codegen_array_index_address(CodegenContext *ctx,
         codegen_context_error(ctx, "reserva de pila para indexacion excedida");
         return 0;
     }
-    /* Conservar expresiones externas sin requerir un tercer temporal físico.
-     * r7 sigue apuntando al frame mientras se evalúan ambos índices. */
+    /* Los registros vivos se guardan bajo el frame mientras se calculan los índices. */
     saved_temps = ctx->temp_in_use;
     save_mask = (0x1eu | (saved_temps << REG_TMP0)) & ~(1u << dest_reg);
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
@@ -124,10 +110,12 @@ int codegen_array_index_address(CodegenContext *ctx,
             emit_instruction(ctx, "stwi r%d, %d(r7)", reg, -reserved + reg * 4);
     }
     reset_temps(ctx);
+
+    /* Convertir fila y columna en un índice lineal medido en elementos. */
     if (codegen_expression(ctx, indices->items[0], REG_RET) == TYPE_VOID) goto done;
     load_immediate(ctx, REG_ARG2, sym->array_rows);
     emit_instruction(ctx, "mov r4, r1");
-    /* Comparación sin signo: también rechaza índices negativos. */
+    /* Una comparación sin signo rechaza también los índices negativos. */
     emit_instruction(ctx, "ltn r4, r3");
     emit_instruction(ctx, "jz r4, " CODEGEN_INTERNAL_LABEL("error_indice"));
     if (indices->count == 2) {
@@ -136,14 +124,19 @@ int codegen_array_index_address(CodegenContext *ctx,
         emit_instruction(ctx, "mov r4, r2");
         emit_instruction(ctx, "ltn r4, r3");
         emit_instruction(ctx, "jz r4, " CODEGEN_INTERNAL_LABEL("error_indice"));
-        /* Orden por filas: base + (fila * columnas + columna) * 4. */
+        /* Orden por filas: base + (fila * columnas + columna) * ancho. */
         emit_instruction(ctx, "mul r1, r3");
         emit_instruction(ctx, "sum r1, r2");
     }
-    emit_instruction(ctx, "shli r1, #2");
+    if (piper_type_storage_size(sym->declared_type) == 2)
+        emit_instruction(ctx, "shli r1, #1");
+    else if (piper_type_storage_size(sym->declared_type) == 4)
+        emit_instruction(ctx, "shli r1, #2");
     if (!load_array_base(ctx, sym, REG_ARG1)) goto done;
     emit_instruction(ctx, "sum r1, r2");
     if (dest_reg != REG_RET) emit_instruction(ctx, "mov r%d, r1", dest_reg);
+
+    /* La dirección queda en dest_reg; los demás registros recuperan su valor. */
     for (int reg = REG_RET; reg <= REG_TMP1; reg++) {
         if (save_mask & (1u << reg))
             emit_instruction(ctx, "lowi r%d, %d(r7)", reg, -reserved + reg * 4);

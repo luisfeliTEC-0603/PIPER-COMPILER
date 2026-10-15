@@ -4,10 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ----------------------------------------------------------------
- * Pila de etiquetas
- * ---------------------------------------------------------------- */
-
 static LabelStack *label_stack_create(void)
 {
     LabelStack *stack = calloc(1, sizeof(*stack));
@@ -32,10 +28,6 @@ static void label_stack_destroy(LabelStack *stack)
     free(stack->items);
     free(stack);
 }
-
-/* ----------------------------------------------------------------
- * Ciclo de vida del contexto
- * ---------------------------------------------------------------- */
 
 CodegenContext *codegen_context_create(const AstNode *root,
                                        const SymbolTable *table,
@@ -93,10 +85,6 @@ void codegen_context_destroy(CodegenContext *ctx)
     free(ctx);
 }
 
-/* ----------------------------------------------------------------
- * Acumulación y busqueda de errores
- * ---------------------------------------------------------------- */
-
 void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
 {
     va_list args;
@@ -107,12 +95,11 @@ void codegen_context_error(CodegenContext *ctx, const char *fmt, ...)
 
     ctx->error_count++;
 
-    /* Guardar el último error para diagnóstico */
+    /* Conservar el último mensaje disponible para diagnóstico. */
     va_start(args, fmt);
     vsnprintf(ctx->last_error, sizeof(ctx->last_error), fmt, args);
     va_end(args);
 
-    /* También emitir a stderr para visibilidad inmediata */
     fprintf(stderr, "[codegen] error: %s\n", ctx->last_error);
 }
 
@@ -121,6 +108,7 @@ int codegen_has_errors(const CodegenContext *ctx)
     return ctx == NULL || ctx->error_count > 0;
 }
 
+/* Busca un nombre desde el ámbito actual hacia sus padres y valida su clase. */
 Symbol *lookup_symbol_or_error(CodegenContext *ctx,
                                const char *name,
                                int expected_class)
@@ -132,7 +120,7 @@ Symbol *lookup_symbol_or_error(CodegenContext *ctx,
         return NULL;
     }
 
-    /* Búsqueda léxica desde el ámbito actual del contexto hacia arriba. */
+    /* La búsqueda respeta el anidamiento léxico de la tabla de símbolos. */
     for (scope = ctx->current_scope; scope != NULL; scope = scope->parent) {
         for (Symbol *it = scope->symbols_head; it != NULL; it = it->next) {
             if (strcmp(it->name, name) == 0) {
@@ -158,6 +146,7 @@ found:
     return sym;
 }
 
+/* Determina el ámbito que posee un símbolo visible desde la posición actual. */
 Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym)
 {
     Scope *scope;
@@ -177,6 +166,44 @@ Scope *find_owner_scope(CodegenContext *ctx, Symbol *sym)
 
 /* La tabla conserva offsets lógicos. Solo codegen traduce globales a
  * direcciones físicas; locales y parámetros siguen siendo relativos a r7. */
+void emit_typed_load(CodegenContext *ctx, PiperType type, int dest_reg,
+                     int offset, int base_reg)
+{
+    const char *mnemonic;
+    switch (type) {
+    case PIPER_TYPE_B8: mnemonic = "lobi"; break;
+    case PIPER_TYPE_UB8: mnemonic = "lobui"; break;
+    case PIPER_TYPE_B16: mnemonic = "lohi"; break;
+    case PIPER_TYPE_UB16: mnemonic = "lohui"; break;
+    case PIPER_TYPE_BOOL:
+    case PIPER_TYPE_B32:
+    case PIPER_TYPE_UB32: mnemonic = "lowi"; break;
+    default:
+        codegen_context_error(ctx, "tipo sin instruccion de lectura");
+        return;
+    }
+    emit_instruction(ctx, "%s r%d, %d(r%d)", mnemonic, dest_reg, offset, base_reg);
+}
+
+void emit_typed_store(CodegenContext *ctx, PiperType type, int src_reg,
+                      int offset, int base_reg)
+{
+    const char *mnemonic;
+    switch (type) {
+    case PIPER_TYPE_B8:
+    case PIPER_TYPE_UB8: mnemonic = "stbi"; break;
+    case PIPER_TYPE_B16:
+    case PIPER_TYPE_UB16: mnemonic = "sthi"; break;
+    case PIPER_TYPE_BOOL:
+    case PIPER_TYPE_B32:
+    case PIPER_TYPE_UB32: mnemonic = "stwi"; break;
+    default:
+        codegen_context_error(ctx, "tipo sin instruccion de escritura");
+        return;
+    }
+    emit_instruction(ctx, "%s r%d, %d(r%d)", mnemonic, src_reg, offset, base_reg);
+}
+
 int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg)
 {
     Scope *owner = find_owner_scope(ctx, sym);
@@ -187,14 +214,15 @@ int load_symbol_value(CodegenContext *ctx, Symbol *sym, int dest_reg)
     if (owner->is_global) {
         if (!load_immediate(ctx, dest_reg, CODEGEN_DATA_BASE + sym->address_or_offset))
             return 0;
-        emit_instruction(ctx, "lowi r%d, 0(r%d)", dest_reg, dest_reg);
+        emit_typed_load(ctx, sym->declared_type, dest_reg, 0, dest_reg);
     } else {
-        emit_instruction(ctx, "lowi r%d, %d(r%d)", dest_reg,
-                         sym->address_or_offset, REG_FP);
+        emit_typed_load(ctx, sym->declared_type, dest_reg,
+                        sym->address_or_offset, REG_FP);
     }
     return 1;
 }
 
+/* Escribe un escalar local directamente o calcula primero su dirección global. */
 void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
 {
     Scope *owner = find_owner_scope(ctx, sym);
@@ -203,7 +231,7 @@ void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
         return;
     }
     if (!owner->is_global) {
-        emit_instruction(ctx, "stwi r%d, %d(r%d)", src_reg,
+        emit_typed_store(ctx, sym->declared_type, src_reg,
                          sym->address_or_offset, REG_FP);
         return;
     }
@@ -214,10 +242,10 @@ void store_symbol_value(CodegenContext *ctx, Symbol *sym, int src_reg)
     int scratch = src_reg == REG_ARG0 ? REG_ARG1 : REG_ARG0;
     ctx->pending_call_bytes += CALL_RECORD_SIZE;
     int saved_offset = -ctx->pending_call_bytes + 28;
-    /* No consumir otro temporal ni pisar argumentos preparados por el llamador. */
+    /* Usar un registro de argumentos evita consumir uno de los dos temporales. */
     emit_instruction(ctx, "stwi r%d, %d(r7)", scratch, saved_offset);
     load_immediate(ctx, scratch, CODEGEN_DATA_BASE + sym->address_or_offset);
-    emit_instruction(ctx, "stwi r%d, 0(r%d)", src_reg, scratch);
+    emit_typed_store(ctx, sym->declared_type, src_reg, 0, scratch);
     emit_instruction(ctx, "lowi r%d, %d(r7)", scratch, saved_offset);
     ctx->pending_call_bytes -= CALL_RECORD_SIZE;
 }

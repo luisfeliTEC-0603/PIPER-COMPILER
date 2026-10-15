@@ -915,8 +915,9 @@ void ast_register_symbol_with_dimensions(SymbolTable *symbols, const char *name,
             const AstNode *dimension = dimensions->items[i];
             if (dimension == NULL || dimension->kind != AST_INTEGER_LITERAL ||
                 dimension->data.integer_literal.value == 0 ||
+                piper_type_storage_size(type) == 0 ||
                 dimension->data.integer_literal.value >
-                    (unsigned long long)(SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE)) return;
+                    (unsigned long long)(SYMBOL_MEMORY_SIZE / piper_type_storage_size(type))) return;
             if (i == 0) rows = (int)dimension->data.integer_literal.value;
             else cols = (int)dimension->data.integer_literal.value;
         }
