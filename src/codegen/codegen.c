@@ -1,12 +1,9 @@
 #include "codegen_internal.h"
 
-/*
- * Punto de entrada del generador de código.
- *
- * Recorre el AST_PROGRAM y emite cada rutina y declaración global.
- * Por ahora solo procesa rutinas; las declaraciones globales y las
- * importaciones se ignoran con un comentario.
- */
+#include <string.h>
+
+/* El programa se emite en tres fases: detectar código global, emitirlo y,
+ * finalmente, emitir las rutinas sin alterar el orden de sus nodos. */
 
 CodegenResult codegen_generate(const AstNode *root,
                                const SymbolTable *table,
@@ -15,6 +12,9 @@ CodegenResult codegen_generate(const AstNode *root,
 {
     CodegenContext *ctx;
     CodegenResult result;
+    const Symbol *entry = NULL;
+    int has_global_statements = 0;
+    AstNodeList *elements;
 
     if (root == NULL || table == NULL || output == NULL) {
         return CODEGEN_ERROR_AST_INVALIDO;
@@ -28,14 +28,53 @@ CodegenResult codegen_generate(const AstNode *root,
         return CODEGEN_ERROR_SIN_MEMORIA;
     }
 
-    /* Encabezado del archivo ASM. */
-    emit_comment(ctx, "Generado por Piper codegen (Persona 3)");
-    emit_comment(ctx, "Convencion: r7=frame pointer, r1=retorno, r5/r6=temp");
+    emit_comment(ctx, "Generado por Piper");
+    emit_comment(ctx, "Registros: r7=frame, r1=retorno, r5/r6=temporales");
     emit_blank(ctx);
 
-    /* Recorrer los elementos del programa. */
+    elements = root->data.program.elements;
+    /* Solo una función main sin parámetros puede ser punto de entrada. */
+    for (const Symbol *it = table->global_scope->symbols_head;
+         it != NULL; it = it->next) {
+        if (strcmp(it->name, "main") == 0 && it->symbol_class == SYMBOL_FUNC &&
+            it->param_count == 0) {
+            entry = it;
+            break;
+        }
+    }
+    /* Detectar si hace falta una sección de ejecución global. */
+    if (elements != NULL) {
+        for (size_t i = 0; i < elements->count; i++) {
+            const AstNode *elem = elements->items[i];
+            if (elem != NULL && elem->kind != AST_ROUTINE_DECLARATION &&
+                elem->kind != AST_VARIABLE_DECLARATION &&
+                elem->kind != AST_IMPORT_DECLARATION)
+                has_global_statements = 1;
+        }
+    }
+
+    if (entry != NULL || has_global_statements) {
+        load_immediate(ctx, REG_FP, CODEGEN_STACK_TOP);
+    }
+    /* Las rutinas se emiten después para que la entrada no caiga en su cuerpo. */
+    if (has_global_statements) {
+        for (size_t i = 0; i < elements->count; i++) {
+            const AstNode *elem = elements->items[i];
+            if (elem != NULL && elem->kind != AST_ROUTINE_DECLARATION)
+                codegen_statement(ctx, elem);
+        }
+    }
+    if (entry != NULL) {
+        /* La continuación cero marca el retorno de main. */
+        emit_instruction(ctx, "diffi r%d, #%d", REG_FP, CALL_RECORD_SIZE);
+        emit_instruction(ctx, "stwi r%d, 0(r%d)", REG_ZERO, REG_FP);
+        emit_instruction(ctx, "j " CODEGEN_ROUTINE_LABEL("main"));
+    } else if (has_global_statements) {
+        emit_instruction(ctx, "j " CODEGEN_INTERNAL_LABEL("fin_programa"));
+    }
+
+    /* Emitir rutinas y los nodos no procesados por la sección global. */
     if (root->data.program.elements != NULL) {
-        AstNodeList *elements = root->data.program.elements;
         for (size_t i = 0; i < elements->count; i++) {
             AstNode *elem = elements->items[i];
             if (elem == NULL) {
@@ -46,22 +85,26 @@ CodegenResult codegen_generate(const AstNode *root,
                 codegen_routine(ctx, elem);
                 break;
             case AST_VARIABLE_DECLARATION:
-                /* Globales: por ahora solo comentario.
-                 * En puntos posteriores se emitirá su inicialización. */
-                emit_comment(ctx, "global '%s' (pendiente de inicializar)",
-                             elem->data.variable_declaration.name);
+                if (has_global_statements) break;
+                if (elem->data.variable_declaration.dimensions != NULL &&
+                    elem->data.variable_declaration.dimensions->count > 0)
+                    codegen_array_declaration(ctx, elem);
+                else
+                    emit_comment(ctx, "global '%s' (espacio reservado)",
+                                 elem->data.variable_declaration.name);
                 break;
             case AST_IMPORT_DECLARATION:
+                if (has_global_statements) break;
                 emit_comment(ctx, "import '%s' (ignorado en codegen)",
                              elem->data.import_declaration.symbol);
                 break;
             default:
-                emit_comment(ctx, "elemento de programa no manejado (kind=%d)",
-                             elem->kind);
                 break;
             }
         }
     }
+
+    codegen_emit_return_dispatch(ctx);
 
     result = codegen_has_errors(ctx)
         ? CODEGEN_ERROR_INTERNO

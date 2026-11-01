@@ -3,24 +3,42 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int align_word(int value)
+static int align_to(int value, int alignment)
 {
-    return (value + SYMBOL_WORD_SIZE - 1) & ~(SYMBOL_WORD_SIZE - 1);
+    return (value + alignment - 1) & ~(alignment - 1);
 }
 
-static int symbol_size(DataType type, int rows, int cols)
+int piper_type_storage_size(PiperType type)
+{
+    switch (type) {
+    case PIPER_TYPE_B8:
+    case PIPER_TYPE_UB8: return 1;
+    case PIPER_TYPE_B16:
+    case PIPER_TYPE_UB16: return 2;
+    case PIPER_TYPE_BOOL:
+    case PIPER_TYPE_B32:
+    case PIPER_TYPE_UB32: return SYMBOL_WORD_SIZE;
+    case PIPER_TYPE_NONE: return 0;
+    }
+    return 0;
+}
+
+static int symbol_size(DataType type, PiperType declared_type, int rows, int cols)
 {
     long long elements = 1;
+    int width = piper_type_storage_size(declared_type);
+
+    if (width == 0) return -1;
 
     if (type == TYPE_ARRAY) {
         if (rows <= 0 || cols <= 0) return -1;
         elements = (long long)rows * cols;
     }
 
-    if (elements > SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE) {
+    if (elements > SYMBOL_MEMORY_SIZE / width) {
         return -1;
     }
-    return (int)(elements * SYMBOL_WORD_SIZE);
+    return (int)(elements * width);
 }
 
 static Scope *scope_create(int scope_id, int is_global, Scope *parent)
@@ -73,6 +91,7 @@ SymbolTable *symbol_table_create(void)
     table->all_scopes = table->global_scope;
     table->next_global_address = SYMBOL_GLOBAL_BASE;
     table->scope_counter = 1;
+    table->global_call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     return table;
 }
 
@@ -174,6 +193,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
     }
     strncpy(symbol->name, name, SYMBOL_NAME_MAX - 1);
     symbol->symbol_class = symbol_class;
+    symbol->call_reserve_size = SYMBOL_STACK_CALL_RESERVE;
     symbol->type = type;
     symbol->declared_type = declared_type;
     symbol->return_type = type;
@@ -186,7 +206,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
         symbol->size_bytes = 0;
         symbol->address_or_offset = -1;
     } else {
-        size = symbol_size(type, rows, cols);
+        size = symbol_size(type, declared_type, rows, cols);
         if (size < 0) {
             free(symbol);
             return NULL;
@@ -197,8 +217,10 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
             size = SYMBOL_WORD_SIZE;
         }
         symbol->size_bytes = size;
+        int alignment = symbol_class == SYMBOL_PARAM && type == TYPE_ARRAY
+            ? SYMBOL_WORD_SIZE : piper_type_storage_size(declared_type);
         if (table->current_scope->is_global) {
-            table->next_global_address = align_word(table->next_global_address);
+            table->next_global_address = align_to(table->next_global_address, alignment);
             if (table->next_global_address > SYMBOL_GLOBAL_MEMORY_SIZE - size) {
                 free(symbol);
                 return NULL;
@@ -206,7 +228,7 @@ Symbol *symbol_table_insert(SymbolTable *table, const char *name,
             symbol->address_or_offset = table->next_global_address;
             table->next_global_address += size;
         } else {
-            aligned_offset = align_word(table->current_scope->current_offset);
+            aligned_offset = align_to(table->current_scope->current_offset, alignment);
             if (aligned_offset > SYMBOL_STACK_SIZE - size) {
                 free(symbol);
                 return NULL;
@@ -230,7 +252,7 @@ int symbol_table_set_function_frame(SymbolTable *table, Symbol *function)
         return 0;
     }
     function->total_stack_frame_size =
-        align_word(table->current_scope->max_offset);
+        align_to(table->current_scope->max_offset, SYMBOL_WORD_SIZE);
     return 1;
 }
 
@@ -273,8 +295,9 @@ static void print_memory_address(FILE *output, const Scope *scope,
     if (symbol->symbol_class == SYMBOL_FUNC) {
         fprintf(output, "etiqueta %-20s", symbol->name);
     } else if (scope->is_global) {
-        fprintf(output, "0x%04X                 ",
-                (unsigned int)symbol->address_or_offset);
+        fprintf(output, "offset 0x%04X / física 0x%08X",
+                (unsigned int)symbol->address_or_offset,
+                (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + symbol->address_or_offset));
     } else {
         fprintf(output, "r7 + 0x%04X             ",
                 (unsigned int)symbol->address_or_offset);
@@ -326,7 +349,10 @@ void symbol_table_print(FILE *output, const SymbolTable *table)
     for (scope = table->all_scopes; scope != NULL; scope = scope->next_all) {
         symbol_table_print_scope(output, scope);
     }
-        fprintf(output, "\nSiguiente direccion global disponible: 0x%04X\n",
-            (unsigned int)table->next_global_address);
+        fprintf(output, "\nBase física de datos: 0x%08X\n",
+            (unsigned int)SYMBOL_DATA_BASE_ADDRESS);
+        fprintf(output, "Siguiente global: offset 0x%04X / física 0x%08X\n",
+            (unsigned int)table->next_global_address,
+            (unsigned int)(SYMBOL_DATA_BASE_ADDRESS + table->next_global_address));
         fprintf(output, "===================================================================================\n");
 }

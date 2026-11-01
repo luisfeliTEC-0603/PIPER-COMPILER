@@ -83,6 +83,8 @@ struct AstNodeList {
 struct AstNode {
     AstKind kind;
     SourceLocation location;
+    /* Ámbito creado para este nodo por el análisis semántico; no es dueño. */
+    Scope *semantic_scope;
     DataType inferred_type;
     DataType element_type;
     PiperType piper_type;

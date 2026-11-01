@@ -57,6 +57,7 @@ typedef struct {
     CallUsage *calls;
     int loops, errors;
     int trace_enabled;
+    long long pending_codegen_bytes;
 } Visitor;
 
 /* Acumula el diagnóstico y permite seguir revisando el resto del árbol. */
@@ -119,6 +120,12 @@ static void close_scope(Visitor *v, AstNode *n, int block)
 }
 
 static DataType visit(Visitor *v, AstNode *n);
+static int crypto_arity(const char *name)
+{
+    if (!strcmp(name, "crypto_auth")) return 4;
+    if (!strcmp(name, "crypto_write_key") || !strcmp(name, "crypto_feistel")) return 3;
+    return !strcmp(name, "crypto_revoke") ? 0 : -1;
+}
 /* El orden importa: una declaración se vuelve visible cuando se visita. */
 static void list(Visitor *v, AstNodeList *nodes)
 {
@@ -183,6 +190,7 @@ static int open_scope(Visitor *v, AstNode *n, int block)
         error(v, n, "No se pudo abrir el ámbito.");
         return 0;
     }
+    n->semantic_scope = v->table->current_scope;
     /* Un bloque comparte el marco de su rutina. Los bloques hermanos pueden
      * reutilizar posiciones, pues nunca están activos simultáneamente. */
     if (block) {
@@ -514,6 +522,7 @@ static Symbol *declare(Visitor *v, AstNode *n)
     int errors_before = v->errors;
     int parameter = n->kind == AST_PARAMETER;
     const char *name = parameter ? n->data.parameter.name : n->data.variable_declaration.name;
+    if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
     PiperType type = parameter ? n->data.parameter.type : n->data.variable_declaration.type;
     AstNodeList *dims = parameter ? n->data.parameter.dimensions : n->data.variable_declaration.dimensions;
     int sizes[2] = {1, 1};
@@ -523,7 +532,9 @@ static Symbol *declare(Visitor *v, AstNode *n)
         AstNode *d = dims->items[i];
         visit(v, d);
         if (d->kind != AST_INTEGER_LITERAL || d->data.integer_literal.value == 0 ||
-            d->data.integer_literal.value > SYMBOL_MEMORY_SIZE / SYMBOL_WORD_SIZE) {
+            piper_type_storage_size(type) == 0 ||
+            d->data.integer_literal.value >
+                (unsigned long long)(SYMBOL_MEMORY_SIZE / piper_type_storage_size(type))) {
             error(v, d, "La dimensión de '%s' debe ser un entero constante positivo válido.", name);
         } else {
             if (i < 2) sizes[i] = (int)d->data.integer_literal.value;
@@ -664,7 +675,7 @@ static long long peak_stack(Visitor *v, RoutineUsage *routine)
         if (bytes > child_peak) child_peak = bytes;
     }
     long long known_peak = (long long)routine->symbol->total_stack_frame_size +
-                           SYMBOL_STACK_CALL_RESERVE + child_peak;
+                           routine->symbol->call_reserve_size + child_peak;
     if (known_peak > SYMBOL_STACK_SIZE)
         error(v, routine->declaration,
               "La rutina '%s' puede ocupar %lld bytes de pila entre variables, llamadas y reserva; máximo %d.",
@@ -678,6 +689,17 @@ static void check_stack(Visitor *v)
 {
     for (RoutineUsage *routine = v->routines; routine; routine = routine->next)
         if (routine->state == 0) peak_stack(v, routine);
+    /* Antes de entrar en main, el arranque ya bajo r7 un registro de llamada.
+     * peak_stack cuenta frames y reservas de las rutinas, no este registro. */
+    for (RoutineUsage *routine = v->routines; routine; routine = routine->next) {
+        if (strcmp(routine->symbol->name, "main") == 0 &&
+            routine->peak_bytes >= 0 &&
+            routine->peak_bytes > SYMBOL_STACK_SIZE - SYMBOL_CALL_RECORD_SIZE) {
+            error(v, routine->declaration,
+                  "La ejecucion de main puede ocupar %lld bytes de pila incluido su registro de entrada; maximo %d.",
+                  routine->peak_bytes + SYMBOL_CALL_RECORD_SIZE, SYMBOL_STACK_SIZE);
+        }
+    }
 }
 
 /* Visitor del AST: cada case conoce los hijos de su variante y los visita.
@@ -689,6 +711,41 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Solo aprobar el nodo completo si sus hijos y sus reglas no fallaron. */
     int errors_before = v->errors;
     /* Reiniciar la decoración permite analizar el mismo árbol otra vez. */
+    /* Los índices y stores conservan valores en ranuras de 32 bytes,
+     * igual que llamadas y aritmética general. Contar el máximo simultáneo
+     * para que el prólogo compruebe la pila antes de usar esas ranuras. */
+    int reserved = 0;
+    if (n->kind == AST_CALL_EXPRESSION) {
+        int nargs = n->data.call_expression.arguments != NULL
+            ? (int)n->data.call_expression.arguments->count : 0;
+        reserved = SYMBOL_CALL_RECORD_SIZE +
+            (nargs > 4 ? (nargs - 4) * SYMBOL_WORD_SIZE : 0);
+    } else if (n->kind == AST_INDEX_EXPRESSION || n->kind == AST_ASSIGNMENT ||
+               (n->kind == AST_UNARY_EXPRESSION &&
+                (n->data.unary_expression.operator == AST_OP_INCREMENT ||
+                 n->data.unary_expression.operator == AST_OP_DECREMENT))) {
+        reserved = SYMBOL_CALL_RECORD_SIZE;
+    }
+    if (n->kind == AST_BINARY_EXPRESSION) {
+        /* Reserva conservadora: también cubre un spill de una operación
+         * simple cuando los dos temporales ya contienen resultados vivos. */
+        AstOperator op = n->data.binary_expression.operator;
+        /* Un spill puede coexistir con la ranura de comprobación del
+         * resultado. Ambos deben quedar dentro de la guarda de pila. */
+        reserved = ((op >= AST_OP_LESS && op <= AST_OP_GREATER_EQUAL) ||
+                    op == AST_OP_ADD || op == AST_OP_SUBTRACT ||
+                    op == AST_OP_MULTIPLY) ? 2 * SYMBOL_CALL_RECORD_SIZE :
+                                           SYMBOL_CALL_RECORD_SIZE;
+    }
+    v->pending_codegen_bytes += reserved;
+    if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)
+        error(v, n, "La evaluación excede los %d bytes de pila.", SYMBOL_STACK_SIZE);
+    else {
+        int *peak = v->function ? &v->function->call_reserve_size
+                                : &v->table->global_call_reserve_size;
+        if (v->pending_codegen_bytes > *peak) *peak = (int)v->pending_codegen_bytes;
+    }
+    n->semantic_scope = NULL;
     n->inferred_type = TYPE_VOID;
     n->array_rank = n->array_rows = n->array_cols = 0;
     n->element_type = TYPE_VOID;
@@ -696,7 +753,31 @@ static DataType visit(Visitor *v, AstNode *n)
     n->has_element_piper_type = false;
     switch (n->kind) {
     /* Las declaraciones globales se procesan en orden de aparición. */
-    case AST_PROGRAM: list(v, n->data.program.elements); break;
+    case AST_PROGRAM: {
+        AstNodeList *elements = n->data.program.elements;
+        list(v, elements);
+        /* La entrada debe estar en el ámbito global: una rutina anidada
+         * llamada main no puede recibir el salto del arranque de codegen. */
+        AstNode *entry = NULL;
+        if (elements) {
+            for (size_t i = 0; i < elements->count; i++) {
+                AstNode *element = elements->items[i];
+                if (element && element->kind == AST_ROUTINE_DECLARATION &&
+                    strcmp(element->data.routine_declaration.name, "main") == 0) {
+                    entry = element;
+                    break;
+                }
+            }
+        }
+        if (!entry)
+            error(v, n, "El programa debe declarar una rutina global 'main' sin parámetros.");
+        else if (entry->data.routine_declaration.parameters &&
+                 entry->data.routine_declaration.parameters->count != 0)
+            error(v, entry, "La rutina de entrada 'main' no puede recibir parámetros.");
+        else if (v->errors == errors_before)
+            success(v, entry, "Entrada del programa aprobada: rutina global 'main' sin parámetros.");
+        break;
+    }
     /* Sin cargar módulos no se puede validar una firma importada. */
     case AST_IMPORT_DECLARATION:
         error(v, n, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
@@ -705,6 +786,7 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Registrar la función antes del cuerpo permite llamadas recursivas. */
     case AST_ROUTINE_DECLARATION: {
         const char *name = n->data.routine_declaration.name;
+        if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
         if (symbol_table_lookup_current_scope(v->table, name)) {
             error(v, n, "Declaración duplicada de '%s' en el mismo ámbito.", name);
         }
@@ -726,7 +808,9 @@ static DataType visit(Visitor *v, AstNode *n)
         Symbol *old = v->function;
         RoutineUsage *old_routine = v->current_routine;
         int old_loops = v->loops;
+        long long old_pending = v->pending_codegen_bytes;
         if (!open_scope(v, n, 0)) break;
+        v->pending_codegen_bytes = 0;
         v->function = f ? f : &fallback;
         v->current_routine = NULL;
         if (f) {
@@ -781,6 +865,7 @@ static DataType visit(Visitor *v, AstNode *n)
         v->function = old;
         v->current_routine = old_routine;
         v->loops = old_loops;
+        v->pending_codegen_bytes = old_pending;
         break;
     }
     /* Al salir, las declaraciones del bloque dejan de ser visibles. */
@@ -871,6 +956,32 @@ static DataType visit(Visitor *v, AstNode *n)
     /* Los argumentos se resuelven en el ámbito de la llamada. Se compara
      * su tipo con la firma; aquí no se vuelve a recorrer el cuerpo llamado. */
     case AST_CALL_EXPRESSION: {
+        const char *name = n->data.call_expression.routine_name;
+        int arity = crypto_arity(name);
+        if (arity >= 0) {
+            AstNodeList *args = n->data.call_expression.arguments;
+            int feistel = !strcmp(name, "crypto_feistel");
+            if ((int)args->count != arity)
+                error(v, n, "'%s' requiere %d argumentos; recibió %zu.", name, arity, args->count);
+            for (size_t i = 0; i < args->count; i++) {
+                AstNode *arg = args->items[i];
+                visit(v, arg);
+                if (feistel && i == 0) {
+                    if (arg->kind != AST_IDENTIFIER_EXPRESSION || arg->inferred_type != TYPE_ARRAY ||
+                        arg->array_rank != 1 || arg->array_rows != 2 ||
+                        !arg->has_element_piper_type || arg->element_piper_type != PIPER_TYPE_B32)
+                        error(v, arg, "'%s' requiere un arreglo modificable B32|2|.", name);
+                } else if (arg->inferred_type != TYPE_INT)
+                    error(v, arg, "El argumento %zu de '%s' debe ser entero.", i + 1, name);
+                if (arity == 3 && i > 0 && (arg->kind != AST_INTEGER_LITERAL ||
+                    arg->data.integer_literal.value > 3))
+                    error(v, arg, "El índice de '%s' debe ser un literal entero entre 0 y 3.", name);
+            }
+            n->inferred_type = TYPE_VOID;
+            n->piper_type = PIPER_TYPE_NONE;
+            n->has_piper_type = true;
+            break;
+        }
         Symbol *f = lookup(v, n, n->data.call_expression.routine_name);
         AstNodeList *args = n->data.call_expression.arguments;
         if (!f || f->symbol_class != SYMBOL_FUNC) {
@@ -1142,6 +1253,7 @@ static DataType visit(Visitor *v, AstNode *n)
     }
     if (v->errors == errors_before && n->kind >= AST_CALL_EXPRESSION)
         success(v, n, "Decoración de expresión aprobada: tipo inferido %s.", type_name(n->inferred_type));
+    v->pending_codegen_bytes -= reserved;
     return n->inferred_type;
 }
 

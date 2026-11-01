@@ -7,9 +7,11 @@
 #define SYMBOL_NAME_MAX 64
 #define SYMBOL_MEMORY_SIZE 65536
 #define SYMBOL_GLOBAL_BASE 0
+#define SYMBOL_DATA_BASE_ADDRESS 0x10000
 #define SYMBOL_WORD_SIZE 4
 #define SYMBOL_STACK_SIZE 4096
 #define SYMBOL_GLOBAL_MEMORY_SIZE (SYMBOL_MEMORY_SIZE - SYMBOL_STACK_SIZE)
+#define SYMBOL_CALL_RECORD_SIZE 32
 /* Presupuesto por llamada para retorno, registros guardados y temporales. */
 #define SYMBOL_STACK_CALL_RESERVE 64
 
@@ -37,6 +39,9 @@ typedef enum {
     PIPER_TYPE_NONE
 } PiperType;
 
+/* Bytes que ocupa un valor en memoria; los parametros de arreglo son punteros de 4 bytes. */
+int piper_type_storage_size(PiperType type);
+
 typedef struct Scope Scope;
 
 typedef struct Symbol {
@@ -56,6 +61,7 @@ typedef struct Symbol {
     int param_count;
     struct Symbol **params;
     int total_stack_frame_size;
+    int call_reserve_size; /* Espacio para llamadas, índices y stores pendientes */
     int line_number;
     Scope *function_scope;
     struct Symbol *next;
@@ -77,6 +83,7 @@ typedef struct SymbolTable {
     Scope *all_scopes;
     int next_global_address;
     int scope_counter;
+    int global_call_reserve_size;
 } SymbolTable;
 
 SymbolTable *symbol_table_create(void);

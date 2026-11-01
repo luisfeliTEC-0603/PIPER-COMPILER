@@ -1,5 +1,0 @@
-create B32 contador.
-
-routine B32 main[] {
-    contador store 42.
-}

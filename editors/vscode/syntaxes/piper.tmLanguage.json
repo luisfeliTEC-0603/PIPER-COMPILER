@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Piper",
+  "scopeName": "source.piper",
+  "patterns": [
+    { "name": "comment.line.piper", "begin": "~~", "end": "$" },
+    { "name": "comment.block.piper", "begin": "\\*\\*\\*", "end": "\\*\\*\\*" },
+    { "name": "string.quoted.double.piper", "begin": "\"", "end": "\"" },
+    { "name": "storage.type.piper", "match": "\\b(?:bool|u?B(?:8|16|32))\\b" },
+    { "name": "constant.language.piper", "match": "\\b(?:true|false|none)\\b" },
+    { "name": "keyword.control.piper", "match": "\\b(?:create|routine|loop|alwhen|when|fallback|store|bring|from|break|output)\\b" },
+    { "name": "keyword.operator.word.piper", "match": "\\b(?:and|or|xor)\\b" },
+    { "name": "constant.numeric.integer.piper", "match": "\\b[0-9]+\\b" },
+    { "name": "entity.name.function.piper", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\[)" },
+    { "name": "keyword.operator.piper", "match": "->|\\+\\+|--|!=|<=|>=|[+*/%^=<>~&|\\-]" },
+    { "name": "punctuation.terminator.piper", "match": "\\." },
+    { "name": "punctuation.separator.piper", "match": "," },
+    { "name": "punctuation.section.piper", "match": "[{}\\[\\]]" }
+  ]
+}

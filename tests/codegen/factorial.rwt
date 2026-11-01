@@ -1,0 +1,20 @@
+~~ Calculo de factorial con variables locales, condicional y ciclo.
+~~ Ejercicio 1 del PDF de CE1108.
+
+routine B32 factorial[B32 n] {
+    create B32 resultado.
+    resultado store 1.
+    create B32 i.
+    i store 1.
+    alwhen [i <= n] {
+        resultado store resultado * i.
+        i store i + 1.
+    }
+    output resultado.
+}
+
+routine B32 main[] {
+    create B32 r.
+    r store factorial[5].
+    output r.
+}
