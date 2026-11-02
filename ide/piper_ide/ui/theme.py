@@ -99,6 +99,15 @@ def stylesheet(t: dict[str, str]) -> str:
     QFrame#topbar {{ border-bottom: 1px solid {t['border']}; }}
     QFrame#statusbar {{ border-top: 1px solid {t['border']}; }}
     QWidget#explorer {{ background: {t['sidebar']}; }}
+    QListWidget, QTreeWidget {{ background: {t['sidebar']}; color: {t['muted']}; border: 0; outline: 0; }}
+    QListWidget::item {{ padding: 7px 4px; }}
+    QTreeWidget::item {{ padding: 5px 2px; }}
+    QListWidget::item:selected, QTreeWidget::item:selected {{ background: {t['accent-soft']}; color: {t['text']}; }}
+    QListWidget::item:hover, QTreeWidget::item:hover {{ background: {t['raised']}; }}
+    QFrame#searchBar {{ background: {t['surface']}; border-bottom: 1px solid {t['border']}; }}
+    QLineEdit {{ background: {t['editor']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 6px; selection-background-color: {t['accent-soft']}; }}
+    QLineEdit:focus {{ border-color: {t['accent']}; }}
+    QToolButton:checked {{ background: {t['accent-soft']}; color: {t['accent']}; border-color: {t['accent']}; }}
     QFrame#appearancePanel {{ background: {t['bg']}; border-left: 1px solid {t['border']}; }}
     QFrame#editorHeading {{ background: {t['editor']}; border-bottom: 1px solid {t['border-soft']}; }}
     QLabel[role="muted"] {{ color: {t['muted']}; }}

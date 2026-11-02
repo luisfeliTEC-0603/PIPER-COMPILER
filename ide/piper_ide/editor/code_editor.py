@@ -1,10 +1,13 @@
-"""Edición básica con números de línea y guías siempre visibles.
+"""Edición, indentación, navegación y búsqueda sobre el documento Qt activo.
 
-El resaltado, la asistencia y los diagnósticos se incorporarán después.
+No analiza errores ni corrige terminadores. Los colores de sintaxis pertenecen
+al resaltador de cada buffer; este widget dibuja números, guías y coincidencias.
 """
 
+import re
+
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QColor, QPainter, QTextFormat
+from PySide6.QtGui import QColor, QPainter, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from ..ui.theme import monospace_font
@@ -23,17 +26,19 @@ class CodeEditor(QPlainTextEdit):
 
     QPlainTextEdit administra selección, cursor, desplazamiento y Deshacer.
     Este componente añade un margen independiente para los números y dibuja
-    guías en la indentación. Todavía no analiza la sintaxis de Piper.
+    guías en la indentación. Tab/Shift+Tab y Enter son operaciones de edición,
+    agrupadas para poder deshacerse, no correcciones automáticas del lenguaje.
     """
 
     def __init__(self, parent=None):
         """Configura texto sin ajuste de línea y sincroniza el margen con Qt."""
         super().__init__(parent)
         self.setObjectName("codeEditor")
-        self.setAccessibleName("Código Piper de ejemplo")
+        self.setAccessibleName("Editor de código")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.line_numbers = _LineNumbers(self)
         self._colors = {}
+        self._search_matches = []
         self.set_code_font_size(14)
         self.blockCountChanged.connect(self._update_margin)
         self.updateRequest.connect(self._update_numbers)
@@ -108,7 +113,122 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        selections = [selection]
+        for match in self._search_matches:
+            highlight = QTextEdit.ExtraSelection()
+            highlight.cursor = match
+            highlight.format.setBackground(QColor(self._colors["raised"]))
+            selections.append(highlight)
+        self.setExtraSelections(selections)
+
+    def setDocument(self, document):
+        """Cambia de buffer y elimina decoraciones que pertenecían al anterior."""
+        self._search_matches = []
+        super().setDocument(document)
+        self._update_margin()
+        self._highlight_current_line()
+
+    def search_flags(self, case_sensitive=False, whole_words=False):
+        """Construye las opciones nativas de búsqueda literal, sin expresiones regulares."""
+        flags = QTextDocument.FindFlag(0)
+        if case_sensitive:
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if whole_words:
+            flags |= QTextDocument.FindFlag.FindWholeWords
+        return flags
+
+    def highlight_search(self, query: str, flags) -> tuple[int, bool]:
+        """Destaca hasta mil coincidencias y devuelve (cantidad, hay_más).
+
+        El límite evita crear millones de selecciones al buscar un carácter en
+        un archivo grande. Siguiente/Anterior sigue buscando en todo el documento.
+        Qt calcula las posiciones, incluyendo correctamente caracteres Unicode.
+        """
+        self._search_matches = []
+        cursor = QTextCursor(self.document())
+        if query:
+            while len(self._search_matches) < 1000:
+                cursor = self.document().find(query, cursor, flags)
+                if cursor.isNull():
+                    break
+                self._search_matches.append(cursor)
+        more = bool(query and not cursor.isNull() and not self.document().find(query, cursor, flags).isNull())
+        self._highlight_current_line()
+        return len(self._search_matches), more
+
+    def find_text(self, query: str, flags, backwards=False) -> bool:
+        """Selecciona la próxima coincidencia, continuando al inicio/final al llegar al borde."""
+        if not query:
+            return False
+        if backwards:
+            flags |= QTextDocument.FindFlag.FindBackward
+        found = self.document().find(query, self.textCursor(), flags)
+        if found.isNull():
+            start = QTextCursor(self.document())
+            start.movePosition(QTextCursor.MoveOperation.End if backwards else QTextCursor.MoveOperation.Start)
+            found = self.document().find(query, start, flags)
+        if found.isNull():
+            return False
+        self.setTextCursor(found)
+        self.ensureCursorVisible()
+        return True
+
+    def go_to_line(self, line: int):
+        """Sitúa el cursor al inicio de una línea desde uno, limitada al documento."""
+        block = self.document().findBlockByNumber(max(0, min(line - 1, self.blockCount() - 1)))
+        self.setTextCursor(QTextCursor(block))
+        self.centerCursor()
+
+    def _indent(self, backwards=False):
+        """Indenta/desindenta líneas en una sola operación de Deshacer."""
+        cursor = self.textCursor()
+        if not cursor.hasSelection() and not backwards:
+            cursor.insertText(" " * (4 - cursor.positionInBlock() % 4))
+            return
+        first = self.document().findBlock(cursor.selectionStart()).blockNumber()
+        last_position = max(cursor.selectionStart(), cursor.selectionEnd() - 1)
+        last = self.document().findBlock(last_position).blockNumber()
+        selected = cursor.hasSelection()
+        edit = QTextCursor(cursor)
+        edit.beginEditBlock()
+        for number in range(last, first - 1, -1):
+            block = self.document().findBlockByNumber(number)
+            edit.setPosition(block.position())
+            if backwards:
+                leading = re.match(r"(?:\t| {1,4})", block.text())
+                if leading:
+                    edit.setPosition(block.position() + len(leading.group()), QTextCursor.MoveMode.KeepAnchor)
+                    edit.removeSelectedText()
+            else:
+                edit.insertText(" " * 4)
+        edit.endEditBlock()
+        if selected:
+            cursor.setPosition(self.document().findBlockByNumber(first).position())
+            end = self.document().findBlockByNumber(last)
+            cursor.setPosition(end.position() + end.length() - 1, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def keyPressEvent(self, event):
+        """Mantiene la edición directa y añade indentación, sin modos ni cierre de pares."""
+        if self.isReadOnly() or event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
+            super().keyPressEvent(event)
+            return
+        if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            self._indent(event.key() == Qt.Key.Key_Backtab or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            cursor = self.textCursor()
+            before = QTextCursor(cursor)
+            before.setPosition(cursor.selectionStart())
+            before.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            prefix = before.selectedText()
+            indent = re.match(r"[ \t]*", prefix).group()
+            if prefix.rstrip().endswith("{"):
+                indent += " " * 4
+            cursor.insertText("\n" + indent)
+            self.setTextCursor(cursor)
+            return
+        super().keyPressEvent(event)
 
     def _visible_blocks(self, bottom):
         """Produce (bloque, y superior, altura) hasta el límite inferior en píxeles.
