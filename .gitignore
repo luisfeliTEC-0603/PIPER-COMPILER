@@ -25,3 +25,14 @@ y.output
 # Registros y archivos temporales
 *.log
 *~
+
+# Entorno y artefactos del IDE Python
+/ide/README.local.md
+/docs/propuesta-ide-python.local.md
+/ide/.venv/
+/ide/.python/
+/ide/build/
+/ide/dist/
+/ide/*.egg-info/
+__pycache__/
+*.py[cod]
