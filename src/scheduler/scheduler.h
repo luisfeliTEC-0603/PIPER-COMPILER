@@ -1,7 +1,7 @@
 #ifndef PORYGON_SCHEDULER_H
 #define PORYGON_SCHEDULER_H
 
-#include "porygon_assembler/machine_program.h"
+#include "assembler/machine_program.h"
 #include <stdio.h>
 
 enum {

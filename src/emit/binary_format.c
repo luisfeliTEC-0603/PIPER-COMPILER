@@ -4,6 +4,7 @@
  */
 
 #include "binary_format.h"
+#include "scheduler/scheduler.h"
 
 #include <inttypes.h>
 #include <stdlib.h>

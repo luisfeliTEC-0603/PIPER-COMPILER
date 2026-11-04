@@ -1,5 +1,5 @@
-#include "porygon_assembler/asm_program_parser.h"
-#include "scheduler/scheduler.h"
+#include "scheduler.h"
+#include "assembler/asm_program_parser.h"
 
 #include <errno.h>
 #include <string.h>

@@ -1,50 +1,42 @@
 CC = gcc
 FLEX ?= flex
 
-# Si el bison de Homebrew existe (macOS Apple Silicon), usarlo por defecto.
-# En Linux/Windows usará 'bison' del PATH.
 ifeq ($(wildcard /opt/homebrew/opt/bison/bin/bison),)
     BISON ?= bison
 else
     BISON ?= /opt/homebrew/opt/bison/bin/bison
 endif
 
-CFLAGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic -Iinclude -Ibuild -I.
+CFLAGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic \
+         -Iinclude -Isrc -Ibuild -I.
 
-# --- Ensamblador PORYGON (compartido con PORYGON) ----------------------------
-PORYGON_ASM_DIR = porygon_assembler
-PORYGON_ASM_SRC = $(wildcard $(PORYGON_ASM_DIR)/*.c)
-PORYGON_ASM_OBJ = $(patsubst $(PORYGON_ASM_DIR)/%.c,build/porygon_assembler/%.o,$(PORYGON_ASM_SRC))
+ANALYSIS_SRC    = $(wildcard src/analysis/*.c)
+CODEGEN_SRC     = $(wildcard src/codegen/*.c)
+ASSEMBLER_SRC   = $(wildcard src/assembler/*.c)
+SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
+EMIT_SRC        = $(wildcard src/emit/*.c)
 
-# --- Scheduler (compartido con PORYGON) --------------------------------------
-SCHEDULER_SRC = $(wildcard scheduler/*.c)
-SCHEDULER_OBJ = $(patsubst scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
+ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
+CODEGEN_OBJ     = $(patsubst src/codegen/%.c,build/codegen/%.o,$(CODEGEN_SRC))
+ASSEMBLER_OBJ   = $(patsubst src/assembler/%.c,build/assembler/%.o,$(ASSEMBLER_SRC))
+SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
+EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
+
+SCHEDULER_CLI_SRC = src/scheduler/schedule_main.c
+SCHEDULER_LIB_SRC = $(filter-out $(SCHEDULER_CLI_SRC),$(SCHEDULER_SRC))
+SCHEDULER_LIB_OBJ = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_LIB_SRC))
 
 # --- Compilador --------------------------------------------------------------
 TARGET = bin/pipoc
 
 OBJ = build/parser.o \
       build/lexer.o \
-      build/ast.o \
-      build/ast_to_json.o \
-      build/symbol_table.o \
       build/main.o \
-      build/semantic.o \
-      build/binary_format.o \
-      build/codegen.o \
-      build/codegen_context.o \
-      build/codegen_emit.o \
-      build/codegen_labels.o \
-      build/codegen_regs.o \
-      build/codegen_routine.o \
-      build/codegen_expr.o \
-      build/codegen_arithmetic.o \
-      build/codegen_stmt.o \
-      build/codegen_array.o \
-      build/codegen_call.o \
-      build/codegen_crypto.o \
-      $(PORYGON_ASM_OBJ) \
-      $(SCHEDULER_OBJ)
+      $(ANALYSIS_OBJ) \
+      $(CODEGEN_OBJ) \
+      $(ASSEMBLER_OBJ) \
+      $(SCHEDULER_LIB_OBJ) \
+      $(EMIT_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate clean
@@ -54,16 +46,16 @@ all: $(TARGET) bin/porygon-schedule
 generate: build/parser.c build/parser.h build/lexer.c
 
 # Bison debe ejecutarse antes de Flex porque lexer.l incluye parser.h.
-build/parser.c: src/parser.y include/ast.h include/symbol_table.h
+build/parser.c: src/analysis/parser.y include/ast.h include/symbol_table.h
 	@mkdir -p build
-	$(BISON) -d -v -o build/parser.c src/parser.y
+	$(BISON) -d -v -o build/parser.c src/analysis/parser.y
 
 build/parser.h: build/parser.c
 	@test -f build/parser.h
 
-build/lexer.c: src/lexer.l build/parser.h include/ast.h
+build/lexer.c: src/analysis/lexer.l build/parser.h include/ast.h
 	@mkdir -p build
-	$(FLEX) -o build/lexer.c src/lexer.l
+	$(FLEX) -o build/lexer.c src/analysis/lexer.l
 
 build/parser.o: build/parser.c build/parser.h include/ast.h include/symbol_table.h
 	$(CC) $(CFLAGS) -c build/parser.c -o $@
@@ -72,80 +64,39 @@ build/parser.o: build/parser.c build/parser.h include/ast.h include/symbol_table
 build/lexer.o: build/lexer.c build/parser.h include/ast.h
 	$(CC) $(CFLAGS) -Wno-sign-compare -c build/lexer.c -o $@
 
-build/ast.o: src/ast.c include/ast.h
-	$(CC) $(CFLAGS) -c src/ast.c -o $@
-
-build/ast_to_json.o: src/ast_to_json.c include/ast_to_json.h include/ast.h
-	$(CC) $(CFLAGS) -c src/ast_to_json.c -o $@
-
-build/symbol_table.o: src/symbol_table.c include/symbol_table.h
-	$(CC) $(CFLAGS) -c src/symbol_table.c -o $@
-
-build/semantic.o: src/semantic.c include/semantic.h include/ast.h include/symbol_table.h
-	$(CC) $(CFLAGS) -c src/semantic.c -o $@
-
-build/main.o: include/semantic.h include/binary_format.h src/main.c build/parser.h include/ast.h include/symbol_table.h
+# --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
+build/main.o: src/main.c \
+              include/ast.h include/symbol_table.h include/semantic.h \
+              include/codegen.h include/ast_to_json.h \
+              src/assembler/asm_program_parser.h \
+              src/scheduler/scheduler.h \
+              src/emit/binary_format.h \
+              build/parser.h
+	@mkdir -p build
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
-build/binary_format.o: src/binary_format.c include/binary_format.h scheduler/scheduler.h
-	$(CC) $(CFLAGS) -c src/binary_format.c -o $@
-
-# --- Codegen -----------------------------------------------------------------
-build/codegen.o: src/codegen/codegen.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen.c -o $@
-
-build/codegen_context.o: src/codegen/codegen_context.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_context.c -o $@
-
-build/codegen_emit.o: src/codegen/codegen_emit.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_emit.c -o $@
-
-build/codegen_labels.o: src/codegen/codegen_labels.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_labels.c -o $@
-
-build/codegen_regs.o: src/codegen/codegen_regs.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_regs.c -o $@
-
-build/codegen_routine.o: src/codegen/codegen_routine.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_routine.c -o $@
-
-build/codegen_expr.o: src/codegen/codegen_expr.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_expr.c -o $@
-
-build/codegen_arithmetic.o: src/codegen/codegen_arithmetic.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_arithmetic.c -o $@
-
-build/codegen_stmt.o: src/codegen/codegen_stmt.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_stmt.c -o $@
-
-build/codegen_array.o: src/codegen/codegen_array.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_array.c -o $@
-
-build/codegen_call.o: src/codegen/codegen_call.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_call.c -o $@
-
-build/codegen_crypto.o: src/codegen/codegen_crypto.c include/codegen.h include/codegen_internal.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) -c src/codegen/codegen_crypto.c -o $@
-
-# --- Ensamblador y scheduler (reglas de patrón) ------------------------------
-build/porygon_assembler/%.o: $(PORYGON_ASM_DIR)/%.c $(wildcard $(PORYGON_ASM_DIR)/*.h)
-	@mkdir -p build/porygon_assembler
+# --- Reglas de patrón por etapa ---------------------------------------------
+build/analysis/%.o: src/analysis/%.c $(wildcard include/*.h)
+	@mkdir -p build/analysis
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/scheduler/%.o: scheduler/%.c $(wildcard scheduler/*.h) $(wildcard $(PORYGON_ASM_DIR)/*.h)
+build/codegen/%.o: src/codegen/%.c src/codegen/codegen_internal.h \
+                   $(wildcard include/*.h)
+	@mkdir -p build/codegen
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/assembler/%.o: src/assembler/%.c $(wildcard src/assembler/*.h)
+	@mkdir -p build/assembler
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/scheduler/%.o: src/scheduler/%.c $(wildcard src/scheduler/*.h) \
+                     $(wildcard src/assembler/*.h)
 	@mkdir -p build/scheduler
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/emit/%.o: src/emit/%.c $(wildcard src/emit/*.h) \
+                $(wildcard src/scheduler/*.h) $(wildcard src/assembler/*.h)
+	@mkdir -p build/emit
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # --- Binarios ----------------------------------------------------------------
@@ -153,9 +104,13 @@ $(TARGET): $(OBJ)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) $(OBJ) -o $@
 
-bin/porygon-schedule: tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) scheduler/scheduler.h
+bin/porygon-schedule: src/scheduler/schedule_main.c \
+                      $(ASSEMBLER_OBJ) $(SCHEDULER_LIB_OBJ) \
+                      src/scheduler/scheduler.h \
+                      src/assembler/asm_program_parser.h
 	@mkdir -p bin
-	$(CC) $(CFLAGS) tools/schedule_main.c $(PORYGON_ASM_OBJ) $(SCHEDULER_OBJ) -o $@
+	$(CC) $(CFLAGS) src/scheduler/schedule_main.c \
+	      $(ASSEMBLER_OBJ) $(SCHEDULER_LIB_OBJ) -o $@
 
 clean:
 	rm -rf build bin

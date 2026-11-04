@@ -4,13 +4,12 @@
  * @details Ejecuta frontend, codegen, calendarización y emisión binaria una
  * sola vez, con artefactos auxiliares independientes y conversión .bin a .mem.
  */
-
 #include "ast.h"
-#include "binary_format.h"
 #include "codegen.h"
 #include "parser.h"
-#include "porygon_assembler/asm_program_parser.h"
-#include "scheduler/scheduler.h"
+#include "assembler/asm_program_parser.h"   // antes "porygon_assembler/..."
+#include "scheduler/scheduler.h"            // antes "scheduler/..." (sin prefijo)
+#include "emit/binary_format.h"             // antes "binary_format.h" desde include/
 #include "semantic.h"
 #include "symbol_table.h"
 

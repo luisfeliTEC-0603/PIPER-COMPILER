@@ -2,7 +2,7 @@
 #define PORYGON_SCHEDULER_INTERNAL_H
 
 #include "scheduler.h"
-#include "porygon_assembler/encoder.h"
+#include "assembler/encoder.h"
 
 /** Construye un diagnóstico sin asignar memoria. */
 porygon_schedule_result_t schedule_result(porygon_schedule_status_t status,
