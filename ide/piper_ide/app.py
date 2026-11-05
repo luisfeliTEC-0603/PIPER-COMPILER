@@ -5,8 +5,38 @@ a ``main``. El intérprete debe tener instaladas las dependencias del proyecto;
 no se cambia de Python ni se instala software automáticamente.
 """
 
+import os
 from pathlib import Path
+import stat
 import sys
+
+
+def _prepare_macos_qt_plugins(pyside_package) -> Path | None:
+    """Hace visible y registra el backend Cocoa antes de crear QApplication.
+
+    Algunos entornos virtuales bajo una carpeta que empieza con punto heredan
+    ``UF_HIDDEN`` en los plugins de Qt. Python y Qt omiten esos archivos aunque
+    existan. La reparación es local, idempotente y se repite en cada arranque.
+    """
+    if sys.platform != "darwin":
+        return None
+    plugin_root = Path(pyside_package.__file__).resolve().parent / "Qt" / "plugins"
+    platforms = plugin_root / "platforms"
+    hidden = getattr(stat, "UF_HIDDEN", 0)
+    if hidden and platforms.is_dir():
+        for target in (plugin_root, platforms, *platforms.glob("*.dylib")):
+            try:
+                flags = target.stat().st_flags
+                if flags & hidden:
+                    os.chflags(target, flags & ~hidden)
+            except OSError:
+                # Qt todavía puede cargar el plugin si el sistema permite leerlo;
+                # el diagnóstico nativo explicará cualquier fallo restante.
+                pass
+    if platforms.is_dir():
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(platforms)
+        return plugin_root
+    return None
 
 
 def main() -> int:
@@ -17,14 +47,20 @@ def main() -> int:
     Este arranque no invoca al compilador ni abre archivos del proyecto.
     """
     try:
+        import PySide6
+        from PySide6.QtCore import QCoreApplication
         from PySide6.QtWidgets import QApplication
     except ModuleNotFoundError as error:
         if error.name != "PySide6":
             raise
         raise SystemExit(
             "Falta PySide6 en este Python. Instalá las dependencias con "
-            "python -m pip install -e ide desde la raíz del proyecto."
+            "python -m pip install ./ide desde la raíz del proyecto."
         ) from None
+
+    plugin_root = _prepare_macos_qt_plugins(PySide6)
+    if plugin_root is not None:
+        QCoreApplication.addLibraryPath(str(plugin_root))
 
     from piper_ide.ui.main_window import MainWindow
     from piper_ide.ui.theme import monospace_font

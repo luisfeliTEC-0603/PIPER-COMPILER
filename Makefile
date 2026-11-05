@@ -11,12 +11,14 @@ CFLAGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic \
          -Iinclude -Isrc -Ibuild -I.
 
 ANALYSIS_SRC    = $(wildcard src/analysis/*.c)
+LL1_SRC         = $(wildcard src/analysis/ll1/*.c)
 CODEGEN_SRC     = $(wildcard src/codegen/*.c)
 ASSEMBLER_SRC   = $(wildcard src/assembler/*.c)
 SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
 EMIT_SRC        = $(wildcard src/emit/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
+LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
 CODEGEN_OBJ     = $(patsubst src/codegen/%.c,build/codegen/%.o,$(CODEGEN_SRC))
 ASSEMBLER_OBJ   = $(patsubst src/assembler/%.c,build/assembler/%.o,$(ASSEMBLER_SRC))
 SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
@@ -33,6 +35,7 @@ OBJ = build/parser.o \
       build/lexer.o \
       build/main.o \
       $(ANALYSIS_OBJ) \
+      $(LL1_OBJ) \
       $(CODEGEN_OBJ) \
       $(ASSEMBLER_OBJ) \
       $(SCHEDULER_LIB_OBJ) \
@@ -71,11 +74,17 @@ build/main.o: src/main.c \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
+              src/analysis/ll1/ll1.h \
               build/parser.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
 # --- Reglas de patrón por etapa ---------------------------------------------
+build/analysis/ll1/%.o: src/analysis/ll1/%.c \
+                         $(wildcard src/analysis/ll1/*.h) build/parser.h
+	@mkdir -p build/analysis/ll1
+	$(CC) $(CFLAGS) -c $< -o $@
+
 build/analysis/%.o: src/analysis/%.c $(wildcard include/*.h)
 	@mkdir -p build/analysis
 	$(CC) $(CFLAGS) -c $< -o $@

@@ -8,6 +8,7 @@ build tiene su propio árbol para que Generados siga visible aunque Git lo ignor
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -20,6 +21,7 @@ from .icons import line_icon
 _PATH = Qt.ItemDataRole.UserRole
 _LOADED = Qt.ItemDataRole.UserRole + 1
 _HIDDEN_DIRECTORIES = {".git", ".venv", ".python", "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"}
+_HIDDEN_FILES = {".DS_Store"}
 
 
 class Explorer(QWidget):
@@ -36,14 +38,17 @@ class Explorer(QWidget):
         """Construye los controles y los dos árboles, inicialmente sin carpeta."""
         super().__init__(parent)
         self.setObjectName("explorer")
-        self.setMinimumWidth(220)
-        self.setMaximumWidth(480)
+        self.setMinimumWidth(200)
+        self.setMaximumWidth(420)
         self.project = None
+        self._colors = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         heading = QHBoxLayout()
-        heading.addWidget(self._heading("EXPLORADOR"), 1)
+        heading.setContentsMargins(8, 3, 5, 3)
+        heading.setSpacing(2)
+        heading.addWidget(self._heading("FILE EXPLORER"), 1)
         self.new_button = QToolButton()
         self.new_button.setAccessibleName("Nuevo archivo")
         self.new_button.setToolTip("Nuevo archivo · Ctrl+N")
@@ -55,27 +60,28 @@ class Explorer(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         heading.addWidget(self.refresh_button)
         layout.addLayout(heading)
-        layout.addWidget(self._heading("ABIERTOS"))
+        layout.addWidget(self._heading("OPEN BUFFERS"))
         self.open_list = QListWidget()
         self.open_list.setAccessibleName("Documentos abiertos")
         self.open_list.setMinimumHeight(65)
         self.open_list.setMaximumHeight(160)
         self.open_list.currentItemChanged.connect(self._choose_document)
         layout.addWidget(self.open_list)
-        self.folder_button = QPushButton("Abrir carpeta…")
+        self.folder_button = QPushButton("▸  ABRIR CARPETA…")
+        self.folder_button.setObjectName("openFolderButton")
         self.folder_button.clicked.connect(self.folderRequested.emit)
         layout.addWidget(self.folder_button)
-        self.root_label = self._heading("SIN CARPETA")
+        self.root_label = self._heading("FILES  /  SIN CARPETA")
         layout.addWidget(self.root_label)
         self.source_tree = self._tree("Archivos del proyecto")
         layout.addWidget(self.source_tree, 2)
-        layout.addWidget(self._heading("GENERADOS"))
-        self.generated_path = QLabel("build")
+        layout.addWidget(self._heading("BUILD OUTPUT"))
+        self.generated_path = QLabel("  ./build")
         self.generated_path.setProperty("role", "muted")
         layout.addWidget(self.generated_path)
         self.generated_tree = self._tree("Archivos generados en build")
         layout.addWidget(self.generated_tree, 1)
-        self.generated_empty = QLabel("Sin carpeta build. Las salidas aparecerán aquí al refrescar.")
+        self.generated_empty = QLabel("  (vacío)  Las salidas aparecerán aquí al refrescar.")
         self.generated_empty.setWordWrap(True)
         self.generated_empty.setProperty("role", "muted")
         layout.addWidget(self.generated_empty)
@@ -85,7 +91,7 @@ class Explorer(QWidget):
     def _heading(text):
         """Crea un título que toma el color semántico del tema."""
         label = QLabel(text)
-        label.setProperty("role", "eyebrow")
+        label.setObjectName("sectionHeading")
         return label
 
     def _tree(self, name):
@@ -93,7 +99,7 @@ class Explorer(QWidget):
         tree = QTreeWidget()
         tree.setHeaderHidden(True)
         tree.setAccessibleName(name)
-        tree.setIndentation(14)
+        tree.setIndentation(13)
         tree.setMinimumHeight(75)
         tree.itemExpanded.connect(self._populate)
         tree.itemClicked.connect(self._choose_file)
@@ -103,16 +109,17 @@ class Explorer(QWidget):
     def set_project(self, project: Project):
         """Cambia la carpeta visible sin cerrar documentos de la carpeta anterior."""
         self.project = project
-        self.root_label.setText(project.root.name)
+        self.root_label.setText("FILES  /  " + project.root.name.upper())
         self.root_label.setToolTip(str(project.root))
-        self.generated_path.setText("build / " + project.root.name)
+        self.generated_path.setText("  ./build  /  " + project.root.name)
         self.refresh()
 
     def _entries(self, directory: Path):
         """Enumera solo el directorio pedido; los errores se notifican sin cerrarlo."""
         try:
             entries = [entry for entry in directory.iterdir()
-                       if not (entry.is_dir() and entry.name in _HIDDEN_DIRECTORIES)]
+                       if entry.name not in _HIDDEN_FILES
+                       and not (entry.is_dir() and entry.name in _HIDDEN_DIRECTORIES)]
             if self.project and directory == self.project.root:
                 entries = [entry for entry in entries if entry != self.project.generated_root]
             return sorted(entries, key=lambda entry: (not entry.is_dir(), entry.name.casefold()))
@@ -123,9 +130,11 @@ class Explorer(QWidget):
     def _add_entries(self, parent, directory: Path):
         """Inserta archivos y carpetas con un hijo provisional para expansión diferida."""
         for path in self._entries(directory):
-            item = QTreeWidgetItem([path.name])
+            item = QTreeWidgetItem([path.name + ("/" if path.is_dir() else "")])
             item.setData(0, _PATH, str(path))
             item.setToolTip(0, str(path))
+            if self._colors:
+                item.setForeground(0, QColor(self._colors["accent"] if path.is_dir() else self._colors["muted"]))
             if isinstance(parent, QTreeWidget):
                 parent.addTopLevelItem(item)
             else:
@@ -164,7 +173,7 @@ class Explorer(QWidget):
         self.open_list.clear()
         for session in sessions:
             info = session.info
-            prefix = "● " if session.buffer.isModified() else "  "
+            prefix = "● " if session.buffer.isModified() else "› "
             item = QListWidgetItem(prefix + info.name + ("  [lectura]" if info.read_only else ""))
             item.setData(_PATH, info.id)
             item.setToolTip(str(info.path) if info.path else "Nuevo archivo sin guardar")
@@ -216,5 +225,15 @@ class Explorer(QWidget):
 
     def apply_theme(self, colors):
         """Recrea los iconos del encabezado con el color del tema."""
+        self._colors = colors
         self.new_button.setIcon(line_icon("plus", colors["muted"]))
         self.refresh_button.setIcon(line_icon("refresh", colors["muted"]))
+        for tree in (self.source_tree, self.generated_tree):
+            pending = [tree.topLevelItem(index) for index in range(tree.topLevelItemCount())]
+            while pending:
+                item = pending.pop()
+                value = item.data(0, _PATH)
+                if value:
+                    path = Path(value)
+                    item.setForeground(0, QColor(colors["accent"] if path.is_dir() else colors["muted"]))
+                pending.extend(item.child(index) for index in range(item.childCount()))

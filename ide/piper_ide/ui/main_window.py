@@ -1,8 +1,7 @@
 """Ventana del IDE: composición visual y coordinación de acciones del usuario.
 
 DocumentController conserva los buffers y resuelve lectura/guardado. CodeEditor
-edita el buffer activo; los resaltadores solo aplican colores. Esta ventana no
-construye comandos de compilación ni calcula diagnósticos, sugerencias o clones.
+edita el buffer activo y CompilerService ejecuta pipoc sin bloquear la ventana.
 """
 
 from pathlib import Path
@@ -16,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..editor.code_editor import CodeEditor
+from ..editor.completion import CompletionController
 from ..models.project import Project
+from ..services.compiler import CompilerConfigurationError, CompilerService
 from .appearance_panel import AppearancePanel
 from .document_controller import DocumentController
 from .explorer import Explorer
@@ -39,8 +40,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Piper IDE")
         self.setWindowIcon(QIcon(resource_path("images/rowlet.png")))
-        self.resize(1440, 940)
-        self.setMinimumSize(1120, 680)
+        self.resize(1440, 900)
+        self.setMinimumSize(1040, 640)
         self.theme_id = "rowlet-oscuro"
         self.code_font_size = 14
         self.project = None
@@ -62,7 +63,7 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.addWidget(self.explorer)
         self.editor_splitter = QSplitter(Qt.Orientation.Vertical)
         self.editor_splitter.setChildrenCollapsible(False)
-        self.editor_splitter.setHandleWidth(3)
+        self.editor_splitter.setHandleWidth(1)
         editor_area = QWidget()
         editor_layout = QVBoxLayout(editor_area)
         editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -78,10 +79,10 @@ class MainWindow(QMainWindow):
         self.output_panel = OutputPanel()
         self.editor_splitter.addWidget(self.output_panel)
         self.editor_splitter.setStretchFactor(0, 1)
-        self.editor_splitter.setSizes([620, 215])
+        self.editor_splitter.setSizes([640, 205])
         self.workspace_splitter.addWidget(self.editor_splitter)
         self.workspace_splitter.setStretchFactor(1, 1)
-        self.workspace_splitter.setSizes([260, 1180])
+        self.workspace_splitter.setSizes([250, 1190])
         workspace.addWidget(self.workspace_splitter, 1)
         self.appearance = AppearancePanel()
         self.appearance.hide()
@@ -92,6 +93,8 @@ class MainWindow(QMainWindow):
         # El controlador es el padre de los QTextDocument. Sustituir el buffer
         # del editor nunca destruye los documentos que permanecen abiertos.
         self.documents = DocumentController(self.editor, self)
+        self.compiler = CompilerService(self)
+        self.completion = CompletionController(self.editor, self)
         self._menus()
         self._connect_components()
         self.search_timer = QTimer(self)
@@ -120,6 +123,7 @@ class MainWindow(QMainWindow):
         self.editor.undoAvailable.connect(lambda available: self._update_actions())
         self.editor.redoAvailable.connect(lambda available: self._update_actions())
         self.editor.textChanged.connect(self._schedule_search)
+        self.editor.textChanged.connect(self.output_panel.clear_diagnostics)
         self.search_bar.queryChanged.connect(self._schedule_search)
         self.search_bar.findRequested.connect(self.find_next)
         self.search_bar.closeRequested.connect(self.close_search)
@@ -128,32 +132,44 @@ class MainWindow(QMainWindow):
         self.appearance.themeChanged.connect(self.set_theme)
         self.appearance.fontSizeChanged.connect(self.set_code_font_size)
         self.output_panel.closeRequested.connect(lambda: self.panel_action.setChecked(False))
+        self.output_panel.diagnosticActivated.connect(self.editor.go_to_position)
         self.save_button.clicked.connect(lambda: self.documents.save())
+        self.compile_button.clicked.connect(self.compile_active)
+        self.compiler.started.connect(self._compilation_started)
+        self.compiler.outputReceived.connect(self.output_panel.append_process_output)
+        self.compiler.finished.connect(self._compilation_finished)
+        self.compiler.failed.connect(self._compilation_failed)
+        self.completion.unavailable.connect(self._completion_unavailable)
 
     def _topbar(self):
-        """Construye la única fila de controles; Compilar queda pendiente del punto 4."""
+        """Construye una barra compacta inspirada en un menú de terminal."""
         bar = QFrame()
         bar.setObjectName("topbar")
+        bar.setFixedHeight(34)
         row = QHBoxLayout(bar)
-        row.setContentsMargins(16, 10, 16, 10)
-        row.setSpacing(8)
-        image = QLabel()
-        image.setPixmap(QPixmap(resource_path("images/rowlet.png")).scaled(
-            34, 38, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        row.addWidget(image)
-        brand = QLabel("Piper IDE")
+        row.setContentsMargins(0, 0, 8, 0)
+        row.setSpacing(0)
+        mascot = QLabel()
+        mascot.setObjectName("brandMascot")
+        mascot.setAccessibleName("Rowlet, mascota de Piper")
+        mascot.setPixmap(QPixmap(resource_path("images/rowlet.png")).scaled(
+            20, 20, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        row.addWidget(mascot)
+        brand = QLabel("▸ PIPER")
         brand.setObjectName("brand")
         row.addWidget(brand)
-        row.addSpacing(8)
         self.menu_buttons = {}
         for name in ("Archivo", "Editar", "Ver"):
             button = QPushButton(name)
+            button.setObjectName("menuButton")
             row.addWidget(button)
             self.menu_buttons[name] = button
         row.addStretch()
-        self.folder_label = QLabel("Sin carpeta")
+        self.folder_label = QLabel("./sin-carpeta")
         self.folder_label.setProperty("role", "muted")
-        self.folder_label.setMaximumWidth(220)
+        self.folder_label.setMaximumWidth(260)
         row.addWidget(self.folder_label)
         row.addStretch()
         self.appearance_button = QToolButton()
@@ -161,69 +177,68 @@ class MainWindow(QMainWindow):
         self.appearance_button.setAccessibleName("Apariencia")
         self.appearance_button.setToolTip("Apariencia")
         row.addWidget(self.appearance_button)
-        self.save_button = QPushButton("Guardar  Ctrl+S")
+        self.save_button = QPushButton("GUARDAR  ^S")
+        self.save_button.setObjectName("saveButton")
         self.save_button.setToolTip("Guardar el archivo activo")
         row.addWidget(self.save_button)
-        target_label = QLabel("Salida")
-        target_label.setProperty("role", "muted")
-        row.addWidget(target_label)
         self.compile_target = QComboBox()
         self.compile_target.setAccessibleName("Salida de compilación")
         for title, command in (("Binario (.bin)", "bin"), ("ASM (.asm)", "asm"),
                                ("Bundles (.bundles)", "sch"), ("Memoria (.mem)", "mem"),
                                ("AST y símbolos", "ins"), ("Todo", "all")):
             self.compile_target.addItem(title, command)
-        self.compile_target.setToolTip("La compilación se conectará en el punto 4")
+        self.compile_target.setToolTip("Artefacto que generará bin/pipoc")
         row.addWidget(self.compile_target)
-        self.compile_button = QPushButton("Compilar  F5")
+        self.compile_button = QPushButton("EJECUTAR  F5")
         self.compile_button.setObjectName("compileButton")
         self.compile_button.setEnabled(False)
-        self.compile_button.setToolTip("La conexión con pipoc está pendiente")
+        self.compile_button.setToolTip("Guardar y compilar el documento Piper activo")
         row.addWidget(self.compile_button)
         return bar
 
     def _editor_heading(self):
-        """Reserva las etiquetas del documento activo, sin pestañas de archivos."""
+        """Presenta el buffer activo como el título de un panel de terminal."""
         header = QFrame()
         header.setObjectName("editorHeading")
         row = QHBoxLayout(header)
-        row.setContentsMargins(24, 12, 24, 12)
-        column = QVBoxLayout()
-        column.setSpacing(4)
-        self.origin_label = QLabel("ARCHIVO ACTIVO")
-        self.origin_label.setProperty("role", "eyebrow")
-        column.addWidget(self.origin_label)
+        row.setContentsMargins(10, 5, 10, 5)
+        row.setSpacing(10)
+        self.origin_label = QLabel("EDIT")
+        self.origin_label.setProperty("role", "accent")
+        row.addWidget(self.origin_label)
         self.filename_label = QLabel()
         self.filename_label.setObjectName("activeFilename")
         self.filename_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.filename_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        column.addWidget(self.filename_label)
+        row.addWidget(self.filename_label)
         self.path_label = QLabel()
-        self.path_label.setProperty("role", "muted")
+        self.path_label.setObjectName("pathLabel")
         self.path_label.setTextFormat(Qt.TextFormat.PlainText)
         self.path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        column.addWidget(self.path_label)
-        row.addLayout(column, 1)
-        self.modified_label = QLabel("sin guardar")
-        self.modified_label.setProperty("role", "error")
+        row.addWidget(self.path_label, 1)
+        self.modified_label = QLabel("● SIN GUARDAR")
+        self.modified_label.setObjectName("modifiedBadge")
         row.addWidget(self.modified_label)
-        self.readonly_label = QLabel("solo lectura")
+        self.readonly_label = QLabel("[SOLO LECTURA]")
         self.readonly_label.setProperty("role", "accent")
         row.addWidget(self.readonly_label)
         self.kind_label = QLabel()
-        self.kind_label.setProperty("role", "eyebrow")
+        self.kind_label.setObjectName("kindBadge")
         row.addWidget(self.kind_label)
         return header
 
     def _statusbar(self):
-        """Muestra mensajes de operaciones reales y datos del documento activo."""
+        """Muestra estado en una franja baja y densa, al estilo de un TUI."""
         bar = QFrame()
         bar.setObjectName("statusbar")
+        bar.setFixedHeight(24)
         row = QHBoxLayout(bar)
-        row.setContentsMargins(16, 5, 16, 5)
-        row.setSpacing(18)
+        row.setContentsMargins(0, 0, 10, 0)
+        row.setSpacing(13)
+        status_brand = QLabel("PIPER")
+        status_brand.setObjectName("statusBrand")
+        row.addWidget(status_brand)
         self.message_label = QLabel("Listo")
-        self.message_label.setProperty("role", "accent")
+        self.message_label.setProperty("role", "muted")
         self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.message_label, 1)
@@ -231,7 +246,7 @@ class MainWindow(QMainWindow):
         self.encoding_label = QLabel()
         self.newline_label = QLabel()
         self.language_label = QLabel()
-        for label in (self.cursor_label, QLabel("Espacios: 4"), self.encoding_label, self.newline_label, self.language_label):
+        for label in (self.cursor_label, QLabel("SPC:4"), self.encoding_label, self.newline_label, self.language_label):
             row.addWidget(label)
         return bar
 
@@ -291,6 +306,11 @@ class MainWindow(QMainWindow):
         self._action(view_menu, "next_document", "Documento siguiente", "Ctrl+PageDown", lambda: self.documents.cycle(1))
         self._action(view_menu, "previous_document", "Documento anterior", "Ctrl+PageUp", lambda: self.documents.cycle(-1))
         self.menu_buttons["Ver"].setMenu(view_menu)
+        self.compile_action = QAction("Compilar con pipoc", self)
+        self.compile_action.setShortcut("F5")
+        self.compile_action.triggered.connect(lambda checked=False: self.compile_active())
+        self.addAction(self.compile_action)
+        self.actions["compile"] = self.compile_action
 
     def _edit(self, command):
         """Aplica edición al campo enfocado; la consola conserva su solo lectura."""
@@ -312,7 +332,7 @@ class MainWindow(QMainWindow):
         self.project = Project(path)
         self.documents.project = self.project
         self.explorer.set_project(self.project)
-        self.folder_label.setText("Carpeta: " + path.name)
+        self.folder_label.setText("./" + path.name)
         self.folder_label.setToolTip(str(path))
         for session in self.documents.sessions:
             if session.info.path and self.project.is_generated(session.info.path):
@@ -336,14 +356,20 @@ class MainWindow(QMainWindow):
         if not session:
             return
         info = session.info
-        self.origin_label.setText("ARCHIVO GENERADO" if info.generated else "ARCHIVO ACTIVO")
+        self.origin_label.setText("GEN" if info.generated else "EDIT")
         self.filename_label.setText(info.name)
         self.filename_label.setToolTip(info.name)
-        self.path_label.setText(str(info.path) if info.path else "Nuevo archivo · elegí una ruta al guardar")
+        if info.path and self.project and info.path.is_relative_to(self.project.root):
+            display_path = "./" + str(info.path.relative_to(self.project.root))
+        elif info.path:
+            display_path = str(info.path)
+        else:
+            display_path = "./nuevo · elegí una ruta al guardar"
+        self.path_label.setText(display_path)
         self.path_label.setToolTip(self.path_label.text())
         self.modified_label.setVisible(session.buffer.isModified() or info.path is None)
         self.readonly_label.setVisible(info.read_only)
-        self.kind_label.setText(info.language_label)
+        self.kind_label.setText(f"[{info.language_label}]")
         self.encoding_label.setText(info.encoding.upper())
         self.newline_label.setText({"\n": "LF", "\r\n": "CRLF", "\r": "CR"}[info.newline])
         self.language_label.setText(info.language_label)
@@ -351,6 +377,11 @@ class MainWindow(QMainWindow):
         self._update_cursor()
         self._update_actions()
         self._schedule_search()
+        completion_root = (
+            self.project.root if self.project else
+            info.path.parent if info.path else Path.cwd()
+        )
+        self.completion.configure(info.language == "piper", completion_root)
 
     def _update_actions(self):
         """Evita operaciones de escritura sobre generados sin bloquear Guardar como."""
@@ -364,11 +395,77 @@ class MainWindow(QMainWindow):
         self.actions["redo"].setEnabled(writable and self.editor.document().isRedoAvailable())
         for name in ("cut", "paste"):
             self.actions[name].setEnabled(writable)
+        compilable = bool(
+            active and active.info.language == "piper"
+            and not active.info.read_only and not self.compiler.running
+        )
+        self.compile_button.setEnabled(compilable)
+        self.compile_target.setEnabled(not self.compiler.running)
+        self.actions["compile"].setEnabled(compilable)
+
+    def compile_active(self):
+        """Guarda el buffer Piper y lanza pipoc con la salida seleccionada."""
+        if self.compiler.running:
+            self._message("Pipoc ya está ejecutando una compilación.")
+            return False
+        session = self.documents.active
+        if not session or session.info.language != "piper":
+            self._show_error("Abrí un archivo .rwt para compilar con pipoc.")
+            return False
+        if session.info.path is None or session.buffer.isModified():
+            if not self.documents.save(session):
+                return False
+        source = session.info.path
+        if source is None:
+            return False
+        project_root = self.project.root if self.project else source.parent
+        if self.project is None:
+            self.open_folder(project_root)
+        try:
+            started = self.compiler.compile(
+                source, project_root, self.compile_target.currentData()
+            )
+        except (CompilerConfigurationError, OSError) as error:
+            self._show_error(str(error))
+            return False
+        if not started:
+            self._message("No se pudo iniciar pipoc.")
+        return started
+
+    def _compilation_started(self, invocation):
+        """Bloquea una segunda ejecución y muestra el comando reproducible."""
+        self.panel_action.setChecked(True)
+        self.output_panel.begin_compilation(invocation.display_command)
+        self.compile_button.setText("EJECUTANDO…")
+        self._message(f"Pipoc: compilando {invocation.source.name} [{invocation.output_format}]")
+        self._update_actions()
+
+    def _compilation_finished(self, result):
+        """Publica diagnósticos, artefactos reales y restaura los controles."""
+        self.compile_button.setText("EJECUTAR  F5")
+        self.output_panel.set_diagnostics(result.diagnostics)
+        self.explorer.refresh()
+        if result.succeeded:
+            artifacts = [path for path in result.invocation.artifacts if path.exists()]
+            names = ", ".join(path.name for path in artifacts) or "sin artefactos"
+            self.output_panel.append_message(f"pipoc terminó correctamente · {names}")
+            self._message(f"Compilación completada: {result.invocation.output_dir}")
+        else:
+            self.output_panel.append_message(f"pipoc terminó con código {result.exit_code}")
+            self._message(f"Compilación fallida · código {result.exit_code}")
+        self._update_actions()
+
+    def _compilation_failed(self, message: str):
+        """Informa fallos de arranque como permisos o ejecutable ausente."""
+        self.compile_button.setText("EJECUTAR  F5")
+        self.output_panel.append_message("No se pudo iniciar pipoc: " + message)
+        self._message("Error al iniciar pipoc")
+        self._update_actions()
 
     def _update_cursor(self):
         """Presenta línea y columna desde uno sin reinterpretar las teclas del usuario."""
         cursor = self.editor.textCursor()
-        self.cursor_label.setText(f"Lín. {cursor.blockNumber() + 1}, col. {cursor.positionInBlock() + 1}")
+        self.cursor_label.setText(f"LN {cursor.blockNumber() + 1}  COL {cursor.positionInBlock() + 1}")
 
     def _message(self, text):
         """Publica una operación real en la barra de estado y en la consola de lectura."""
@@ -380,6 +477,11 @@ class MainWindow(QMainWindow):
         """Explica un error de archivos sin descartar el buffer que estaba abierto."""
         self._message("Error: " + text)
         QMessageBox.warning(self, "Piper IDE", text)
+
+    def _completion_unavailable(self, text: str):
+        """Informa el fallo de Pipoc sin interrumpir la escritura con un diálogo."""
+        self.message_label.setText("Sugerencias no disponibles")
+        self.message_label.setToolTip(text)
 
     def open_search(self):
         """Muestra la búsqueda y reutiliza una selección de una sola línea como consulta."""
@@ -435,9 +537,14 @@ class MainWindow(QMainWindow):
         colors = load_theme(theme_id)
         self.theme_id = theme_id
         app = QApplication.instance()
+        ui_font = monospace_font(12)
+        app.setFont(ui_font)
         app.setPalette(palette_for(colors))
         app.setStyleSheet(stylesheet(colors))
-        self.setFont(monospace_font(12))
+        self.setFont(ui_font)
+        for widget in app.allWidgets():
+            widget.setFont(ui_font)
+        self.editor.set_code_font_size(self.code_font_size)
         self.documents.apply_theme(colors)
         self.editor.apply_theme(colors)
         self.explorer.apply_theme(colors)
@@ -457,11 +564,13 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         """Libera espacio en la fila superior cuando se reduce el ancho de ventana."""
         super().resizeEvent(event)
-        self.folder_label.setVisible(self.width() >= 1280)
+        self.folder_label.setVisible(self.width() >= 1180)
 
     def closeEvent(self, event):
         """Permite cancelar el cierre si queda algún documento con cambios pendientes."""
         if self.documents.can_close_window():
+            self.compiler.stop()
+            self.completion.stop()
             event.accept()
         else:
             event.ignore()

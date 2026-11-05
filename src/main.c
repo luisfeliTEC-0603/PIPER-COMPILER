@@ -12,6 +12,7 @@
 #include "emit/binary_format.h"             // antes "binary_format.h" desde include/
 #include "semantic.h"
 #include "symbol_table.h"
+#include "analysis/ll1/ll1.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -35,7 +36,9 @@ enum {
     OPT_EMIT_ASM,
     OPT_BIN_TO_MEM,
     OPT_DISASM_BIN,
-    OPT_EMIT_SYMBOLS
+    OPT_EMIT_SYMBOLS,
+    OPT_LL1,
+    OPT_LL1_EXPECTED
 };
 
 typedef enum {
@@ -64,6 +67,8 @@ typedef struct {
     int print_ast;
     int print_symbols;
     int print_packages;
+    int ll1;
+    int ll1_expected;
 } cli_options_t;
 
 typedef porygon_schedule_result_t (*schedule_writer_t)(
@@ -81,6 +86,8 @@ static void print_usage(FILE *output, const char *program)
             "  %s all <fuente.rwt> [-o salida.bin]\n"
             "  %s -x <entrada.asm> [-o salida.bin] [opciones]\n"
             "  %s --bin-to-mem <archivo.bin> [-o salida.mem]\n"
+            "  %s --ll1 <fuente.rwt>\n"
+            "  %s --ll1-expected <prefijo.rwt>\n"
             "Comandos simples:\n"
             "  asm                     Genera el ASM lineal sin calendarizar\n"
             "  sch                     Genera los bundles calendarizados legibles\n"
@@ -102,8 +109,11 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-symbols <ruta>   Exporta la tabla de símbolos legible\n"
             "  --bin-to-mem <bin>      Convierte un ejecutable validado a .mem\n"
             "  --disasm-bin <bin>      Alias de --bin-to-mem\n"
+            "  --ll1                   Muestra tabla y traza del parser predictivo\n"
+            "  --ll1-expected          Lista terminales válidos al final del archivo\n"
             "  -h, --help              Muestra esta ayuda\n",
-            program, program, program, program, program, program, program, program);
+            program, program, program, program, program, program, program, program,
+            program, program);
 }
 
 static int parse_command(const char *argument, pipoc_command_t *command)
@@ -185,6 +195,8 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"bin-to-mem", required_argument, NULL, OPT_BIN_TO_MEM},
         {"disasm-bin", required_argument, NULL, OPT_DISASM_BIN},
         {"emit-symbols", required_argument, NULL, OPT_EMIT_SYMBOLS},
+        {"ll1", no_argument, NULL, OPT_LL1},
+        {"ll1-expected", no_argument, NULL, OPT_LL1_EXPECTED},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
@@ -221,6 +233,12 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             if (!assign_once(&options->symbols_output_path, optarg,
                              "--emit-symbols")) return -1;
             break;
+        case OPT_LL1:
+            options->ll1 = 1;
+            break;
+        case OPT_LL1_EXPECTED:
+            options->ll1_expected = 1;
+            break;
         case OPT_BIN_TO_MEM:
         case OPT_DISASM_BIN:
             if (!assign_once(&options->binary_input_path, optarg,
@@ -247,7 +265,8 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             options->print_ast || options->print_symbols || options->print_packages ||
             options->json_output_path != NULL || options->asm_output_path != NULL ||
             options->mem_output_path != NULL || options->bundles_output_path != NULL ||
-            options->symbols_output_path != NULL) {
+            options->symbols_output_path != NULL || options->ll1 ||
+            options->ll1_expected) {
             fputs("error: --bin-to-mem no puede combinarse con opciones de compilación\n", stderr);
             return -1;
         }
@@ -256,7 +275,8 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     if (options->asm_input_path != NULL) {
         if (optind != argc || options->keep_asm || options->print_ast ||
             options->print_symbols || options->json_output_path != NULL ||
-            options->asm_output_path != NULL || options->symbols_output_path != NULL) {
+            options->asm_output_path != NULL || options->symbols_output_path != NULL ||
+            options->ll1 || options->ll1_expected) {
             fputs("error: el modo -x no acepta entrada Piper ni opciones de frontend\n", stderr);
             return -1;
         }
@@ -270,6 +290,17 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     if (!ends_with(options->source_path, ".rwt")) {
         fprintf(stderr, "error: el archivo fuente debe tener extensión .rwt: %s\n",
                 options->source_path);
+        return -1;
+    }
+    if ((options->ll1 || options->ll1_expected) &&
+        (options->ll1 == options->ll1_expected || has_command ||
+         options->requested_output_path != NULL || options->keep_asm ||
+         options->verbose || options->print_ast || options->print_symbols ||
+         options->print_packages || options->json_output_path != NULL ||
+         options->asm_output_path != NULL || options->mem_output_path != NULL ||
+         options->bundles_output_path != NULL || options->symbols_output_path != NULL)) {
+        fputs("error: el modo LL(1) solo acepta una opción y un archivo .rwt\n",
+              stderr);
         return -1;
     }
     return 1;
@@ -695,6 +726,14 @@ int main(int argc, char **argv)
     if (parsed < 0) {
         print_usage(stderr, argv[0]);
         return PIPOC_EXIT_USAGE;
+    }
+    if (options.ll1 || options.ll1_expected) {
+        Ll1AnalysisResult ll1_result = options.ll1_expected
+            ? ll1_expected_file(options.source_path, stdout)
+            : ll1_analyze_file(options.source_path, stdout);
+        if (ll1_result == LL1_ANALYSIS_ACCEPTED) return PIPOC_EXIT_SUCCESS;
+        if (ll1_result == LL1_ANALYSIS_IO_ERROR) return PIPOC_EXIT_IO_ERROR;
+        return PIPOC_EXIT_COMPILE_ERROR;
     }
     input_path = options.binary_input_path != NULL ? options.binary_input_path :
                  options.asm_input_path != NULL ? options.asm_input_path : options.source_path;

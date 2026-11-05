@@ -6,7 +6,7 @@ al resaltador de cada buffer; este widget dibuja números, guías y coincidencia
 
 import re
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
@@ -30,6 +30,8 @@ class CodeEditor(QPlainTextEdit):
     agrupadas para poder deshacerse, no correcciones automáticas del lenguaje.
     """
 
+    completionRequested = Signal()
+
     def __init__(self, parent=None):
         """Configura texto sin ajuste de línea y sincroniza el margen con Qt."""
         super().__init__(parent)
@@ -39,11 +41,16 @@ class CodeEditor(QPlainTextEdit):
         self.line_numbers = _LineNumbers(self)
         self._colors = {}
         self._search_matches = []
+        self._completer = None
         self.set_code_font_size(14)
         self.blockCountChanged.connect(self._update_margin)
         self.updateRequest.connect(self._update_numbers)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self._update_margin()
+
+    def set_completer(self, completer):
+        """Registra el popup para coordinar sus teclas con la edición normal."""
+        self._completer = completer
 
     def set_code_font_size(self, size: int):
         """Cambia el tamaño en píxeles y recalcula tabulaciones de cuatro espacios.
@@ -179,6 +186,15 @@ class CodeEditor(QPlainTextEdit):
         self.setTextCursor(QTextCursor(block))
         self.centerCursor()
 
+    def go_to_position(self, line: int, column: int):
+        """Navega a una ubicación basada en cero reportada por pipoc."""
+        block = self.document().findBlockByNumber(max(0, min(line, self.blockCount() - 1)))
+        cursor = QTextCursor(block)
+        cursor.setPosition(block.position() + min(max(0, column), len(block.text())))
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        self.setFocus()
+
     def _indent(self, backwards=False):
         """Indenta/desindenta líneas en una sola operación de Deshacer."""
         cursor = self.textCursor()
@@ -210,6 +226,16 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Mantiene la edición directa y añade indentación, sin modos ni cierre de pares."""
+        if (self._completer is not None and self._completer.popup().isVisible()
+                and event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return,
+                                    Qt.Key.Key_Escape, Qt.Key.Key_Tab,
+                                    Qt.Key.Key_Backtab)):
+            event.ignore()
+            return
+        if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                and event.key() == Qt.Key.Key_Space):
+            self.completionRequested.emit()
+            return
         if self.isReadOnly() or event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
             super().keyPressEvent(event)
             return
@@ -252,10 +278,17 @@ class CodeEditor(QPlainTextEdit):
         if not self._colors:
             return
         painter = QPainter(self.line_numbers)
-        painter.fillRect(event.rect(), QColor(self._colors["editor"]))
+        painter.fillRect(event.rect(), QColor(self._colors["sidebar"]))
         painter.setFont(self.font())
-        painter.setPen(QColor(self._colors["muted"]))
+        painter.setPen(QColor(self._colors["border-soft"]))
+        painter.drawLine(self.line_numbers.width() - 1, event.rect().top(),
+                         self.line_numbers.width() - 1, event.rect().bottom())
+        active_block = self.textCursor().blockNumber()
         for block, top, height in self._visible_blocks(event.rect().bottom()):
+            painter.setPen(QColor(
+                self._colors["accent"] if block.blockNumber() == active_block
+                else self._colors["dim"]
+            ))
             painter.drawText(0, top, self.line_numbers.width() - 12, height,
                              Qt.AlignmentFlag.AlignRight, str(block.blockNumber() + 1))
 

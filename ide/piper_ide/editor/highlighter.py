@@ -7,7 +7,7 @@ para comentarios *** de Piper. Qt mantiene este formato fuera del texto real.
 
 import re
 
-from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 
 from ..language.piper import CONSTANTS, KEYWORDS, TYPES
 from ..language.porygon_asm import MNEMONICS
@@ -34,6 +34,8 @@ class CodeHighlighter(QSyntaxHighlighter):
         for role in ("keyword", "type", "number", "function", "comment"):
             char_format = QTextCharFormat()
             char_format.setForeground(QColor(colors[role]))
+            if role in ("keyword", "function"):
+                char_format.setFontWeight(QFont.Weight.DemiBold)
             self.formats[role] = char_format
         self.rehighlight()
 
