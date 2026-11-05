@@ -147,6 +147,10 @@ def stylesheet(t: dict[str, str]) -> str:
     QComboBox {{ background: {t['sidebar']}; border: 1px solid {t['border']}; border-radius: 0; padding: 4px 7px; min-width: 128px; }}
     QComboBox:hover {{ border-color: {t['accent']}; }}
     QComboBox QAbstractItemView {{ background: {t['surface']}; color: {t['text']}; selection-background-color: {t['accent-soft']}; border: 1px solid {t['border']}; }}
+    QAbstractItemView#completionPopup {{ background: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 2px; }}
+    QAbstractItemView#completionPopup::item {{ border-bottom: 1px solid {t['border-soft']}; }}
+    QAbstractItemView#completionPopup::item:hover {{ background: {t['raised']}; }}
+    QAbstractItemView#completionPopup::item:selected {{ background: {t['accent-soft']}; color: {t['accent-strong']}; }}
     QMenu {{ background: {t['surface']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 3px; }}
     QMenu::item {{ padding: 6px 24px; }}
     QMenu::item:selected {{ background: {t['accent-soft']}; color: {t['accent-strong']}; }}

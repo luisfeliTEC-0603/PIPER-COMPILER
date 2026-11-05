@@ -4,13 +4,103 @@ from pathlib import Path
 import os
 import tempfile
 
-from PySide6.QtCore import QProcess, QStringListModel, Qt, QTimer, QObject, Signal
-from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QCompleter
+from PySide6.QtCore import QProcess, QSize, Qt, QTimer, QObject, Signal
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QPalette, QStandardItem, QStandardItemModel,
+    QTextCursor,
+)
+from PySide6.QtWidgets import (
+    QApplication, QCompleter, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+)
 
 from ..language.context import CompletionContext, completion_context
-from ..language.tokens import completion_candidates
+from ..language.tokens import completion_items
 from ..services.compiler import CompilerConfigurationError, find_compiler
+
+
+DETAIL_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+class CompletionItemDelegate(QStyledItemDelegate):
+    """Dibuja cada sugerencia como nombre y guía de uso en dos líneas."""
+
+    _HORIZONTAL_PADDING = 10
+    _VERTICAL_PADDING = 5
+
+    def paint(self, painter, option, index):
+        """Conserva selección/hover nativos y añade el detalle monoespaciado."""
+        visual = QStyleOptionViewItem(option)
+        self.initStyleOption(visual, index)
+        title = visual.text
+        detail = index.data(DETAIL_ROLE) or ""
+        visual.text = ""
+        style = visual.widget.style() if visual.widget else QApplication.style()
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, visual, painter, visual.widget,
+        )
+
+        painter.save()
+        painter.setClipRect(option.rect)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        title_role = (
+            QPalette.ColorRole.HighlightedText
+            if selected else QPalette.ColorRole.Text
+        )
+        detail_role = (
+            QPalette.ColorRole.HighlightedText
+            if selected else QPalette.ColorRole.PlaceholderText
+        )
+        title_color = option.palette.color(title_role)
+        detail_color = QColor(option.palette.color(detail_role))
+        if selected:
+            detail_color.setAlpha(205)
+
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        title_metrics = QFontMetrics(title_font)
+        content = option.rect.adjusted(
+            self._HORIZONTAL_PADDING, self._VERTICAL_PADDING,
+            -self._HORIZONTAL_PADDING, -self._VERTICAL_PADDING,
+        )
+        painter.setFont(title_font)
+        painter.setPen(title_color)
+        painter.drawText(
+            content.x(), content.y(), content.width(), title_metrics.height(),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            title_metrics.elidedText(title, Qt.TextElideMode.ElideRight, content.width()),
+        )
+
+        if detail:
+            detail_font = QFont(option.font)
+            detail_metrics = QFontMetrics(detail_font)
+            painter.setFont(detail_font)
+            painter.setPen(detail_color)
+            painter.drawText(
+                content.x(), content.y() + title_metrics.height() + 1,
+                content.width(), detail_metrics.height(),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                detail_metrics.elidedText(
+                    detail, Qt.TextElideMode.ElideRight, content.width(),
+                ),
+            )
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        """Reserva una segunda línea únicamente cuando existe documentación."""
+        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        detail = str(index.data(DETAIL_ROLE) or "")
+        normal = QFontMetrics(option.font)
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        title_metrics = QFontMetrics(title_font)
+        width = max(
+            title_metrics.horizontalAdvance(title),
+            normal.horizontalAdvance(detail),
+        ) + self._HORIZONTAL_PADDING * 2
+        lines_height = title_metrics.height()
+        if detail:
+            lines_height += 1 + normal.height()
+        return QSize(width, lines_height + self._VERTICAL_PADDING * 2)
 
 
 class CompletionService(QObject):
@@ -112,11 +202,15 @@ class CompletionController(QObject):
         super().__init__(parent)
         self.editor = editor
         self.service = CompletionService(self)
-        self.model = QStringListModel(self)
+        self.model = QStandardItemModel(self)
         self.completer = QCompleter(self.model, self)
         self.completer.setWidget(editor)
         self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseSensitive)
         self.completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.completer.setMaxVisibleItems(9)
+        self.completer.popup().setObjectName("completionPopup")
+        self.completer.popup().setUniformItemSizes(False)
+        self.completer.popup().setItemDelegate(CompletionItemDelegate(self.completer))
         self.completer.activated[str].connect(self._insert)
         self.service.ready.connect(self._show)
         self.service.unavailable.connect(self.unavailable.emit)
@@ -183,21 +277,32 @@ class CompletionController(QObject):
         pending = self._pending_context
         if pending is None or current.suppressed or current.parse_prefix != pending.parse_prefix:
             return
-        candidates = completion_candidates(
+        candidates = completion_items(
             expected, current.fragment, self.editor.toPlainText(),
         )
         if not candidates:
             self.hide()
             return
-        self.model.setStringList(list(candidates))
+        self.model.clear()
+        for candidate in candidates:
+            item = QStandardItem(candidate.text)
+            item.setEditable(False)
+            item.setData(candidate.detail, DETAIL_ROLE)
+            item.setToolTip(candidate.detail)
+            self.model.appendRow(item)
         self.completer.setCompletionPrefix(current.fragment)
         first = self.completer.completionModel().index(0, 0)
         self.completer.popup().setCurrentIndex(first)
         rect = self.editor.cursorRect()
+        metrics = self.editor.fontMetrics()
+        content_width = max(
+            metrics.horizontalAdvance(candidate.detail or candidate.text)
+            for candidate in candidates
+        ) + 38
+        available_width = max(240, self.editor.viewport().width() - 24)
         width = max(
-            180,
-            min(420, max(self.editor.fontMetrics().horizontalAdvance(item)
-                         for item in candidates) + 38),
+            280,
+            min(760, available_width, content_width),
         )
         rect.setWidth(width)
         self.completer.complete(rect)
