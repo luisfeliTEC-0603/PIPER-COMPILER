@@ -20,8 +20,8 @@ class OutputPanel(QTabWidget):
     def __init__(self, parent=None):
         """Crea estados vacíos honestos y una consola de mensajes reales del IDE."""
         super().__init__(parent)
-        self.setAccessibleName("Paneles de terminal del IDE")
-        self.setMinimumHeight(160)
+        self.setAccessibleName("Herramientas del IDE")
+        self.setMinimumHeight(185)
         self.setDocumentMode(True)
         self.tabBar().setDrawBase(False)
         corner = QWidget()
@@ -37,7 +37,7 @@ class OutputPanel(QTabWidget):
         row = QHBoxLayout()
         self.suggestion_icon = QLabel()
         row.addWidget(self.suggestion_icon)
-        self.problems_empty = QLabel("[sin diagnósticos] Pipoc no reportó errores.")
+        self.problems_empty = QLabel("Pipoc no reportó errores. Sus diagnósticos aparecerán aquí.")
         self.problems_empty.setWordWrap(True)
         self.problems_empty.setProperty("role", "muted")
         row.addWidget(self.problems_empty, 1)
@@ -47,9 +47,9 @@ class OutputPanel(QTabWidget):
         self.problems_list.itemActivated.connect(self._activate_diagnostic)
         layout.addWidget(self.problems_list, 1)
         self.problems_list.hide()
-        self.addTab(problems, "PROBLEMAS")
+        self.addTab(problems, "Problemas")
         console_page, layout = self._page()
-        title = QLabel("$ piper-ide/log  ·  solo lectura")
+        title = QLabel("Salida de Pipoc y mensajes del IDE · solo lectura")
         title.setProperty("role", "muted")
         layout.addWidget(title)
         self.console = QPlainTextEdit()
@@ -59,16 +59,16 @@ class OutputPanel(QTabWidget):
         self.console.setMaximumBlockCount(2000)
         self.console.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.console.setFont(monospace_font(12))
-        self.console.setPlainText("piper@ide:~$ sesión iniciada\n:: listo para abrir, editar y guardar archivos")
+        self.console.setPlainText("[IDE] Listo para abrir, editar y guardar archivos.")
         layout.addWidget(self.console, 1)
-        self.addTab(console_page, "TERMINAL")
+        self.addTab(console_page, "Consola")
         clones, layout = self._page()
-        note = QLabel("[sin resultados] La detección de clones se conectará en una etapa posterior.")
+        note = QLabel("La detección automática de clones se conectará en una etapa posterior.")
         note.setWordWrap(True)
         note.setProperty("role", "muted")
         layout.addWidget(note)
         layout.addStretch()
-        self.addTab(clones, "CLONES")
+        self.addTab(clones, "Clones")
 
     @staticmethod
     def _page():
@@ -76,13 +76,13 @@ class OutputPanel(QTabWidget):
         page = QWidget()
         page.setObjectName("outputPage")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(7)
+        layout.setContentsMargins(20, 14, 20, 12)
+        layout.setSpacing(12)
         return page, layout
 
     def append_message(self, message: str):
         """Añade texto literal al registro; no interpreta comandos ni HTML."""
-        self.console.appendPlainText(":: " + message)
+        self.console.appendPlainText("[IDE] " + message)
 
     def begin_compilation(self, command: str):
         """Abre la terminal, separa la ejecución y publica el comando exacto."""
@@ -102,7 +102,7 @@ class OutputPanel(QTabWidget):
         self.problems_list.clear()
         self.problems_list.hide()
         self.problems_empty.show()
-        self.setTabText(0, "PROBLEMAS")
+        self.setTabText(0, "Problemas")
 
     def set_diagnostics(self, diagnostics):
         """Reemplaza resultados y conserva línea/columna para navegación."""
@@ -116,7 +116,10 @@ class OutputPanel(QTabWidget):
         has_items = self.problems_list.count() > 0
         self.problems_list.setVisible(has_items)
         self.problems_empty.setVisible(not has_items)
-        self.setTabText(0, f"PROBLEMAS ({self.problems_list.count()})" if has_items else "PROBLEMAS")
+        self.setTabText(
+            0,
+            f"Problemas ({self.problems_list.count()})" if has_items else "Problemas",
+        )
         if has_items:
             self.setCurrentIndex(0)
 

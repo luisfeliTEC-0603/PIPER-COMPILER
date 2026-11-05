@@ -40,8 +40,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Piper IDE")
         self.setWindowIcon(QIcon(resource_path("images/rowlet.png")))
-        self.resize(1440, 900)
-        self.setMinimumSize(1040, 640)
+        self.resize(1440, 940)
+        self.setMinimumSize(1120, 680)
         self.theme_id = "rowlet-oscuro"
         self.code_font_size = 14
         self.project = None
@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.addWidget(self.explorer)
         self.editor_splitter = QSplitter(Qt.Orientation.Vertical)
         self.editor_splitter.setChildrenCollapsible(False)
-        self.editor_splitter.setHandleWidth(1)
+        self.editor_splitter.setHandleWidth(3)
         editor_area = QWidget()
         editor_layout = QVBoxLayout(editor_area)
         editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -79,10 +79,10 @@ class MainWindow(QMainWindow):
         self.output_panel = OutputPanel()
         self.editor_splitter.addWidget(self.output_panel)
         self.editor_splitter.setStretchFactor(0, 1)
-        self.editor_splitter.setSizes([640, 205])
+        self.editor_splitter.setSizes([620, 215])
         self.workspace_splitter.addWidget(self.editor_splitter)
         self.workspace_splitter.setStretchFactor(1, 1)
-        self.workspace_splitter.setSizes([250, 1190])
+        self.workspace_splitter.setSizes([260, 1180])
         workspace.addWidget(self.workspace_splitter, 1)
         self.appearance = AppearancePanel()
         self.appearance.hide()
@@ -142,34 +142,32 @@ class MainWindow(QMainWindow):
         self.completion.unavailable.connect(self._completion_unavailable)
 
     def _topbar(self):
-        """Construye una barra compacta inspirada en un menú de terminal."""
+        """Construye la barra amplia del diseño gráfico original."""
         bar = QFrame()
         bar.setObjectName("topbar")
-        bar.setFixedHeight(34)
         row = QHBoxLayout(bar)
-        row.setContentsMargins(0, 0, 8, 0)
-        row.setSpacing(0)
+        row.setContentsMargins(16, 10, 16, 10)
+        row.setSpacing(8)
         mascot = QLabel()
-        mascot.setObjectName("brandMascot")
         mascot.setAccessibleName("Rowlet, mascota de Piper")
         mascot.setPixmap(QPixmap(resource_path("images/rowlet.png")).scaled(
-            20, 20, Qt.AspectRatioMode.KeepAspectRatio,
+            34, 38, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         ))
         row.addWidget(mascot)
-        brand = QLabel("▸ PIPER")
+        brand = QLabel("Piper IDE")
         brand.setObjectName("brand")
         row.addWidget(brand)
+        row.addSpacing(8)
         self.menu_buttons = {}
         for name in ("Archivo", "Editar", "Ver"):
             button = QPushButton(name)
-            button.setObjectName("menuButton")
             row.addWidget(button)
             self.menu_buttons[name] = button
         row.addStretch()
-        self.folder_label = QLabel("./sin-carpeta")
+        self.folder_label = QLabel("Sin carpeta")
         self.folder_label.setProperty("role", "muted")
-        self.folder_label.setMaximumWidth(260)
+        self.folder_label.setMaximumWidth(220)
         row.addWidget(self.folder_label)
         row.addStretch()
         self.appearance_button = QToolButton()
@@ -177,10 +175,12 @@ class MainWindow(QMainWindow):
         self.appearance_button.setAccessibleName("Apariencia")
         self.appearance_button.setToolTip("Apariencia")
         row.addWidget(self.appearance_button)
-        self.save_button = QPushButton("GUARDAR  ^S")
-        self.save_button.setObjectName("saveButton")
+        self.save_button = QPushButton("Guardar  Ctrl+S")
         self.save_button.setToolTip("Guardar el archivo activo")
         row.addWidget(self.save_button)
+        target_label = QLabel("Salida")
+        target_label.setProperty("role", "muted")
+        row.addWidget(target_label)
         self.compile_target = QComboBox()
         self.compile_target.setAccessibleName("Salida de compilación")
         for title, command in (("Binario (.bin)", "bin"), ("ASM (.asm)", "asm"),
@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
             self.compile_target.addItem(title, command)
         self.compile_target.setToolTip("Artefacto que generará bin/pipoc")
         row.addWidget(self.compile_target)
-        self.compile_button = QPushButton("EJECUTAR  F5")
+        self.compile_button = QPushButton("Compilar  F5")
         self.compile_button.setObjectName("compileButton")
         self.compile_button.setEnabled(False)
         self.compile_button.setToolTip("Guardar y compilar el documento Piper activo")
@@ -197,48 +197,47 @@ class MainWindow(QMainWindow):
         return bar
 
     def _editor_heading(self):
-        """Presenta el buffer activo como el título de un panel de terminal."""
+        """Presenta el buffer activo con la jerarquía visual original."""
         header = QFrame()
         header.setObjectName("editorHeading")
         row = QHBoxLayout(header)
-        row.setContentsMargins(10, 5, 10, 5)
-        row.setSpacing(10)
-        self.origin_label = QLabel("EDIT")
-        self.origin_label.setProperty("role", "accent")
-        row.addWidget(self.origin_label)
+        row.setContentsMargins(24, 12, 24, 12)
+        column = QVBoxLayout()
+        column.setSpacing(4)
+        self.origin_label = QLabel("ARCHIVO ACTIVO")
+        self.origin_label.setProperty("role", "eyebrow")
+        column.addWidget(self.origin_label)
         self.filename_label = QLabel()
         self.filename_label.setObjectName("activeFilename")
         self.filename_label.setTextFormat(Qt.TextFormat.PlainText)
-        row.addWidget(self.filename_label)
+        self.filename_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        column.addWidget(self.filename_label)
         self.path_label = QLabel()
-        self.path_label.setObjectName("pathLabel")
+        self.path_label.setProperty("role", "muted")
         self.path_label.setTextFormat(Qt.TextFormat.PlainText)
         self.path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        row.addWidget(self.path_label, 1)
-        self.modified_label = QLabel("● SIN GUARDAR")
-        self.modified_label.setObjectName("modifiedBadge")
+        column.addWidget(self.path_label)
+        row.addLayout(column, 1)
+        self.modified_label = QLabel("sin guardar")
+        self.modified_label.setProperty("role", "error")
         row.addWidget(self.modified_label)
-        self.readonly_label = QLabel("[SOLO LECTURA]")
+        self.readonly_label = QLabel("solo lectura")
         self.readonly_label.setProperty("role", "accent")
         row.addWidget(self.readonly_label)
         self.kind_label = QLabel()
-        self.kind_label.setObjectName("kindBadge")
+        self.kind_label.setProperty("role", "eyebrow")
         row.addWidget(self.kind_label)
         return header
 
     def _statusbar(self):
-        """Muestra estado en una franja baja y densa, al estilo de un TUI."""
+        """Muestra mensajes y metadatos con el espaciado del diseño original."""
         bar = QFrame()
         bar.setObjectName("statusbar")
-        bar.setFixedHeight(24)
         row = QHBoxLayout(bar)
-        row.setContentsMargins(0, 0, 10, 0)
-        row.setSpacing(13)
-        status_brand = QLabel("PIPER")
-        status_brand.setObjectName("statusBrand")
-        row.addWidget(status_brand)
+        row.setContentsMargins(16, 5, 16, 5)
+        row.setSpacing(18)
         self.message_label = QLabel("Listo")
-        self.message_label.setProperty("role", "muted")
+        self.message_label.setProperty("role", "accent")
         self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         row.addWidget(self.message_label, 1)
@@ -246,7 +245,7 @@ class MainWindow(QMainWindow):
         self.encoding_label = QLabel()
         self.newline_label = QLabel()
         self.language_label = QLabel()
-        for label in (self.cursor_label, QLabel("SPC:4"), self.encoding_label, self.newline_label, self.language_label):
+        for label in (self.cursor_label, QLabel("Espacios: 4"), self.encoding_label, self.newline_label, self.language_label):
             row.addWidget(label)
         return bar
 
@@ -332,7 +331,7 @@ class MainWindow(QMainWindow):
         self.project = Project(path)
         self.documents.project = self.project
         self.explorer.set_project(self.project)
-        self.folder_label.setText("./" + path.name)
+        self.folder_label.setText("Carpeta: " + path.name)
         self.folder_label.setToolTip(str(path))
         for session in self.documents.sessions:
             if session.info.path and self.project.is_generated(session.info.path):
@@ -356,20 +355,15 @@ class MainWindow(QMainWindow):
         if not session:
             return
         info = session.info
-        self.origin_label.setText("GEN" if info.generated else "EDIT")
+        self.origin_label.setText("ARCHIVO GENERADO" if info.generated else "ARCHIVO ACTIVO")
         self.filename_label.setText(info.name)
         self.filename_label.setToolTip(info.name)
-        if info.path and self.project and info.path.is_relative_to(self.project.root):
-            display_path = "./" + str(info.path.relative_to(self.project.root))
-        elif info.path:
-            display_path = str(info.path)
-        else:
-            display_path = "./nuevo · elegí una ruta al guardar"
+        display_path = str(info.path) if info.path else "Nuevo archivo · elegí una ruta al guardar"
         self.path_label.setText(display_path)
         self.path_label.setToolTip(self.path_label.text())
         self.modified_label.setVisible(session.buffer.isModified() or info.path is None)
         self.readonly_label.setVisible(info.read_only)
-        self.kind_label.setText(f"[{info.language_label}]")
+        self.kind_label.setText(info.language_label)
         self.encoding_label.setText(info.encoding.upper())
         self.newline_label.setText({"\n": "LF", "\r\n": "CRLF", "\r": "CR"}[info.newline])
         self.language_label.setText(info.language_label)
@@ -436,13 +430,13 @@ class MainWindow(QMainWindow):
         """Bloquea una segunda ejecución y muestra el comando reproducible."""
         self.panel_action.setChecked(True)
         self.output_panel.begin_compilation(invocation.display_command)
-        self.compile_button.setText("EJECUTANDO…")
+        self.compile_button.setText("Compilando…")
         self._message(f"Pipoc: compilando {invocation.source.name} [{invocation.output_format}]")
         self._update_actions()
 
     def _compilation_finished(self, result):
         """Publica diagnósticos, artefactos reales y restaura los controles."""
-        self.compile_button.setText("EJECUTAR  F5")
+        self.compile_button.setText("Compilar  F5")
         self.output_panel.set_diagnostics(result.diagnostics)
         self.explorer.refresh()
         if result.succeeded:
@@ -457,7 +451,7 @@ class MainWindow(QMainWindow):
 
     def _compilation_failed(self, message: str):
         """Informa fallos de arranque como permisos o ejecutable ausente."""
-        self.compile_button.setText("EJECUTAR  F5")
+        self.compile_button.setText("Compilar  F5")
         self.output_panel.append_message("No se pudo iniciar pipoc: " + message)
         self._message("Error al iniciar pipoc")
         self._update_actions()
@@ -465,7 +459,9 @@ class MainWindow(QMainWindow):
     def _update_cursor(self):
         """Presenta línea y columna desde uno sin reinterpretar las teclas del usuario."""
         cursor = self.editor.textCursor()
-        self.cursor_label.setText(f"LN {cursor.blockNumber() + 1}  COL {cursor.positionInBlock() + 1}")
+        self.cursor_label.setText(
+            f"Lín. {cursor.blockNumber() + 1}, col. {cursor.positionInBlock() + 1}"
+        )
 
     def _message(self, text):
         """Publica una operación real en la barra de estado y en la consola de lectura."""
@@ -564,7 +560,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         """Libera espacio en la fila superior cuando se reduce el ancho de ventana."""
         super().resizeEvent(event)
-        self.folder_label.setVisible(self.width() >= 1180)
+        self.folder_label.setVisible(self.width() >= 1280)
 
     def closeEvent(self, event):
         """Permite cancelar el cierre si queda algún documento con cambios pendientes."""
