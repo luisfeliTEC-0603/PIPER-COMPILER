@@ -1,4 +1,4 @@
-"""Paneles de diagnósticos, salida real de pipoc y clones."""
+"""Paneles de diagnósticos y salida real de pipoc."""
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QTextCursor
@@ -64,13 +64,6 @@ class OutputPanel(QTabWidget):
         self.console.setPlainText("[IDE] Listo para abrir, editar y guardar archivos.")
         layout.addWidget(self.console, 1)
         self.addTab(console_page, "Consola")
-        clones, layout = self._page()
-        note = QLabel("La detección automática de clones se conectará en una etapa posterior.")
-        note.setWordWrap(True)
-        note.setProperty("role", "muted")
-        layout.addWidget(note)
-        layout.addStretch()
-        self.addTab(clones, "Clones")
 
     @staticmethod
     def _page():

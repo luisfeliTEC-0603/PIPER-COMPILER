@@ -38,7 +38,7 @@ class CodeEditor(QPlainTextEdit):
         self.line_numbers = _LineNumbers(self)
         self._colors = {}
         self._search_matches = []
-        self._diagnostic_ranges = []
+        self._diagnostic_ranges = []  # cada elemento: (QTextCursor, diagnostic_or_None, is_clone)
         self._diagnostic_lines = set()
         self._quick_fixes = {}
         self.viewport().setMouseTracking(True)
@@ -98,7 +98,11 @@ class CodeEditor(QPlainTextEdit):
         self._position_numbers()
 
     def _highlight_current_line(self):
-        """Dibuja el fondo de la línea activa y las decoraciones de diagnóstico."""
+        """Dibuja el fondo de la línea activa y todas las decoraciones."""
+        self._refresh_extra_selections()
+
+    def _refresh_extra_selections(self):
+        """Compone las `ExtraSelection`: línea activa, búsqueda, diagnóstico y clon."""
         if not self._colors:
             return
         selection = QTextEdit.ExtraSelection()
@@ -107,18 +111,31 @@ class CodeEditor(QPlainTextEdit):
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
         selections = [selection]
+
         for match in self._search_matches:
             highlight = QTextEdit.ExtraSelection()
             highlight.cursor = match
             highlight.format.setBackground(QColor(self._colors["raised"]))
             selections.append(highlight)
-        for cursor, _diagnostic in self._diagnostic_ranges:
+
+        for item in self._diagnostic_ranges:
+            cursor = item[0]
+            is_clone = len(item) > 2 and item[2]
             underline = QTextEdit.ExtraSelection()
             underline.cursor = cursor
-            underline.format.setBackground(QColor(self._colors["error-soft"]))
-            underline.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
-            underline.format.setUnderlineColor(QColor(self._colors["error"]))
+            if is_clone:
+                color = QColor(self._colors.get("clone", "#c678dd"))
+                bg = QColor(color)
+                bg.setAlpha(40)
+                underline.format.setBackground(bg)
+                underline.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.DotLine)
+                underline.format.setUnderlineColor(color)
+            else:
+                underline.format.setBackground(QColor(self._colors["error-soft"]))
+                underline.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+                underline.format.setUnderlineColor(QColor(self._colors["error"]))
             selections.append(underline)
+
         self.setExtraSelections(selections)
 
     def setDocument(self, document):
@@ -148,7 +165,11 @@ class CodeEditor(QPlainTextEdit):
         quick_fixes es un dict {id(diagnostic): [QuickFix, ...]}, opcional, que
         asocia cada diagnóstico con sus correcciones rápidas disponibles.
         """
-        self._diagnostic_ranges = []
+        current_clones = [
+            item for item in self._diagnostic_ranges
+            if len(item) > 2 and item[2]
+        ]
+        self._diagnostic_ranges = current_clones
         self._diagnostic_lines = set()
         self._quick_fixes = quick_fixes or {}
         for diagnostic in diagnostics:
@@ -163,7 +184,7 @@ class CodeEditor(QPlainTextEdit):
             cursor.setPosition(start)
             if end > start:
                 cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-            self._diagnostic_ranges.append((cursor, diagnostic))
+            self._diagnostic_ranges.append((cursor, diagnostic, False))
             self._diagnostic_lines.add(diagnostic.line)
         self._highlight_current_line()
         self.line_numbers.update()
@@ -173,9 +194,10 @@ class CodeEditor(QPlainTextEdit):
     def diagnostic_tooltip(self, position: int) -> str:
         """Construye texto seguro para el tooltip de los errores bajo una posición."""
         messages = [f"{escape(d.phase_label)}: {escape(d.message)}"
-                    for cursor, d in self._diagnostic_ranges
-                    if cursor.selectionStart() <= position < cursor.selectionEnd()
-                    or cursor.selectionStart() == cursor.selectionEnd() == position]
+                    for cursor, d, is_clone in self._diagnostic_ranges
+                    if not is_clone and d is not None
+                    and (cursor.selectionStart() <= position < cursor.selectionEnd()
+                         or cursor.selectionStart() == cursor.selectionEnd() == position)]
         return "<qt>" + "<br>".join(dict.fromkeys(messages)) + "</qt>" if messages else ""
 
     def viewportEvent(self, event):
@@ -201,7 +223,12 @@ class CodeEditor(QPlainTextEdit):
         click_pos = click_cursor.position()
 
         diagnostic_under_cursor = None
-        for diag_cursor, diagnostic in self._diagnostic_ranges:
+        for item in self._diagnostic_ranges:
+            diag_cursor = item[0]
+            diagnostic = item[1] if len(item) > 1 else None
+            is_clone = len(item) > 2 and item[2]
+            if is_clone:
+                continue
             if diag_cursor.hasSelection():
                 if diag_cursor.selectionStart() <= click_pos <= diag_cursor.selectionEnd():
                     diagnostic_under_cursor = diagnostic
@@ -225,6 +252,7 @@ class CodeEditor(QPlainTextEdit):
 
     def _apply_quick_fix(self, fix):
         """Aplica una corrección rápida como una única operación de Deshacer."""
+        self.set_clone_highlights([])
         cursor = QTextCursor(self.document())
         start_pos = self._text_position(fix.line, fix.column)
 
@@ -501,7 +529,10 @@ class CodeEditor(QPlainTextEdit):
         # de dos píxeles señala su posición exacta, incluso al final del archivo
         # o antes de un comentario. Es una decoración: no inserta caracteres.
         painter.setPen(QPen(QColor(self._colors["error"]), 2))
-        for cursor, _diagnostic in self._diagnostic_ranges:
+        for item in self._diagnostic_ranges:
+            cursor = item[0]
+            if len(item) > 2 and item[2]:
+                continue  # Los clones no tienen marca de inserción
             if cursor.hasSelection():
                 continue
             rect = self.cursorRect(cursor)
@@ -511,3 +542,25 @@ class CodeEditor(QPlainTextEdit):
             painter.drawLine(x, top, x, bottom)
             painter.drawLine(x - 2, top, x + 2, top)
             painter.drawLine(x - 2, bottom, x + 2, bottom)
+
+    def set_clone_highlights(self, groups):
+        """Subraya en morado los fragmentos que pertenecen a clones.
+
+        Reutiliza `_diagnostic_ranges` con `is_clone=True` para no duplicar
+        la lógica de pintado. Los errores (is_clone=False) se conservan.
+        """
+        current_errors = [
+            item for item in self._diagnostic_ranges
+            if not (len(item) > 2 and item[2])
+        ]
+        self._diagnostic_ranges = current_errors
+        for group in groups:
+            for location in group.locations:
+                start = self._text_position(location.start_line, location.start_column)
+                end = self._text_position(location.end_line, location.end_column)
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(start)
+                if end > start:
+                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                self._diagnostic_ranges.append((cursor, None, True))
+        self._refresh_extra_selections()
