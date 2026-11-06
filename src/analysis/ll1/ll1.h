@@ -3,7 +3,7 @@
 
 /**
  * @file ll1.h
- * @brief Punto de entrada del análisis predictivo LL(1) de Piper.
+ * @brief Tabla predictiva y consultas de autocompletado LL(1) de Piper.
  */
 
 #include <stdio.h>
@@ -17,12 +17,10 @@ typedef enum {
 } Ll1AnalysisResult;
 
 /**
- * @brief Genera la tabla LL(1) y analiza un archivo Piper con traza de pila.
- * @param source_path Ruta del archivo .rwt.
- * @param output Flujo donde se imprimen la tabla y la traza.
- * @return Estado del análisis o del acceso al archivo.
+ * @brief Imprime las celdas definidas de la tabla predictiva.
+ * @param output Flujo donde se imprime la tabla.
  */
-Ll1AnalysisResult ll1_analyze_file(const char *source_path, FILE *output);
+void ll1_print_predictive_table(FILE *output);
 
 /**
  * @brief Imprime los terminales válidos al final de un prefijo Piper.

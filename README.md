@@ -25,7 +25,7 @@
 | [`include/`](include/) | Encabezados y contratos compartidos del compilador. |
 | [`porygon_assembler/`](porygon_assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
 | [`scheduler/`](scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
-| [`tools/`](tools/) | Punto de entrada de la herramienta de calendarización independiente. |
+| [`tools/`](tools/) | Herramientas auxiliares, incluido el generador de la tabla LL(1). |
 | [`tests/codegen/`](tests/codegen/) | Los tres programas Piper de ejemplo (`.rwt`). |
 | [`tests/codegen/generated/`](tests/codegen/generated/) | ASM lineal (`.asm`) y memoria de instrucciones (`.mem`) de cada ejemplo. |
 | [`docs/`](docs/) | PDF de [especificaciones](docs/specs.pdf), [sintaxis Piper](docs/piper_sintaxis.pdf) e imágenes. |
@@ -39,6 +39,28 @@ antes de ensamblar, calendarizar y emitir el binario.
 `build/` y `bin/` se crean localmente durante la compilación y están ignorados
 por Git. `make clean` elimina ambas carpetas, incluidos los resultados en
 `build/runs/`.
+
+### Gramática predictiva LL(1)
+
+La fuente legible de la gramática predictiva es
+[`src/analysis/ll1/piper.ll1`](src/analysis/ll1/piper.ll1). Al ejecutar `make`,
+[`tools/generate_ll1.py`](tools/generate_ll1.py) valida que no existan
+conflictos, calcula FIRST y FOLLOW, y genera la tabla C dentro de
+`build/analysis/ll1/`. Esos archivos generados no se editan ni se guardan en
+Git; la tabla queda compilada dentro de `pipoc` y no se reconstruye al
+analizar cada programa.
+
+`make generate` permite regenerar por separado los artefactos de Bison, Flex
+y LL(1). Si `piper.ll1` no cambió, `make` conserva la tabla existente.
+
+La tabla puede inspeccionarse sin proporcionar un programa Piper:
+
+```sh
+bin/pipoc --ll1
+```
+
+El comando imprime únicamente las celdas definidas de la tabla; no ejecuta ni
+muestra una traza paso a paso del parser.
 
 ## Salida del compilador
 

@@ -1,0 +1,382 @@
+# Gramática predictiva de Piper.
+#
+# Este es el único archivo que debe editarse al cambiar la gramática LL(1).
+# Durante `make`, tools/generate_ll1.py calcula FIRST, FOLLOW y la tabla
+# predictiva, y escribe los datos C dentro de build/analysis/ll1/.
+
+%terminal EOF "$"
+%terminal CREATE "create"
+%terminal ROUTINE "routine"
+%terminal LOOP "loop"
+%terminal ALWHEN "alwhen"
+%terminal WHEN "when"
+%terminal FALLBACK "fallback"
+%terminal STORE "store"
+%terminal BRING "bring"
+%terminal FROM "from"
+%terminal BREAK "break"
+%terminal OUTPUT "output"
+%terminal NONE "none"
+%terminal TRUE "true"
+%terminal FALSE "false"
+%terminal BOOL "bool"
+%terminal B8 "B8"
+%terminal UB8 "uB8"
+%terminal B16 "B16"
+%terminal UB16 "uB16"
+%terminal B32 "B32"
+%terminal UB32 "uB32"
+%terminal PLUS "+"
+%terminal MINUS "-"
+%terminal STAR "*"
+%terminal SLASH "/"
+%terminal PERCENT "%"
+%terminal CARET "^"
+%terminal INCREMENT "++"
+%terminal DECREMENT "--"
+%terminal EQUAL "="
+%terminal NOT_EQUAL "!="
+%terminal LESS "<"
+%terminal LESS_EQUAL "<="
+%terminal GREATER ">"
+%terminal GREATER_EQUAL ">="
+%terminal AND "and"
+%terminal OR "or"
+%terminal XOR "xor"
+%terminal NOT "~"
+%terminal LBRACE "{"
+%terminal RBRACE "}"
+%terminal LBRACKET "["
+%terminal RBRACKET "]"
+%terminal DOT "."
+%terminal COMMA ","
+%terminal AMPERSAND "&"
+%terminal PIPE "|"
+%terminal ARROW "->"
+%terminal CONST_INT "entero"
+%terminal IDENTIFIER "identificador"
+%terminal FILE_PATH "ruta .rwt"
+%terminal INVALID "token inválido"
+
+%nonterminal PROGRAM "Programa"
+%nonterminal STATEMENT_LIST "ListaSentencias"
+%nonterminal STATEMENT "Sentencia"
+%nonterminal ROUTINE_DECLARATION "DeclaracionRutina"
+%nonterminal ROUTINE_BODY "CuerpoRutina"
+%nonterminal PARAMETER_LIST "ListaParametros"
+%nonterminal PARAMETER_LIST_TAIL "ListaParametros'"
+%nonterminal PARAMETER "Parametro"
+%nonterminal DECLARATION "Declaracion"
+%nonterminal DIMENSIONS_OPT "DimensionesOpt"
+%nonterminal DIMENSION_LIST "ListaDimensiones"
+%nonterminal DIMENSION_LIST_TAIL "ListaDimensiones'"
+%nonterminal IMPORT_DECLARATION "Importacion"
+%nonterminal TYPE "Tipo"
+%nonterminal WHEN_STATEMENT "SentenciaWhen"
+%nonterminal FALLBACK_OPT "FallbackOpt"
+%nonterminal ALWHEN_STATEMENT "SentenciaAlwhen"
+%nonterminal LOOP_STATEMENT "SentenciaLoop"
+%nonterminal OUTPUT_STATEMENT "SentenciaOutput"
+%nonterminal BREAK_STATEMENT "SentenciaBreak"
+%nonterminal BLOCK "Bloque"
+%nonterminal IDENTIFIER_STATEMENT_TAIL "SentenciaIdentificador'"
+%nonterminal INDEXED_STATEMENT_TAIL "SentenciaIndexada'"
+%nonterminal NON_IDENTIFIER_EXPRESSION "ExpresionSinIdentificador"
+%nonterminal EXPRESSION "Expresion"
+%nonterminal OR_EXPRESSION "ExpresionOr"
+%nonterminal OR_TAIL "ExpresionOr'"
+%nonterminal XOR_EXPRESSION "ExpresionXor"
+%nonterminal XOR_TAIL "ExpresionXor'"
+%nonterminal AND_EXPRESSION "ExpresionAnd"
+%nonterminal AND_TAIL "ExpresionAnd'"
+%nonterminal COMPARISON_EXPRESSION "Comparacion"
+%nonterminal COMPARISON_TAIL "Comparacion'"
+%nonterminal COMPARISON_OPERATOR "OperadorComparacion"
+%nonterminal ADDITIVE_EXPRESSION "Aditiva"
+%nonterminal ADDITIVE_TAIL "Aditiva'"
+%nonterminal MULTIPLICATIVE_EXPRESSION "Multiplicativa"
+%nonterminal MULTIPLICATIVE_TAIL "Multiplicativa'"
+%nonterminal POWER_EXPRESSION "Potencia"
+%nonterminal POWER_TAIL "Potencia'"
+%nonterminal UNARY_EXPRESSION "Unaria"
+%nonterminal PRIMARY "Primaria"
+%nonterminal IDENTIFIER_PRIMARY_TAIL "PrimariaIdentificador'"
+%nonterminal ARRAY_LITERAL "LiteralArreglo"
+%nonterminal EXPRESSION_LIST "ListaExpresiones"
+%nonterminal EXPRESSION_LIST_TAIL "ListaExpresiones'"
+%nonterminal INDEX_LIST "ListaIndices"
+%nonterminal INDEX_LIST_TAIL "ListaIndices'"
+%nonterminal INDEX_ITEM "Indice"
+%nonterminal EXPRESSION_AFTER_PRIMARY "ExpresionDespuesPrimaria"
+
+%start PROGRAM
+
+%%
+
+PROGRAM:
+    STATEMENT_LIST
+;
+
+STATEMENT_LIST:
+    STATEMENT STATEMENT_LIST
+  | %empty
+;
+
+STATEMENT:
+    ROUTINE_DECLARATION
+  | DECLARATION DOT
+  | IMPORT_DECLARATION DOT
+  | WHEN_STATEMENT
+  | ALWHEN_STATEMENT
+  | LOOP_STATEMENT
+  | OUTPUT_STATEMENT DOT
+  | BREAK_STATEMENT DOT
+  | BLOCK
+  | IDENTIFIER IDENTIFIER_STATEMENT_TAIL
+  | NON_IDENTIFIER_EXPRESSION DOT
+;
+
+ROUTINE_DECLARATION:
+    ROUTINE TYPE IDENTIFIER LBRACKET PARAMETER_LIST RBRACKET ROUTINE_BODY
+;
+
+ROUTINE_BODY:
+    LBRACE STATEMENT_LIST RBRACE
+;
+
+PARAMETER_LIST:
+    PARAMETER PARAMETER_LIST_TAIL
+  | %empty
+;
+
+PARAMETER_LIST_TAIL:
+    COMMA PARAMETER PARAMETER_LIST_TAIL
+  | %empty
+;
+
+PARAMETER:
+    TYPE DIMENSIONS_OPT IDENTIFIER
+;
+
+DECLARATION:
+    CREATE TYPE DIMENSIONS_OPT IDENTIFIER
+;
+
+DIMENSIONS_OPT:
+    PIPE DIMENSION_LIST PIPE
+  | %empty
+;
+
+DIMENSION_LIST:
+    CONST_INT DIMENSION_LIST_TAIL
+;
+
+DIMENSION_LIST_TAIL:
+    AMPERSAND CONST_INT DIMENSION_LIST_TAIL
+  | %empty
+;
+
+IMPORT_DECLARATION:
+    BRING IDENTIFIER FROM FILE_PATH
+;
+
+TYPE:
+    BOOL
+  | B8
+  | UB8
+  | B16
+  | UB16
+  | B32
+  | UB32
+;
+
+WHEN_STATEMENT:
+    WHEN LBRACKET EXPRESSION RBRACKET BLOCK FALLBACK_OPT
+;
+
+FALLBACK_OPT:
+    FALLBACK BLOCK
+  | %empty
+;
+
+ALWHEN_STATEMENT:
+    ALWHEN LBRACKET EXPRESSION RBRACKET BLOCK
+;
+
+LOOP_STATEMENT:
+    LOOP LBRACKET IDENTIFIER AMPERSAND EXPRESSION ARROW EXPRESSION
+    AMPERSAND EXPRESSION RBRACKET BLOCK
+;
+
+OUTPUT_STATEMENT:
+    OUTPUT EXPRESSION
+;
+
+BREAK_STATEMENT:
+    BREAK
+;
+
+BLOCK:
+    LBRACE STATEMENT_LIST RBRACE
+;
+
+# Las sentencias que empiezan con identificador se factorizan para distinguir
+# asignaciones, accesos, llamadas y continuaciones de expresiones sin retroceso.
+IDENTIFIER_STATEMENT_TAIL:
+    STORE EXPRESSION DOT
+  | PIPE INDEX_LIST PIPE INDEXED_STATEMENT_TAIL
+  | LBRACKET EXPRESSION_LIST RBRACKET EXPRESSION_AFTER_PRIMARY DOT
+  | EXPRESSION_AFTER_PRIMARY DOT
+;
+
+INDEXED_STATEMENT_TAIL:
+    STORE EXPRESSION DOT
+  | EXPRESSION_AFTER_PRIMARY DOT
+;
+
+NON_IDENTIFIER_EXPRESSION:
+    CONST_INT EXPRESSION_AFTER_PRIMARY
+  | TRUE EXPRESSION_AFTER_PRIMARY
+  | FALSE EXPRESSION_AFTER_PRIMARY
+  | LBRACKET EXPRESSION_LIST RBRACKET EXPRESSION_AFTER_PRIMARY
+  | MINUS UNARY_EXPRESSION EXPRESSION_AFTER_PRIMARY
+  | NOT UNARY_EXPRESSION EXPRESSION_AFTER_PRIMARY
+  | INCREMENT UNARY_EXPRESSION EXPRESSION_AFTER_PRIMARY
+  | DECREMENT UNARY_EXPRESSION EXPRESSION_AFTER_PRIMARY
+;
+
+# Las capas siguientes expresan precedencia sin recursión izquierda.
+EXPRESSION:
+    OR_EXPRESSION
+;
+
+OR_EXPRESSION:
+    XOR_EXPRESSION OR_TAIL
+;
+
+OR_TAIL:
+    OR XOR_EXPRESSION OR_TAIL
+  | %empty
+;
+
+XOR_EXPRESSION:
+    AND_EXPRESSION XOR_TAIL
+;
+
+XOR_TAIL:
+    XOR AND_EXPRESSION XOR_TAIL
+  | %empty
+;
+
+AND_EXPRESSION:
+    COMPARISON_EXPRESSION AND_TAIL
+;
+
+AND_TAIL:
+    AND COMPARISON_EXPRESSION AND_TAIL
+  | %empty
+;
+
+COMPARISON_EXPRESSION:
+    ADDITIVE_EXPRESSION COMPARISON_TAIL
+;
+
+COMPARISON_TAIL:
+    COMPARISON_OPERATOR ADDITIVE_EXPRESSION
+  | %empty
+;
+
+COMPARISON_OPERATOR:
+    EQUAL
+  | NOT_EQUAL
+  | LESS
+  | LESS_EQUAL
+  | GREATER
+  | GREATER_EQUAL
+;
+
+ADDITIVE_EXPRESSION:
+    MULTIPLICATIVE_EXPRESSION ADDITIVE_TAIL
+;
+
+ADDITIVE_TAIL:
+    PLUS MULTIPLICATIVE_EXPRESSION ADDITIVE_TAIL
+  | MINUS MULTIPLICATIVE_EXPRESSION ADDITIVE_TAIL
+  | %empty
+;
+
+MULTIPLICATIVE_EXPRESSION:
+    POWER_EXPRESSION MULTIPLICATIVE_TAIL
+;
+
+MULTIPLICATIVE_TAIL:
+    STAR POWER_EXPRESSION MULTIPLICATIVE_TAIL
+  | SLASH POWER_EXPRESSION MULTIPLICATIVE_TAIL
+  | PERCENT POWER_EXPRESSION MULTIPLICATIVE_TAIL
+  | %empty
+;
+
+# Volver a POWER_EXPRESSION conserva la asociatividad a la derecha de ^.
+POWER_EXPRESSION:
+    UNARY_EXPRESSION POWER_TAIL
+;
+
+POWER_TAIL:
+    CARET POWER_EXPRESSION
+  | %empty
+;
+
+UNARY_EXPRESSION:
+    MINUS UNARY_EXPRESSION
+  | NOT UNARY_EXPRESSION
+  | INCREMENT UNARY_EXPRESSION
+  | DECREMENT UNARY_EXPRESSION
+  | PRIMARY
+;
+
+PRIMARY:
+    CONST_INT
+  | TRUE
+  | FALSE
+  | IDENTIFIER IDENTIFIER_PRIMARY_TAIL
+  | ARRAY_LITERAL
+;
+
+IDENTIFIER_PRIMARY_TAIL:
+    PIPE INDEX_LIST PIPE
+  | LBRACKET EXPRESSION_LIST RBRACKET
+  | %empty
+;
+
+ARRAY_LITERAL:
+    LBRACKET EXPRESSION_LIST RBRACKET
+;
+
+EXPRESSION_LIST:
+    EXPRESSION EXPRESSION_LIST_TAIL
+  | %empty
+;
+
+EXPRESSION_LIST_TAIL:
+    COMMA EXPRESSION EXPRESSION_LIST_TAIL
+  | %empty
+;
+
+INDEX_LIST:
+    INDEX_ITEM INDEX_LIST_TAIL
+;
+
+INDEX_LIST_TAIL:
+    AMPERSAND INDEX_ITEM INDEX_LIST_TAIL
+  | %empty
+;
+
+INDEX_ITEM:
+    CONST_INT
+  | IDENTIFIER
+;
+
+EXPRESSION_AFTER_PRIMARY:
+    POWER_TAIL MULTIPLICATIVE_TAIL ADDITIVE_TAIL COMPARISON_TAIL
+    AND_TAIL XOR_TAIL OR_TAIL
+;

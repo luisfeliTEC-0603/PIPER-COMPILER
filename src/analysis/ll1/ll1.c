@@ -211,48 +211,13 @@ static int stack_push(Ll1Stack *stack, int symbol)
     return 1;
 }
 
-/** Imprime la pila desde su base hasta la cima. */
-static void print_stack(FILE *output, const Ll1Stack *stack)
-{
-    size_t index;
-    fputs("[", output);
-    for (index = 0; index < stack->count; ++index) {
-        if (index != 0) fputs(" ", output);
-        fputs(ll1_symbol_name(stack->items[index]), output);
-    }
-    fputs("]", output);
-}
-
-/** Imprime los lexemas que aún no se han consumido. */
-static void print_remaining_input(FILE *output, const Ll1TokenList *tokens,
-                                  size_t position)
-{
-    size_t index;
-    fputs("[", output);
-    for (index = position; index < tokens->count; ++index) {
-        if (index != position) fputs(" ", output);
-        fputs(tokens->items[index].lexeme, output);
-    }
-    fputs("]", output);
-}
-
-/** Imprime las dos primeras columnas de una fila de traza. */
-static void print_configuration(FILE *output, const Ll1Stack *stack,
-                                const Ll1TokenList *tokens, size_t position)
-{
-    print_stack(output, stack);
-    fputs(" | ", output);
-    print_remaining_input(output, tokens, position);
-    fputs(" | ", output);
-}
-
 /** Informa las alternativas válidas de una fila de la tabla. */
 static void print_expected_row(FILE *output, Ll1Nonterminal nonterminal)
 {
     size_t terminal;
     int printed = 0;
     for (terminal = 0; terminal < LL1_T_COUNT; ++terminal) {
-        if (ll1_table_lookup(nonterminal, (Ll1Terminal)terminal) == LL1_P_ERROR)
+        if (ll1_table_lookup(nonterminal, (Ll1Terminal)terminal) == NULL)
             continue;
         fprintf(output, "%s%s", printed ? ", " : "",
                 ll1_terminal_name((Ll1Terminal)terminal));
@@ -285,89 +250,6 @@ static void report_terminal_error(FILE *output, const Ll1Token *found,
 }
 
 /**
- * @brief Ejecuta el algoritmo de pila del ejemplo sin invocar yyparse.
- * @param tokens Entrada completa terminada en LL1_T_EOF.
- * @details Consulta directamente la tabla predictiva fija de la gramática.
- * @param output Flujo de la traza.
- * @return Aceptación, rechazo o error interno de memoria.
- */
-static Ll1AnalysisResult parse_tokens(const Ll1TokenList *tokens,
-                                      FILE *output)
-{
-    Ll1Stack stack = {0};
-    size_t position = 0;
-    Ll1AnalysisResult result = LL1_ANALYSIS_REJECTED;
-
-    if (!stack_push(&stack, LL1_TERMINAL_SYMBOL(LL1_T_EOF)) ||
-        !stack_push(&stack, LL1_NONTERMINAL_SYMBOL(LL1_N_PROGRAM))) {
-        fputs("error interno: memoria insuficiente para la pila LL(1)\n", stderr);
-        result = LL1_ANALYSIS_INTERNAL_ERROR;
-        goto done;
-    }
-
-    fputs("\nPila | Entrada restante | Acción\n", output);
-    fputs("------------------------------------------------------------\n", output);
-
-    while (stack.count != 0 && position < tokens->count) {
-        int top = stack.items[stack.count - 1];
-        const Ll1Token *current = &tokens->items[position];
-        print_configuration(output, &stack, tokens, position);
-
-        if (LL1_SYMBOL_IS_TERMINAL(top)) {
-            Ll1Terminal expected = (Ll1Terminal)top;
-            if (expected != current->terminal) {
-                report_terminal_error(output, current, expected);
-                goto done;
-            }
-            stack.count--;
-            position++;
-            fprintf(output, "coincide %s\n", ll1_terminal_name(expected));
-            continue;
-        }
-
-        if (LL1_SYMBOL_IS_NONTERMINAL(top)) {
-            Ll1Nonterminal nonterminal = LL1_SYMBOL_TO_NONTERMINAL(top);
-            Ll1ProductionId production_id =
-                ll1_table_lookup(nonterminal, current->terminal);
-            const Ll1Production *production;
-            size_t index;
-            if (production_id == LL1_P_ERROR) {
-                report_table_error(output, current, nonterminal);
-                goto done;
-            }
-            production = ll1_production_at(production_id);
-            stack.count--;
-            for (index = production->rhs_count; index > 0; --index) {
-                if (!stack_push(&stack, production->rhs[index - 1])) {
-                    fputs("error interno: memoria insuficiente para la pila LL(1)\n",
-                          stderr);
-                    result = LL1_ANALYSIS_INTERNAL_ERROR;
-                    goto done;
-                }
-            }
-            ll1_print_production(output, production);
-            fputc('\n', output);
-            continue;
-        }
-
-        fputs("ERROR: símbolo interno inválido en la pila LL(1)\n", output);
-        result = LL1_ANALYSIS_INTERNAL_ERROR;
-        goto done;
-    }
-
-    if (stack.count == 0 && position == tokens->count) {
-        fputs("Cadena aceptada\n", output);
-        result = LL1_ANALYSIS_ACCEPTED;
-    } else {
-        fputs("Cadena rechazada: la pila y la entrada no terminaron juntas\n", output);
-    }
-
-done:
-    free(stack.items);
-    return result;
-}
-
-/**
  * @brief Comprueba si una anticipación puede atravesar epsilon y ser consumida.
  * @param source Estado completo de la pila en la posición del cursor.
  * @param lookahead Terminal candidato.
@@ -393,11 +275,9 @@ static int stack_accepts_lookahead(const Ll1Stack *source,
             goto done;
         }
         if (LL1_SYMBOL_IS_NONTERMINAL(top)) {
-            Ll1ProductionId production_id = ll1_table_lookup(
+            const Ll1Production *production = ll1_table_lookup(
                 LL1_SYMBOL_TO_NONTERMINAL(top), lookahead);
-            const Ll1Production *production;
-            if (production_id == LL1_P_ERROR) goto done;
-            production = ll1_production_at(production_id);
+            if (production == NULL) goto done;
             probe.count--;
             for (index = production->rhs_count; index > 0; --index) {
                 if (!stack_push(&probe, production->rhs[index - 1])) {
@@ -475,15 +355,13 @@ static Ll1AnalysisResult expected_from_tokens(const Ll1TokenList *tokens,
 
         if (LL1_SYMBOL_IS_NONTERMINAL(top)) {
             Ll1Nonterminal nonterminal = LL1_SYMBOL_TO_NONTERMINAL(top);
-            Ll1ProductionId production_id =
+            const Ll1Production *production =
                 ll1_table_lookup(nonterminal, current->terminal);
-            const Ll1Production *production;
             size_t index;
-            if (production_id == LL1_P_ERROR) {
+            if (production == NULL) {
                 report_table_error(stderr, current, nonterminal);
                 goto done;
             }
-            production = ll1_production_at(production_id);
             stack.count--;
             for (index = production->rhs_count; index > 0; --index) {
                 if (!stack_push(&stack, production->rhs[index - 1])) {
@@ -505,38 +383,9 @@ done:
     return result;
 }
 
-Ll1AnalysisResult ll1_analyze_file(const char *source_path, FILE *output)
+void ll1_print_predictive_table(FILE *output)
 {
-    FILE *input;
-    Ll1TokenList tokens = {0};
-    Ll1AnalysisResult result;
-    int close_status;
-
-    input = fopen(source_path, "rb");
-    if (input == NULL) {
-        fprintf(stderr, "error: no se pudo abrir '%s': %s\n",
-                source_path, strerror(errno));
-        return LL1_ANALYSIS_IO_ERROR;
-    }
-
     ll1_print_table(output);
-
-    if (!read_tokens(input, &tokens)) {
-        fputs("error interno: memoria insuficiente para los tokens LL(1)\n", stderr);
-        result = LL1_ANALYSIS_INTERNAL_ERROR;
-        goto destroy_scanner;
-    }
-    result = parse_tokens(&tokens, output);
-
-destroy_scanner:
-    (void)yylex_destroy();
-    token_list_destroy(&tokens);
-    close_status = fclose(input);
-    if (close_status != 0) {
-        fprintf(stderr, "error: no se pudo cerrar '%s'\n", source_path);
-        return LL1_ANALYSIS_IO_ERROR;
-    }
-    return result;
 }
 
 Ll1AnalysisResult ll1_expected_file(const char *source_path, FILE *output)

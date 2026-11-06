@@ -1,5 +1,6 @@
 CC = gcc
 FLEX ?= flex
+PYTHON ?= python3
 
 ifeq ($(wildcard /opt/homebrew/opt/bison/bin/bison),)
     BISON ?= bison
@@ -24,6 +25,11 @@ ASSEMBLER_OBJ   = $(patsubst src/assembler/%.c,build/assembler/%.o,$(ASSEMBLER_S
 SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
 EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 
+LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
+LL1_GENERATOR         = tools/generate_ll1.py
+LL1_GENERATED_SYMBOLS = build/analysis/ll1/grammar_symbols.h
+LL1_GENERATED_DATA    = build/analysis/ll1/grammar_data.inc
+
 SCHEDULER_CLI_SRC = src/scheduler/schedule_main.c
 SCHEDULER_LIB_SRC = $(filter-out $(SCHEDULER_CLI_SRC),$(SCHEDULER_SRC))
 SCHEDULER_LIB_OBJ = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_LIB_SRC))
@@ -46,7 +52,20 @@ OBJ = build/parser.o \
 
 all: $(TARGET) bin/porygon-schedule
 
-generate: build/parser.c build/parser.h build/lexer.c
+generate: build/parser.c build/parser.h build/lexer.c \
+          $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
+
+# La gramática legible es la fuente de verdad. FIRST, FOLLOW y la tabla se
+# calculan durante la construcción y quedan incorporados en el ejecutable.
+$(LL1_GENERATED_SYMBOLS): $(LL1_GRAMMAR) $(LL1_GENERATOR)
+	@mkdir -p build/analysis/ll1
+	$(PYTHON) $(LL1_GENERATOR) $(LL1_GRAMMAR) \
+	          --kind symbols --output $@
+
+$(LL1_GENERATED_DATA): $(LL1_GRAMMAR) $(LL1_GENERATOR)
+	@mkdir -p build/analysis/ll1
+	$(PYTHON) $(LL1_GENERATOR) $(LL1_GRAMMAR) \
+	          --kind data --output $@
 
 # Bison debe ejecutarse antes de Flex porque lexer.l incluye parser.h.
 build/parser.c: src/analysis/parser.y include/ast.h include/symbol_table.h
@@ -81,9 +100,12 @@ build/main.o: src/main.c \
 
 # --- Reglas de patrón por etapa ---------------------------------------------
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \
-                         $(wildcard src/analysis/ll1/*.h) build/parser.h
+                         $(wildcard src/analysis/ll1/*.h) \
+                         $(LL1_GENERATED_SYMBOLS) build/parser.h
 	@mkdir -p build/analysis/ll1
 	$(CC) $(CFLAGS) -c $< -o $@
+
+build/analysis/ll1/grammar.o: $(LL1_GENERATED_DATA)
 
 build/analysis/%.o: src/analysis/%.c $(wildcard include/*.h)
 	@mkdir -p build/analysis

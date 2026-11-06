@@ -91,7 +91,7 @@ static void print_usage(FILE *output, const char *program)
             "  %s all <fuente.rwt> [-o salida.bin]\n"
             "  %s -x <entrada.asm> [-o salida.bin] [opciones]\n"
             "  %s --bin-to-mem <archivo.bin> [-o salida.mem]\n"
-            "  %s --ll1 <fuente.rwt>\n"
+            "  %s --ll1\n"
             "  %s --ll1-expected <prefijo.rwt>\n"
             "Comandos simples:\n"
             "  asm                     Genera el ASM lineal sin calendarizar\n"
@@ -114,7 +114,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-symbols <ruta>   Exporta la tabla de símbolos legible\n"
             "  --bin-to-mem <bin>      Convierte un ejecutable validado a .mem\n"
             "  --disasm-bin <bin>      Alias de --bin-to-mem\n"
-            "  --ll1                   Muestra tabla y traza del parser predictivo\n"
+            "  --ll1                   Muestra solamente la tabla predictiva\n"
             "  --ll1-expected          Lista terminales válidos al final del archivo\n"
             "  --check                 Revisa léxico, sintaxis y semántica sin generar archivos\n"
             "  --diagnostics-json      Emite JSON por stdout; requiere --check\n"
@@ -291,6 +291,19 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
               stderr);
         return -1;
     }
+    if (options->ll1) {
+        if (options->ll1_expected || has_command || optind != argc ||
+            options->asm_input_path != NULL || options->binary_input_path != NULL ||
+            options->requested_output_path != NULL || options->keep_asm ||
+            options->verbose || options->print_ast || options->print_symbols ||
+            options->print_packages || options->json_output_path != NULL ||
+            options->asm_output_path != NULL || options->mem_output_path != NULL ||
+            options->bundles_output_path != NULL || options->symbols_output_path != NULL) {
+            fputs("error: --ll1 no acepta archivos ni otras opciones\n", stderr);
+            return -1;
+        }
+        return 1;
+    }
     if (options->binary_input_path != NULL) {
         if (options->asm_input_path != NULL || optind != argc || options->keep_asm ||
             options->print_ast || options->print_symbols || options->print_packages ||
@@ -323,14 +336,14 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
                 options->source_path);
         return -1;
     }
-    if ((options->ll1 || options->ll1_expected) &&
-        (options->ll1 == options->ll1_expected || has_command ||
-         options->requested_output_path != NULL || options->keep_asm ||
-         options->verbose || options->print_ast || options->print_symbols ||
-         options->print_packages || options->json_output_path != NULL ||
-         options->asm_output_path != NULL || options->mem_output_path != NULL ||
-         options->bundles_output_path != NULL || options->symbols_output_path != NULL)) {
-        fputs("error: el modo LL(1) solo acepta una opción y un archivo .rwt\n",
+    if (options->ll1_expected &&
+        (has_command || options->requested_output_path != NULL ||
+         options->keep_asm || options->verbose || options->print_ast ||
+         options->print_symbols || options->print_packages ||
+         options->json_output_path != NULL || options->asm_output_path != NULL ||
+         options->mem_output_path != NULL || options->bundles_output_path != NULL ||
+         options->symbols_output_path != NULL)) {
+        fputs("error: --ll1-expected solo acepta un archivo .rwt\n",
               stderr);
         return -1;
     }
@@ -776,10 +789,13 @@ int main(int argc, char **argv)
         diagnostics_end();
         return exit_status;
     }
-    if (options.ll1 || options.ll1_expected) {
-        Ll1AnalysisResult ll1_result = options.ll1_expected
-            ? ll1_expected_file(options.source_path, stdout)
-            : ll1_analyze_file(options.source_path, stdout);
+    if (options.ll1) {
+        ll1_print_predictive_table(stdout);
+        return PIPOC_EXIT_SUCCESS;
+    }
+    if (options.ll1_expected) {
+        Ll1AnalysisResult ll1_result =
+            ll1_expected_file(options.source_path, stdout);
         if (ll1_result == LL1_ANALYSIS_ACCEPTED) return PIPOC_EXIT_SUCCESS;
         if (ll1_result == LL1_ANALYSIS_IO_ERROR) return PIPOC_EXIT_IO_ERROR;
         return PIPOC_EXIT_COMPILE_ERROR;
