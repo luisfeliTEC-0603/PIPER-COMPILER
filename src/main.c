@@ -11,6 +11,7 @@
 #include "scheduler/scheduler.h"            // antes "scheduler/..." (sin prefijo)
 #include "emit/binary_format.h"             // antes "binary_format.h" desde include/
 #include "semantic.h"
+#include "clone_detector.h"
 #include "diagnostic.h"
 #include "symbol_table.h"
 #include "analysis/ll1/ll1.h"
@@ -41,7 +42,10 @@ enum {
     OPT_LL1,
     OPT_LL1_EXPECTED,
     OPT_CHECK,
-    OPT_DIAGNOSTICS_JSON
+    OPT_DIAGNOSTICS_JSON,
+    OPT_CLONES,
+    OPT_CLONES_EXACT,
+    OPT_CLONES_RENAMED,
 };
 
 typedef enum {
@@ -74,6 +78,8 @@ typedef struct {
     int ll1_expected;
     int check_only;
     int diagnostics_json;
+    int clones_min_nodes;      /* 0 = desactivado */
+    int clones_mode;           /* 0 = exact, 1 = renamed */
 } cli_options_t;
 
 typedef porygon_schedule_result_t (*schedule_writer_t)(
@@ -118,6 +124,9 @@ static void print_usage(FILE *output, const char *program)
             "  --ll1-expected          Lista terminales válidos al final del archivo\n"
             "  --check                 Revisa léxico, sintaxis y semántica sin generar archivos\n"
             "  --diagnostics-json      Emite JSON por stdout; requiere --check\n"
+            "  --clones <N>            Detecta clones Tipo I/II con N nodos mínimos (defecto 8)\n"
+            "  --clones-exact          Fuerza detección de clones Tipo I (exactos)\n"
+            "  --clones-renamed        Fuerza detección de clones Tipo II (renombrados)\n"
             "  -h, --help              Muestra esta ayuda\n",
             program, program, program, program, program, program, program, program,
             program, program);
@@ -207,6 +216,9 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"check", no_argument, NULL, OPT_CHECK},
         {"diagnostics-json", no_argument, NULL, OPT_DIAGNOSTICS_JSON},
         {"help", no_argument, NULL, 'h'},
+        {"clones", required_argument, NULL, OPT_CLONES},
+        {"clones-exact", no_argument, NULL, OPT_CLONES_EXACT},
+        {"clones-renamed", no_argument, NULL, OPT_CLONES_RENAMED},
         {NULL, 0, NULL, 0}
     };
     memset(options, 0, sizeof(*options));
@@ -259,6 +271,15 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             if (!assign_once(&options->binary_input_path, optarg,
                              opt == OPT_BIN_TO_MEM ? "--bin-to-mem" : "--disasm-bin")) return -1;
             break;
+        case OPT_CLONES:
+            options->clones_min_nodes = atoi(optarg);
+            break;
+        case OPT_CLONES_EXACT:
+            options->clones_mode = 0;
+            break;
+        case OPT_CLONES_RENAMED:
+            options->clones_mode = 1;
+            break;
         case 'h':
             print_usage(stdout, argv[0]);
             return 0;
@@ -273,6 +294,24 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
      * de ensamblado/LL(1). Esto también garantiza que stdout sea JSON puro. */
     if (options->diagnostics_json && !options->check_only) {
         fputs("error: --diagnostics-json requiere --check\n", stderr);
+        return -1;
+    }
+    if (options->clones_min_nodes < 0) {
+        fputs("error: --clones requiere un número entero no negativo\n", stderr);
+        return -1;
+    }
+    if (options->clones_min_nodes > 0 &&
+        (has_command || options->asm_input_path != NULL ||
+         options->binary_input_path != NULL || options->ll1 ||
+         options->ll1_expected || options->check_only ||
+         options->requested_output_path != NULL ||
+         options->json_output_path != NULL ||
+         options->symbols_output_path != NULL ||
+         options->asm_output_path != NULL ||
+         options->mem_output_path != NULL ||
+         options->bundles_output_path != NULL)) {
+        fputs("error: --clones solo acepta un fuente .rwt y --clones-exact/renamed\n",
+              stderr);
         return -1;
     }
     if (options->check_only && (has_command || options->asm_input_path != NULL ||
@@ -655,6 +694,27 @@ static int compile_piper(const cli_options_t *options)
     if (options->verbose) fprintf(stderr, "[pipoc] Fase semántica\n");
     if (!analyze_semantics_with_trace(ast, symbols, 0)) {
         fputs("error: la verificación semántica falló\n", stderr);
+        goto done;
+    }
+    if (options->clones_min_nodes > 0) {
+        CloneMode mode = options->clones_mode == 0 ? CLONE_MODE_EXACT
+                                                   : CLONE_MODE_RENAMED;
+        CloneReport *report = clone_detect(ast, options->clones_min_nodes,
+                                           options->source_path, mode);
+        if (!report) {
+            fputs("error: no se pudo ejecutar el detector de clones\n", stderr);
+            exit_status = PIPOC_EXIT_COMPILE_ERROR;
+            goto done;
+        }
+        clone_report_write_json(stdout, report, options->source_path,
+                                options->clones_min_nodes, mode);
+        if (fflush(stdout) != 0) {
+            fputs("error: no se pudo escribir el reporte de clones\n", stderr);
+            exit_status = PIPOC_EXIT_IO_ERROR;
+        } else {
+            exit_status = PIPOC_EXIT_SUCCESS;
+        }
+        clone_report_free(report);
         goto done;
     }
     if (options->check_only) {

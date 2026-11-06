@@ -19,6 +19,8 @@ from ..editor.completion import CompletionController
 from ..models.project import Project
 from ..services.compiler import CompilerConfigurationError, CompilerService
 from .appearance_panel import AppearancePanel
+from .clone_controller import CloneController
+from .clone_panel import ClonePanel
 from .document_controller import DocumentController
 from .diagnostic_controller import DiagnosticController
 from .explorer import Explorer
@@ -97,6 +99,11 @@ class MainWindow(QMainWindow):
         self.compiler = CompilerService(self)
         self.completion = CompletionController(self.editor, self)
         self.diagnostics = DiagnosticController(self.documents, self.editor, self.output_panel, self)
+        # El panel de clones vive como pestaña del OutputPanel y comparte
+        # documentos y editor con los diagnósticos, sin acoplarse a ellos.
+        self.clone_panel = ClonePanel(self)
+        self.output_panel.addTab(self.clone_panel, "Clones")
+        self.clones = CloneController(self.documents, self.editor, self.clone_panel, self)
         self._menus()
         self._connect_components()
         self.search_timer = QTimer(self)
@@ -141,6 +148,11 @@ class MainWindow(QMainWindow):
         self.compiler.failed.connect(self._compilation_failed)
         self.completion.unavailable.connect(self._completion_unavailable)
         self.diagnostics.message.connect(self.output_panel.append_message)
+        # Los mensajes del detector se muestran en la misma consola y barra
+        # de estado que los diagnósticos, para no introducir otra superficie.
+        self.clones.message.connect(self.output_panel.append_message)
+        self.clones.message.connect(self._message)
+        self.clone_panel.detectRequested.connect(self._detect_clones)
 
     def _topbar(self):
         """Construye la barra amplia del diseño gráfico original."""
@@ -311,6 +323,15 @@ class MainWindow(QMainWindow):
         self.compile_action.triggered.connect(lambda checked=False: self.compile_active())
         self.addAction(self.compile_action)
         self.actions["compile"] = self.compile_action
+        # Atajo dedicado para la detección de clones, sin colisionar con F5
+        # (compilación) ni Ctrl+Shift+S (guardar como) ni Ctrl+Shift+O (carpeta).
+        self.detect_clones_action = QAction("Detectar clones…", self)
+        self.detect_clones_action.setShortcut("Ctrl+Shift+C")
+        self.detect_clones_action.triggered.connect(
+            lambda checked=False: self._detect_clones()
+        )
+        self.addAction(self.detect_clones_action)
+        self.actions["detect_clones"] = self.detect_clones_action
 
     def _edit(self, command):
         """Aplica edición al campo enfocado; la consola conserva su solo lectura."""
@@ -378,6 +399,12 @@ class MainWindow(QMainWindow):
         )
         self.completion.configure(info.language == "piper" and not info.read_only, completion_root)
         self.diagnostics.refresh()
+        # Al cambiar de buffer, limpiar los resaltados de clones: el nuevo
+        # documento puede no participar en ningún grupo, y si participa, el
+        # usuario puede volver a detectar. También es correcto limpiar al
+        # navegar desde el panel (el controlador ya resaltó lo suyo).
+        if hasattr(self.editor, "set_clone_highlights"):
+            self.editor.set_clone_highlights([])
 
     def _update_actions(self):
         """Evita operaciones de escritura sobre generados sin bloquear Guardar como."""
@@ -398,6 +425,27 @@ class MainWindow(QMainWindow):
         self.compile_button.setEnabled(compilable)
         self.compile_target.setEnabled(not self.compiler.running)
         self.actions["compile"].setEnabled(compilable)
+        # La detección de clones solo tiene sentido con al menos un archivo .rwt
+        # analizable. No se desactiva por estar en un buffer no-Piper: el
+        # controlador recorre todo el proyecto, no solo el activo.
+        self.actions["detect_clones"].setEnabled(self._has_piper_files())
+
+    def _has_piper_files(self) -> bool:
+        """Indica si hay al menos un .rwt abierto o en el proyecto."""
+        if any(s.info.language == "piper" for s in self.documents.sessions):
+            return True
+        if self.project and self.project.root:
+            try:
+                return next(self.project.root.rglob("*.rwt"), None) is not None
+            except OSError:
+                return False
+        return False
+
+    def _detect_clones(self):
+        """Lanza la detección y muestra el panel de Clones con el progreso."""
+        self.panel_action.setChecked(True)
+        self.show_output_page(2)
+        self.clones.detect()
 
     def compile_active(self):
         """Guarda el buffer Piper y lanza pipoc con la salida seleccionada."""
@@ -576,6 +624,7 @@ class MainWindow(QMainWindow):
             self.compiler.stop()
             self.completion.stop()
             self.diagnostics.stop()
+            self.clones.stop()
             event.accept()
         else:
             event.ignore()
