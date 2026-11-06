@@ -427,7 +427,10 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             return
 
-        if self._handle_auto_close(event.text()):
+        typed = event.text()
+        if self._handle_auto_close(typed):
+            if typed in {"[", ",", "&"}:
+                self.completionTriggered.emit()
             return
 
         if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
@@ -445,7 +448,6 @@ class CodeEditor(QPlainTextEdit):
             cursor.insertText("\n" + indent)
             self.setTextCursor(cursor)
             return
-        typed = event.text()
         super().keyPressEvent(event)
         if typed in {"[", ",", "&"}:
             # Estos delimitadores abren o continúan construcciones de Piper;
