@@ -4,11 +4,12 @@ No analiza errores ni corrige terminadores. Los colores de sintaxis pertenecen
 al resaltador de cada buffer; este widget dibuja números, guías y coincidencias.
 """
 
+from html import escape
 import re
 
-from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
 from ..ui.theme import monospace_font
 
@@ -41,6 +42,9 @@ class CodeEditor(QPlainTextEdit):
         self.line_numbers = _LineNumbers(self)
         self._colors = {}
         self._search_matches = []
+        self._diagnostic_ranges = []
+        self._diagnostic_lines = set()
+        self.viewport().setMouseTracking(True)
         self.set_code_font_size(14)
         self.blockCountChanged.connect(self._update_margin)
         self.updateRequest.connect(self._update_numbers)
@@ -121,14 +125,78 @@ class CodeEditor(QPlainTextEdit):
             highlight.cursor = match
             highlight.format.setBackground(QColor(self._colors["raised"]))
             selections.append(highlight)
+        for cursor, _diagnostic in self._diagnostic_ranges:
+            underline = QTextEdit.ExtraSelection()
+            underline.cursor = cursor
+            underline.format.setBackground(QColor(self._colors["error-soft"]))
+            underline.format.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+            underline.format.setUnderlineColor(QColor(self._colors["error"]))
+            selections.append(underline)
         self.setExtraSelections(selections)
 
     def setDocument(self, document):
         """Cambia de buffer y elimina decoraciones que pertenecían al anterior."""
         self._search_matches = []
+        self._diagnostic_ranges = []
+        self._diagnostic_lines = set()
+        QToolTip.hideText()
         super().setDocument(document)
         self._update_margin()
         self._highlight_current_line()
+
+    def _text_position(self, line: int, column: int) -> int:
+        """Convierte una columna Unicode de Python a una posición UTF-16 de Qt."""
+        block = self.document().findBlockByNumber(max(0, min(line, self.blockCount() - 1)))
+        prefix = block.text()[:max(0, column)]
+        return block.position() + len(prefix.encode("utf-16-le")) // 2
+
+    def set_diagnostics(self, diagnostics):
+        """Decora rangos del buffer actual sin cambiar texto, selección ni Deshacer.
+
+        Un rango vacío representa un símbolo ausente. Se conserva vacío para
+        dibujar una marca de inserción en paintEvent, sin subrayar un carácter
+        correcto ni desplazar la navegación al token anterior o siguiente.
+        """
+        self._diagnostic_ranges = []
+        self._diagnostic_lines = set()
+        for diagnostic in diagnostics:
+            if not diagnostic.has_location:
+                continue
+            start = self._text_position(diagnostic.line, diagnostic.column)
+            end = self._text_position(
+                diagnostic.end_line if diagnostic.end_line is not None else diagnostic.line,
+                diagnostic.end_column if diagnostic.end_column is not None else diagnostic.column,
+            )
+            cursor = QTextCursor(self.document())
+            cursor.setPosition(start)
+            if end > start:
+                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            self._diagnostic_ranges.append((cursor, diagnostic))
+            self._diagnostic_lines.add(diagnostic.line)
+        self._highlight_current_line()
+        self.line_numbers.update()
+        self.viewport().update()
+        QToolTip.hideText()
+
+    def diagnostic_tooltip(self, position: int) -> str:
+        """Construye texto seguro para el tooltip de los errores bajo una posición."""
+        messages = [f"{escape(d.phase_label)}: {escape(d.message)}"
+                    for cursor, d in self._diagnostic_ranges
+                    if cursor.selectionStart() <= position < cursor.selectionEnd()
+                    or cursor.selectionStart() == cursor.selectionEnd() == position]
+        return "<qt>" + "<br>".join(dict.fromkeys(messages)) + "</qt>" if messages else ""
+
+    def viewportEvent(self, event):
+        """Muestra el diagnóstico al pasar el mouse por su rango subrayado."""
+        if event.type() == QEvent.Type.ToolTip:
+            text = self.diagnostic_tooltip(self.cursorForPosition(event.pos()).position())
+            if text:
+                QToolTip.showText(event.globalPos(), text, self.viewport())
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+        return super().viewportEvent(event)
 
     def search_flags(self, case_sensitive=False, whole_words=False):
         """Construye las opciones nativas de búsqueda literal, sin expresiones regulares."""
@@ -183,9 +251,8 @@ class CodeEditor(QPlainTextEdit):
 
     def go_to_position(self, line: int, column: int):
         """Navega a una ubicación basada en cero reportada por pipoc."""
-        block = self.document().findBlockByNumber(max(0, min(line, self.blockCount() - 1)))
-        cursor = QTextCursor(block)
-        cursor.setPosition(block.position() + min(max(0, column), len(block.text())))
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(self._text_position(line, column))
         self.setTextCursor(cursor)
         self.centerCursor()
         self.setFocus()
@@ -274,7 +341,11 @@ class CodeEditor(QPlainTextEdit):
                          self.line_numbers.width() - 1, event.rect().bottom())
         active_block = self.textCursor().blockNumber()
         for block, top, height in self._visible_blocks(event.rect().bottom()):
+            has_error = block.blockNumber() in self._diagnostic_lines
+            if has_error:
+                painter.fillRect(3, top + 2, 3, max(1, height - 4), QColor(self._colors["error"]))
             painter.setPen(QColor(
+                self._colors["error"] if has_error else
                 self._colors["accent"] if block.blockNumber() == active_block
                 else self._colors["dim"]
             ))
@@ -301,3 +372,17 @@ class CodeEditor(QPlainTextEdit):
             for column in range(0, columns, 4):
                 x = int(origin + self.document().documentMargin() + column * space)
                 painter.drawLine(x, top, x, top + height)
+        # Los símbolos que faltan no tienen texto que colorear. Una marca fija
+        # de dos píxeles señala su posición exacta, incluso al final del archivo
+        # o antes de un comentario. Es una decoración: no inserta caracteres.
+        painter.setPen(QPen(QColor(self._colors["error"]), 2))
+        for cursor, _diagnostic in self._diagnostic_ranges:
+            if cursor.hasSelection():
+                continue
+            rect = self.cursorRect(cursor)
+            if not rect.intersects(self.viewport().rect()):
+                continue
+            x, top, bottom = rect.left() + 1, rect.top() + 2, rect.bottom() - 2
+            painter.drawLine(x, top, x, bottom)
+            painter.drawLine(x - 2, top, x + 2, top)
+            painter.drawLine(x - 2, bottom, x + 2, bottom)

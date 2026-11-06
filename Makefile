@@ -60,17 +60,17 @@ build/lexer.c: src/analysis/lexer.l build/parser.h include/ast.h
 	@mkdir -p build
 	$(FLEX) -o build/lexer.c src/analysis/lexer.l
 
-build/parser.o: build/parser.c build/parser.h include/ast.h include/symbol_table.h
+build/parser.o: build/parser.c build/parser.h include/ast.h include/symbol_table.h include/diagnostic.h
 	$(CC) $(CFLAGS) -c build/parser.c -o $@
 
 # Flex 2.6.4 genera una comparación signed/unsigned fuera del código del equipo.
-build/lexer.o: build/lexer.c build/parser.h include/ast.h
+build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 	$(CC) $(CFLAGS) -Wno-sign-compare -c build/lexer.c -o $@
 
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
-              include/codegen.h include/ast_to_json.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \

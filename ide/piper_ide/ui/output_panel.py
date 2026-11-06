@@ -15,7 +15,7 @@ class OutputPanel(QTabWidget):
     """Visores de solo lectura; el cierre se comunica a la acción Ver de la ventana."""
 
     closeRequested = Signal()
-    diagnosticActivated = Signal(int, int)
+    diagnosticActivated = Signal(object)
 
     def __init__(self, parent=None):
         """Crea estados vacíos honestos y una consola de mensajes reales del IDE."""
@@ -37,7 +37,8 @@ class OutputPanel(QTabWidget):
         row = QHBoxLayout()
         self.suggestion_icon = QLabel()
         row.addWidget(self.suggestion_icon)
-        self.problems_empty = QLabel("Pipoc no reportó errores. Sus diagnósticos aparecerán aquí.")
+        self.problems_empty = QLabel("Pendiente de revisión del archivo activo.")
+        self.problems_empty.setTextFormat(Qt.TextFormat.PlainText)
         self.problems_empty.setWordWrap(True)
         self.problems_empty.setProperty("role", "muted")
         row.addWidget(self.problems_empty, 1)
@@ -45,6 +46,7 @@ class OutputPanel(QTabWidget):
         self.problems_list = QListWidget()
         self.problems_list.setAccessibleName("Diagnósticos de pipoc")
         self.problems_list.itemActivated.connect(self._activate_diagnostic)
+        self.problems_list.itemClicked.connect(self._activate_diagnostic)
         layout.addWidget(self.problems_list, 1)
         self.problems_list.hide()
         self.addTab(problems, "Problemas")
@@ -88,7 +90,6 @@ class OutputPanel(QTabWidget):
         """Abre la terminal, separa la ejecución y publica el comando exacto."""
         self.setCurrentIndex(1)
         self.console.appendPlainText("\n$ " + command)
-        self.clear_diagnostics()
 
     def append_process_output(self, _channel: str, text: str):
         """Inserta chunks del proceso sin añadir saltos que pipoc no emitió."""
@@ -98,35 +99,33 @@ class OutputPanel(QTabWidget):
         self.console.setTextCursor(cursor)
         self.console.ensureCursorVisible()
 
-    def clear_diagnostics(self):
-        self.problems_list.clear()
-        self.problems_list.hide()
-        self.problems_empty.show()
-        self.setTabText(0, "Problemas")
+    def set_diagnostics(self, diagnostics, status: str):
+        """Muestra errores de los abiertos con identidad completa para navegar.
 
-    def set_diagnostics(self, diagnostics):
-        """Reemplaza resultados y conserva línea/columna para navegación."""
+        El estado del archivo activo se muestra también si hay errores en otro
+        buffer. Una revisión automática no cambia la pestaña ni toma el foco.
+        """
+        self.problems_empty.setText(status)
         self.problems_list.clear()
         for diagnostic in diagnostics:
             item = QListWidgetItem(
-                f"{diagnostic.location_label}  {diagnostic.message}"
+                f"{diagnostic.display_name}  {diagnostic.location_label}  "
+                f"[{diagnostic.phase_label}] {diagnostic.message}"
             )
-            item.setData(Qt.ItemDataRole.UserRole, (diagnostic.line, diagnostic.column))
+            item.setData(Qt.ItemDataRole.UserRole, diagnostic)
+            item.setToolTip(str(diagnostic.source) if diagnostic.source else diagnostic.display_name)
             self.problems_list.addItem(item)
         has_items = self.problems_list.count() > 0
         self.problems_list.setVisible(has_items)
-        self.problems_empty.setVisible(not has_items)
         self.setTabText(
             0,
             f"Problemas ({self.problems_list.count()})" if has_items else "Problemas",
         )
-        if has_items:
-            self.setCurrentIndex(0)
 
     def _activate_diagnostic(self, item):
-        location = item.data(Qt.ItemDataRole.UserRole)
-        if location:
-            self.diagnosticActivated.emit(*location)
+        diagnostic = item.data(Qt.ItemDataRole.UserRole)
+        if diagnostic:
+            self.diagnosticActivated.emit(diagnostic)
 
     def apply_theme(self, colors):
         """Actualiza los iconos cuyo trazo no cambia mediante QSS."""

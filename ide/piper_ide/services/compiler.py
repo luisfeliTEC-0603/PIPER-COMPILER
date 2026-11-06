@@ -2,14 +2,12 @@
 
 import os
 from pathlib import Path
-import re
 import shutil
 
 from PySide6.QtCore import QObject, Signal
 
 from ..infrastructure.processes import ProcessRunner
 from ..models.compilation import CompilationInvocation, CompilationResult
-from ..models.diagnostic import Diagnostic
 
 
 FORMATS = ("bin", "asm", "sch", "mem", "ins", "all")
@@ -86,35 +84,6 @@ def build_invocation(source: Path, project_root: Path,
     )
 
 
-_LOCATED = re.compile(r"^(?:(?:.+?):)?(\d+):(\d+):\s*(.+)$")
-_SEMANTIC = re.compile(r"^\[Error Semántico\] Línea (\d+):\s*(.+)$")
-
-
-def parse_diagnostics(stderr: str) -> tuple[Diagnostic, ...]:
-    """Interpreta errores léxicos, sintácticos y semánticos de pipoc."""
-    diagnostics: list[Diagnostic] = []
-    generic: list[str] = []
-    for raw_line in stderr.splitlines():
-        line = raw_line.strip()
-        located = _LOCATED.match(line)
-        semantic = _SEMANTIC.match(line)
-        if located:
-            diagnostics.append(Diagnostic(
-                max(0, int(located.group(1)) - 1),
-                max(0, int(located.group(2)) - 1),
-                located.group(3),
-            ))
-        elif semantic:
-            diagnostics.append(Diagnostic(
-                max(0, int(semantic.group(1)) - 1), 0, semantic.group(2),
-            ))
-        elif "error:" in line.casefold() and not line.startswith("[pipoc]"):
-            generic.append(line)
-    if not diagnostics and generic:
-        diagnostics.append(Diagnostic(0, 0, generic[0]))
-    return tuple(diagnostics)
-
-
 class CompilerService(QObject):
     """Coordina una compilación a la vez y publica resultados tipados."""
 
@@ -156,7 +125,7 @@ class CompilerService(QObject):
         if invocation is None:
             return
         result = CompilationResult(
-            invocation, exit_code, stdout, stderr, parse_diagnostics(stderr)
+            invocation, exit_code, stdout, stderr
         )
         self.finished.emit(result)
 

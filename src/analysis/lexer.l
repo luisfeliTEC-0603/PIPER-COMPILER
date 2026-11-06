@@ -15,6 +15,7 @@
  * Debe ir ANTES de parser.h porque YYSTYPE (definido en parser.h)
  * usa esos tipos en su unión */
 #include "ast.h"
+#include "diagnostic.h"
 
 /* parser.h (generado por Bison) define los tokens (TOK_*),
  * YYSTYPE, YYLTYPE y declara yylex() */
@@ -36,6 +37,11 @@
  * envoltorio para mostrar solamente los tokens que realmente entrega. */
 #define YY_DECL int yylex_scan(void)
 static int trace_tokens = 0;
+static SourceLocation block_comment_start;
+/* Solo tokens entregados al parser: espacios y comentarios no reemplazan la
+ * ubicación previa. Permite situar un terminador ausente antes del lookahead. */
+static SourceLocation previous_token_location;
+static SourceLocation last_token_location;
 void lexer_set_trace(int enabled);
 int yylex(void);
 
@@ -52,6 +58,7 @@ static char *lexer_strdup_unquoted(const char *text, int length);
     do { \
         yylloc.first_line = yylloc.last_line = 1; \
         yylloc.first_column = yylloc.last_column = 1; \
+        previous_token_location = last_token_location = source_location_make(0, 0, 0, 0); \
     } while (0)
 %}
 
@@ -69,7 +76,11 @@ WHITESPACE  [ \t\r\n]+
 
 "~~"[^\n]*              { /* comentario de una línea: ignorar */ }
 
-"***"                   { BEGIN(BLOCK_COMMENT); }
+"***"                   {
+    block_comment_start = source_location_make(yylloc.first_line, yylloc.first_column,
+                                               yylloc.last_line, yylloc.last_column);
+    BEGIN(BLOCK_COMMENT);
+}
 
 <BLOCK_COMMENT>"***"    { BEGIN(INITIAL); }
 
@@ -78,6 +89,13 @@ WHITESPACE  [ \t\r\n]+
 <BLOCK_COMMENT>.        { /* consumir cualquier otro carácter */ }
 
 <BLOCK_COMMENT><<EOF>>  {
+    /* Se señala el comentario desde su apertura, no el último byte consumido. */
+    yylloc.first_line = block_comment_start.first_line;
+    yylloc.first_column = block_comment_start.first_column;
+    diagnostics_record(DIAGNOSTIC_LEXICAL,
+        source_location_make(yylloc.first_line, yylloc.first_column,
+                             yylloc.last_line, yylloc.last_column),
+        "Comentario de bloque sin cerrar; se esperaba ***.");
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): comentario de bloque sin cerrar\n",
             yylloc.first_line, yylloc.first_column);
@@ -185,6 +203,10 @@ WHITESPACE  [ \t\r\n]+
     /* Si hubo overflow, no se convirtió nada, o sobraron caracteres,
      * reportar error y devolver TOK_INVALID */
     if (errno == ERANGE || endptr == yytext || *endptr != '\0') {
+        diagnostics_record(DIAGNOSTIC_LEXICAL,
+            source_location_make(yylloc.first_line, yylloc.first_column,
+                                 yylloc.last_line, yylloc.last_column),
+            "Entero fuera de rango: '%s'.", yytext);
         fprintf(stderr,
                 "%d:%d: [!ERROR] (lexer.l): entero fuera de rango '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
@@ -212,6 +234,10 @@ WHITESPACE  [ \t\r\n]+
 
     /* Cualquier otro carácter no reconocido: error léxico */ 
 . {
+    diagnostics_record(DIAGNOSTIC_LEXICAL,
+        source_location_make(yylloc.first_line, yylloc.first_column,
+                             yylloc.last_line, yylloc.last_column),
+        "Carácter no reconocido: '%s'.", yytext);
     fprintf(stderr,
             "%d:%d: [!ERROR] (lexer.l): carácter no reconocido '%s'\n",
             yylloc.first_line, yylloc.first_column, yytext);
@@ -219,7 +245,12 @@ WHITESPACE  [ \t\r\n]+
     return TOK_INVALID;
 }
 
-<<EOF>>             { return 0; }
+<INITIAL><<EOF>> {
+    /* EOF es un punto vacío después del último byte, incluso tras espacios. */
+    yylloc.first_line = yylloc.last_line;
+    yylloc.first_column = yylloc.last_column;
+    return 0;
+}
 
 %%
 
@@ -235,12 +266,24 @@ void lexer_set_trace(int enabled)
 int yylex(void)
 {
     int token = yylex_scan();
+    previous_token_location = last_token_location;
+    if (token != 0) {
+        last_token_location = source_location_make(
+            yylloc.first_line, yylloc.first_column, yylloc.last_line, yylloc.last_column);
+    }
     if (trace_tokens && token != 0) {
         fprintf(stdout, "[Léxico] %d:%d lexema '%s'\n",
                 yylloc.first_line, yylloc.first_column, yytext);
         fflush(stdout);
     }
     return token;
+}
+
+/* El parser consulta este dato únicamente al construir un diagnóstico.
+ * En EOF también se conserva el último token real, sin incluir comentarios. */
+SourceLocation lexer_previous_token_location(void)
+{
+    return previous_token_location;
 }
 
 /* Actualiza yylloc (línea/columna) con el texto del token */

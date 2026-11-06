@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import shlex
 
-from .diagnostic import Diagnostic
-
 
 @dataclass(frozen=True, slots=True)
 class CompilationInvocation:
@@ -27,13 +25,12 @@ class CompilationInvocation:
 
 @dataclass(frozen=True, slots=True)
 class CompilationResult:
-    """Salida completa, estado y diagnósticos de una compilación terminada."""
+    """Salida y estado de compilación; la revisión estructurada tiene su servicio."""
 
     invocation: CompilationInvocation
     exit_code: int
     stdout: str
     stderr: str
-    diagnostics: tuple[Diagnostic, ...]
 
     @property
     def succeeded(self) -> bool:

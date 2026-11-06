@@ -13,9 +13,11 @@
 %{
 #include "ast.h"
 #include "symbol_table.h"
+#include "diagnostic.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Convierte una ubicación de Bison al tipo público utilizado por el AST. */
 #define AST_LOCATION(location)                                             \
@@ -27,6 +29,8 @@
  * obtener el siguiente token de la entrada.
  */
 int yylex(void);
+/* Ubicación del token real anterior al lookahead; la mantiene el lexer. */
+SourceLocation lexer_previous_token_location(void);
 
 /*
  * Bison llama a yyerror() cuando la secuencia de tokens no coincide con
@@ -54,6 +58,10 @@ static DataType symbol_type(PiperType type)
  * datos y el AST podrá conservarlos para reportar errores útiles.
  */
 %locations
+/* Bison calcula anticipaciones válidas para explicar el error. No se modifica
+ * la gramática; LAC evita listar tokens que luego serían rechazados. */
+%define parse.error custom
+%define parse.lac full
 
 /* yyparse() entrega la raíz construida mediante el puntero del llamador. */
 %parse-param { AstNode **result }
@@ -86,49 +94,49 @@ static DataType symbol_type(PiperType type)
  * Palabras reservadas. El lexer devolverá uno de estos tokens cuando
  * encuentre exactamente la palabra correspondiente.
  */
-%token TOK_CREATE
-%token TOK_ROUTINE
-%token TOK_LOOP
-%token TOK_ALWHEN
-%token TOK_WHEN
-%token TOK_FALLBACK
-%token TOK_STORE
-%token TOK_BRING
-%token TOK_FROM
-%token TOK_BREAK
-%token TOK_OUTPUT
-%token TOK_NONE
+%token TOK_CREATE "create"
+%token TOK_ROUTINE "routine"
+%token TOK_LOOP "loop"
+%token TOK_ALWHEN "alwhen"
+%token TOK_WHEN "when"
+%token TOK_FALLBACK "fallback"
+%token TOK_STORE "store"
+%token TOK_BRING "bring"
+%token TOK_FROM "from"
+%token TOK_BREAK "break"
+%token TOK_OUTPUT "output"
+%token TOK_NONE "none"
 
 /* Operadores aritméticos, comparativos y lógicos. */
-%token TOK_PLUS
-%token TOK_MINUS
-%token TOK_STAR
-%token TOK_SLASH
-%token TOK_PERCENT
-%token TOK_CARET
-%token TOK_INCREMENT
-%token TOK_DECREMENT
-%token TOK_EQUAL
-%token TOK_NOT_EQUAL
-%token TOK_LESS
-%token TOK_LESS_EQUAL
-%token TOK_GREATER
-%token TOK_GREATER_EQUAL
-%token TOK_AND
-%token TOK_OR
-%token TOK_XOR
-%token TOK_NOT
+%token TOK_PLUS "+"
+%token TOK_MINUS "-"
+%token TOK_STAR "*"
+%token TOK_SLASH "/"
+%token TOK_PERCENT "%"
+%token TOK_CARET "^"
+%token TOK_INCREMENT "++"
+%token TOK_DECREMENT "--"
+%token TOK_EQUAL "="
+%token TOK_NOT_EQUAL "!="
+%token TOK_LESS "<"
+%token TOK_LESS_EQUAL "<="
+%token TOK_GREATER ">"
+%token TOK_GREATER_EQUAL ">="
+%token TOK_AND "and"
+%token TOK_OR "or"
+%token TOK_XOR "xor"
+%token TOK_NOT "~"
 
 /* Símbolos que delimitan bloques, listas, instrucciones e índices. */
-%token TOK_LBRACE
-%token TOK_RBRACE
-%token TOK_LBRACKET
-%token TOK_RBRACKET
-%token TOK_DOT
-%token TOK_COMMA
-%token TOK_AMPERSAND
-%token TOK_PIPE
-%token TOK_ARROW
+%token TOK_LBRACE "{"
+%token TOK_RBRACE "}"
+%token TOK_LBRACKET "["
+%token TOK_RBRACKET "]"
+%token TOK_DOT "."
+%token TOK_COMMA ","
+%token TOK_AMPERSAND "&"
+%token TOK_PIPE "|"
+%token TOK_ARROW "->"
 
 /*
  * Literales e identificadores.
@@ -138,23 +146,23 @@ static DataType symbol_type(PiperType type)
  * mientras TOK_CONST_INT transportará el número mediante
  * yylval.integer_value.
  */
-%token TOK_TRUE
-%token TOK_FALSE
-%token <integer_value> TOK_CONST_INT
-%token <text> TOK_IDENTIFIER
-%token <text> TOK_FILE_PATH
+%token TOK_TRUE "true"
+%token TOK_FALSE "false"
+%token <integer_value> TOK_CONST_INT "entero"
+%token <text> TOK_IDENTIFIER "identificador"
+%token <text> TOK_FILE_PATH "ruta .rwt"
 
 /* Token interno para que el lexer reporte una unidad no reconocida. */
-%token <text> TOK_INVALID
+%token <text> TOK_INVALID "token inválido"
 
 /* Palabras reservadas que representan los tipos definidos por Piper. */
-%token TOK_BOOL
-%token TOK_B8
-%token TOK_UB8
-%token TOK_B16
-%token TOK_UB16
-%token TOK_B32
-%token TOK_UB32
+%token TOK_BOOL "bool"
+%token TOK_B8 "B8"
+%token TOK_UB8 "uB8"
+%token TOK_B16 "B16"
+%token TOK_UB16 "uB16"
+%token TOK_B32 "B32"
+%token TOK_UB32 "uB32"
 
 /*
  * Precedencia de menor a mayor. Las operaciones aritméticas son asociativas
@@ -1046,10 +1054,99 @@ expression_list:
  * Implementación mínima del manejador de errores requerido por Bison.
  * El lexer será responsable de mantener yylloc actualizado.
  */
+static void report_syntax_error_at(SourceLocation location, const char *message)
+{
+    diagnostics_record(DIAGNOSTIC_SYNTAX, location, "%s", message);
+    fprintf(stderr, "%d:%d: error sintáctico: %s\n",
+            location.first_line, location.first_column, message);
+}
+
 void yyerror(AstNode **result, SymbolTable *symbols, const char *message)
 {
     (void)result;
     (void)symbols;
-    fprintf(stderr, "%d:%d: error sintáctico: %s\n",
-            yylloc.first_line, yylloc.first_column, message);
+    report_syntax_error_at(AST_LOCATION(yylloc), message);
+}
+
+/* Un token que inicia otra instrucción, cierra un bloque o termina el archivo
+ * no puede continuar la expresión anterior. Si '.' es válido aquí, su ausencia
+ * se explica mejor en el punto de inserción que sobre la siguiente palabra.
+ * Identificadores/literales son ambiguos (también podría faltar un operador):
+ * se usan solo cuando Bison espera exclusivamente '.', como en declaraciones.
+ * TOK_INVALID se excluye para conservar el error léxico y su ubicación real. */
+static int follows_missing_dot(yysymbol_kind_t found, int expected_count)
+{
+    switch (found) {
+    case YYSYMBOL_YYEOF:
+    case YYSYMBOL_TOK_RBRACE:
+    case YYSYMBOL_TOK_CREATE:
+    case YYSYMBOL_TOK_ROUTINE:
+    case YYSYMBOL_TOK_BRING:
+    case YYSYMBOL_TOK_WHEN:
+    case YYSYMBOL_TOK_ALWHEN:
+    case YYSYMBOL_TOK_LOOP:
+    case YYSYMBOL_TOK_OUTPUT:
+    case YYSYMBOL_TOK_BREAK:
+    case YYSYMBOL_TOK_LBRACE:
+        return 1;
+    case YYSYMBOL_TOK_IDENTIFIER:
+    case YYSYMBOL_TOK_CONST_INT:
+    case YYSYMBOL_TOK_TRUE:
+    case YYSYMBOL_TOK_FALSE:
+    case YYSYMBOL_TOK_LBRACKET:
+    case YYSYMBOL_TOK_MINUS:
+    case YYSYMBOL_TOK_NOT:
+        return expected_count == 1;
+    default:
+        return 0;
+    }
+}
+
+/* Bison conserva la decisión sintáctica. Este callback solo convierte su token
+ * encontrado y sus anticipaciones en una explicación para consola y JSON. */
+static int yyreport_syntax_error(const yypcontext_t *context,
+                                 AstNode **result, SymbolTable *symbols)
+{
+    /* Bison devuelve cero si el arreglo no alcanza para todos los esperados.
+     * Reservar sus terminales evita perder la explicación en expresiones. */
+    yysymbol_kind_t expected[YYNTOKENS];
+    int count = yypcontext_expected_tokens(context, expected, YYNTOKENS);
+    char message[1024];
+    size_t used;
+    if (count < 0) return 2; /* Convención del callback de Bison para YYNOMEM. */
+    yysymbol_kind_t found_token = yypcontext_token(context);
+    SourceLocation previous = lexer_previous_token_location();
+    for (int index = 0; index < count; ++index) {
+        if (expected[index] == YYSYMBOL_TOK_DOT && previous.last_line > 0 &&
+            follows_missing_dot(found_token, count)) {
+            /* Un rango vacío representa inserción, sin culpar al token vecino.
+             * No se cambia yylloc ni se repara el programa automáticamente. */
+            SourceLocation insertion = source_location_make(
+                previous.last_line, previous.last_column,
+                previous.last_line, previous.last_column);
+            if (found_token == YYSYMBOL_YYEOF) {
+                (void)snprintf(message, sizeof(message),
+                               "Falta '.' al final de la instrucción.");
+            } else {
+                (void)snprintf(message, sizeof(message),
+                               "Falta '.' al final de la instrucción anterior, antes de '%s'.",
+                               yysymbol_name(found_token));
+            }
+            report_syntax_error_at(insertion, message);
+            return 0;
+        }
+    }
+    const char *found = yypcontext_token(context) == YYSYMBOL_YYEOF
+        ? "fin del archivo" : yysymbol_name(yypcontext_token(context));
+    (void)snprintf(message, sizeof(message), "Se encontró %s.", found);
+    used = strlen(message);
+    for (int index = 0; index < count && used < sizeof(message) - 1; ++index) {
+        (void)snprintf(message + used, sizeof(message) - used, "%s%s",
+                       index == 0 ? " Se esperaba " : " o ",
+                       expected[index] == YYSYMBOL_YYEOF ? "fin del archivo" :
+                       yysymbol_name(expected[index]));
+        used = strlen(message);
+    }
+    yyerror(result, symbols, message);
+    return 0;
 }

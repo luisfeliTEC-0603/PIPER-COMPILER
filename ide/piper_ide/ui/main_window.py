@@ -20,6 +20,7 @@ from ..models.project import Project
 from ..services.compiler import CompilerConfigurationError, CompilerService
 from .appearance_panel import AppearancePanel
 from .document_controller import DocumentController
+from .diagnostic_controller import DiagnosticController
 from .explorer import Explorer
 from .icons import line_icon
 from .output_panel import OutputPanel
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self.documents = DocumentController(self.editor, self)
         self.compiler = CompilerService(self)
         self.completion = CompletionController(self.editor, self)
+        self.diagnostics = DiagnosticController(self.documents, self.editor, self.output_panel, self)
         self._menus()
         self._connect_components()
         self.search_timer = QTimer(self)
@@ -123,7 +125,6 @@ class MainWindow(QMainWindow):
         self.editor.undoAvailable.connect(lambda available: self._update_actions())
         self.editor.redoAvailable.connect(lambda available: self._update_actions())
         self.editor.textChanged.connect(self._schedule_search)
-        self.editor.textChanged.connect(self.output_panel.clear_diagnostics)
         self.search_bar.queryChanged.connect(self._schedule_search)
         self.search_bar.findRequested.connect(self.find_next)
         self.search_bar.closeRequested.connect(self.close_search)
@@ -132,7 +133,6 @@ class MainWindow(QMainWindow):
         self.appearance.themeChanged.connect(self.set_theme)
         self.appearance.fontSizeChanged.connect(self.set_code_font_size)
         self.output_panel.closeRequested.connect(lambda: self.panel_action.setChecked(False))
-        self.output_panel.diagnosticActivated.connect(self.editor.go_to_position)
         self.save_button.clicked.connect(lambda: self.documents.save())
         self.compile_button.clicked.connect(self.compile_active)
         self.compiler.started.connect(self._compilation_started)
@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.compiler.finished.connect(self._compilation_finished)
         self.compiler.failed.connect(self._compilation_failed)
         self.completion.unavailable.connect(self._completion_unavailable)
+        self.diagnostics.message.connect(self.output_panel.append_message)
 
     def _topbar(self):
         """Construye la barra amplia del diseño gráfico original."""
@@ -376,6 +377,7 @@ class MainWindow(QMainWindow):
             info.path.parent if info.path else Path.cwd()
         )
         self.completion.configure(info.language == "piper" and not info.read_only, completion_root)
+        self.diagnostics.refresh()
 
     def _update_actions(self):
         """Evita operaciones de escritura sobre generados sin bloquear Guardar como."""
@@ -435,9 +437,12 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def _compilation_finished(self, result):
-        """Publica diagnósticos, artefactos reales y restaura los controles."""
+        """Publica artefactos y solicita el reporte estructurado del buffer vigente."""
         self.compile_button.setText("Compilar  F5")
-        self.output_panel.set_diagnostics(result.diagnostics)
+        # stderr queda en Consola. Sus mensajes pueden corresponder a otro
+        # archivo o a una versión ya editada: los subrayados usan el JSON y
+        # la identidad/versionado del controlador, nunca el buffer a ciegas.
+        self.diagnostics.check_now()
         self.explorer.refresh()
         if result.succeeded:
             artifacts = [path for path in result.invocation.artifacts if path.exists()]
@@ -570,6 +575,7 @@ class MainWindow(QMainWindow):
         if self.documents.can_close_window():
             self.compiler.stop()
             self.completion.stop()
+            self.diagnostics.stop()
             event.accept()
         else:
             event.ignore()

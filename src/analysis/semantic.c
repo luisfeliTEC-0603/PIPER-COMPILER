@@ -1,4 +1,5 @@
 #include "semantic.h"
+#include "diagnostic.h"
 #include <limits.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -67,6 +68,9 @@ static void error(Visitor *v, AstNode *n, const char *format, ...)
     v->errors++;
     fprintf(stderr, "[Error Semántico] Línea %d: ", n ? n->location.first_line : 0);
     va_start(args, format);
+    diagnostics_recordv(DIAGNOSTIC_SEMANTIC,
+                        n ? n->location : source_location_make(0, 0, 0, 0),
+                        format, args);
     vfprintf(stderr, format, args);
     va_end(args);
     fputc('\n', stderr);
