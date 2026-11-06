@@ -22,6 +22,7 @@ class _LineNumbers(QWidget):
 class CodeEditor(QPlainTextEdit):
 
     completionRequested = Signal()
+    completionTriggered = Signal()
 
     _AUTO_CLOSE_PAIRS = {
         "{": "}",
@@ -444,7 +445,12 @@ class CodeEditor(QPlainTextEdit):
             cursor.insertText("\n" + indent)
             self.setTextCursor(cursor)
             return
+        typed = event.text()
         super().keyPressEvent(event)
+        if typed in {"[", ",", "&"}:
+            # Estos delimitadores abren o continúan construcciones de Piper;
+            # el controlador consulta la tabla aunque aún no exista fragmento.
+            self.completionTriggered.emit()
 
     def _visible_blocks(self, bottom):
         """Produce (bloque, y superior, altura) hasta el límite inferior en píxeles."""

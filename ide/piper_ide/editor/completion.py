@@ -280,11 +280,14 @@ class CompletionController(QObject):
         self._pending_state: _EditorState | None = None
         self._pending_generation = -1
         self._pending_explicit = False
+        self._pending_allow_empty = False
         self._visible_state: _EditorState | None = None
+        self._trigger_all_candidates = False
         editor.textChanged.connect(self.schedule)
         editor.cursorPositionChanged.connect(self._cursor_changed)
         editor.selectionChanged.connect(self._cursor_changed)
         editor.completionRequested.connect(self.request_now)
+        editor.completionTriggered.connect(self.schedule_trigger)
         # El filtro de aplicación permite cerrar al hacer clic en otra zona del
         # IDE, sin interpretar una notificación de foco del compositor como edición.
         QApplication.instance().installEventFilter(self)
@@ -315,6 +318,16 @@ class CompletionController(QObject):
         self._invalidate()
         self._settle_timer.start()
 
+    def schedule_trigger(self):
+        """Permite sugerencias sin fragmento después de un delimitador Piper."""
+        if not self.enabled or self.editor.isReadOnly():
+            return
+        state = self._state()
+        if state.position != state.anchor or state.context.suppressed:
+            return
+        self._trigger_all_candidates = True
+        self._settle_timer.start()
+
     def _settle_edit(self):
         """Programa la consulta después de reunir los eventos de una misma edición.
 
@@ -328,7 +341,7 @@ class CompletionController(QObject):
             return
         state = self._state()
         if (state.position == state.anchor and not state.context.suppressed
-                and state.context.fragment):
+                and (state.context.fragment or self._trigger_all_candidates)):
             self.timer.start()
 
     def request_now(self):
@@ -338,20 +351,23 @@ class CompletionController(QObject):
 
     def _request_automatic(self):
         """Consulta el estado vigente al terminar la pausa de escritura."""
-        self._request(explicit=False)
+        allow_empty = self._trigger_all_candidates
+        self._trigger_all_candidates = False
+        self._request(explicit=False, allow_empty=allow_empty)
 
-    def _request(self, explicit: bool):
+    def _request(self, explicit: bool, allow_empty: bool = False):
         """Liga la respuesta asíncrona a una foto y generación exactas del editor."""
         if not self.enabled or self.editor.isReadOnly():
             return
         state = self._state()
         context = state.context
         if (state.position != state.anchor or context.suppressed
-                or (not explicit and not context.fragment)):
+                or (not explicit and not allow_empty and not context.fragment)):
             return
         self._pending_state = state
         self._pending_generation = self._generation
         self._pending_explicit = explicit
+        self._pending_allow_empty = allow_empty
         self._pending_id = self.service.request(
             context.parse_prefix, self.project_root,
         )
@@ -366,7 +382,9 @@ class CompletionController(QObject):
         if state != self._pending_state:
             return
         current = state.context
-        if current.suppressed or (not self._pending_explicit and not current.fragment):
+        if (current.suppressed
+                or (not self._pending_explicit and not self._pending_allow_empty
+                    and not current.fragment)):
             return
         candidates = completion_items(
             expected, current.fragment, self.editor.toPlainText(),
@@ -468,7 +486,10 @@ class CompletionController(QObject):
         self._generation += 1
         self._pending_id = None
         self._pending_state = None
+        self._pending_explicit = False
+        self._pending_allow_empty = False
         self._visible_state = None
+        self._trigger_all_candidates = False
         self.popup.hide()
         self.model.clear()
 
