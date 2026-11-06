@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..services.diagnostics import DiagnosticService, DiagnosticSnapshot
+from ..editor.quick_fixes import get_quick_fixes, QuickFix
 
 
 class DiagnosticController(QObject):
@@ -39,6 +40,7 @@ class DiagnosticController(QObject):
         self._queued = None
         self._checking = None
         self._last_failure = ""
+        self._quick_fixes_cache = {}
         documents.activeChanged.connect(self.refresh)
         documents.documentsChanged.connect(self.refresh)
         editor.textChanged.connect(self.refresh)
@@ -133,6 +135,7 @@ class DiagnosticController(QObject):
         self._results[result.snapshot.document_id] = result
         self._failures.pop(result.snapshot.document_id, None)
         self._last_failure = ""
+        self._quick_fixes_cache.pop(result.snapshot.document_id, None)
         self._publish()
 
     def _failed(self, snapshot, message):
@@ -152,7 +155,34 @@ class DiagnosticController(QObject):
                        if (result := self._results.get(session.info.id))
                        for diagnostic in result.diagnostics]
         result = self._results.get(self._active_id)
-        self.editor.set_diagnostics(result.diagnostics if result else ())
+
+        active_fixes_map = {}
+        if result:
+            if self._active_id not in self._quick_fixes_cache:
+                self._quick_fixes_cache[self._active_id] = {}
+            cache = self._quick_fixes_cache[self._active_id]
+            source_text = result.snapshot.text
+            for diagnostic in result.diagnostics:
+                key = id(diagnostic)
+                if key not in cache:
+                    if diagnostic.has_location:
+                        cache[key] = get_quick_fixes(
+                            source_text,
+                            diagnostic.message,
+                            diagnostic.line,
+                            diagnostic.column,
+                        )
+                    else:
+                        cache[key] = get_quick_fixes(
+                            source_text, diagnostic.message, 0, 0
+                        )
+                active_fixes_map[key] = cache[key]
+
+        self.editor.set_diagnostics(
+            result.diagnostics if result else (),
+            active_fixes_map,
+        )
+
         snapshot = self._snapshots.get(self._active_id)
         if snapshot is None:
             status = "La revisión de errores está disponible para archivos Piper (.rwt)."
