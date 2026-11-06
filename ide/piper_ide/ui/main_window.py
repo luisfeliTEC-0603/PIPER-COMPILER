@@ -375,7 +375,7 @@ class MainWindow(QMainWindow):
             self.project.root if self.project else
             info.path.parent if info.path else Path.cwd()
         )
-        self.completion.configure(info.language == "piper", completion_root)
+        self.completion.configure(info.language == "piper" and not info.read_only, completion_root)
 
     def _update_actions(self):
         """Evita operaciones de escritura sobre generados sin bloquear Guardar como."""
@@ -478,6 +478,9 @@ class MainWindow(QMainWindow):
         """Informa el fallo de Pipoc sin interrumpir la escritura con un diálogo."""
         self.message_label.setText("Sugerencias no disponibles")
         self.message_label.setToolTip(text)
+        if text != getattr(self, "_last_completion_error", None):
+            self._last_completion_error = text
+            self.output_panel.append_message("Autocompletado: " + text)
 
     def open_search(self):
         """Muestra la búsqueda y reutiliza una selección de una sola línea como consulta."""

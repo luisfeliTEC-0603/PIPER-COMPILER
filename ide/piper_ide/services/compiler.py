@@ -20,12 +20,19 @@ class CompilerConfigurationError(RuntimeError):
 
 
 def find_compiler(project_root: Path) -> Path:
-    """Busca primero bin/pipoc del proyecto y después el PATH del usuario."""
-    candidates = (project_root / "bin" / "pipoc", Path.cwd() / "bin" / "pipoc")
-    for candidate in candidates:
-        candidate = candidate.resolve()
+    """Busca Pipoc junto al proyecto, sus padres, el código del IDE o el PATH.
+
+    Permite iniciar el IDE desde otra carpeta o abrir directamente un archivo
+    bajo tests/codegen. El IDE y Pipoc usan las rutas del mismo entorno Linux/WSL.
+    """
+    root = project_root.resolve()
+    cwd = Path.cwd()
+    roots = dict.fromkeys((root, *root.parents, cwd, *cwd.parents,
+                          Path(__file__).resolve().parents[3]))
+    for directory in roots:
+        candidate = directory / "bin" / "pipoc"
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
+            return candidate.resolve()
     resolved = shutil.which("pipoc")
     if resolved:
         return Path(resolved).resolve()

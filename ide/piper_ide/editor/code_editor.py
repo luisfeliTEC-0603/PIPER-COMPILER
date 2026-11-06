@@ -41,16 +41,11 @@ class CodeEditor(QPlainTextEdit):
         self.line_numbers = _LineNumbers(self)
         self._colors = {}
         self._search_matches = []
-        self._completer = None
         self.set_code_font_size(14)
         self.blockCountChanged.connect(self._update_margin)
         self.updateRequest.connect(self._update_numbers)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self._update_margin()
-
-    def set_completer(self, completer):
-        """Registra el popup para coordinar sus teclas con la edición normal."""
-        self._completer = completer
 
     def set_code_font_size(self, size: int):
         """Cambia el tamaño en píxeles y recalcula tabulaciones de cuatro espacios.
@@ -226,12 +221,6 @@ class CodeEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event):
         """Mantiene la edición directa y añade indentación, sin modos ni cierre de pares."""
-        if (self._completer is not None and self._completer.popup().isVisible()
-                and event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return,
-                                    Qt.Key.Key_Escape, Qt.Key.Key_Tab,
-                                    Qt.Key.Key_Backtab)):
-            event.ignore()
-            return
         if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
                 and event.key() == Qt.Key.Key_Space):
             self.completionRequested.emit()
