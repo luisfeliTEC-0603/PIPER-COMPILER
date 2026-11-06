@@ -1,15 +1,12 @@
-"""Edición, indentación, navegación y búsqueda sobre el documento Qt activo.
-
-No analiza errores ni corrige terminadores. Los colores de sintaxis pertenecen
-al resaltador de cada buffer; este widget dibuja números, guías y coincidencias.
-"""
-
 from html import escape
 import re
 
 from PySide6.QtCore import QEvent, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QToolTip, QWidget
+from PySide6.QtGui import (
+    QAction, QColor, QPainter, QPen, QTextCharFormat, QTextCursor,
+    QTextDocument, QTextFormat,
+)
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QToolTip, QWidget, QMenu
 
 from ..ui.theme import monospace_font
 
@@ -23,15 +20,14 @@ class _LineNumbers(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    """Editor de texto con decoración propia y edición estándar de Qt.
-
-    QPlainTextEdit administra selección, cursor, desplazamiento y Deshacer.
-    Este componente añade un margen independiente para los números y dibuja
-    guías en la indentación. Tab/Shift+Tab y Enter son operaciones de edición,
-    agrupadas para poder deshacerse, no correcciones automáticas del lenguaje.
-    """
 
     completionRequested = Signal()
+
+    _AUTO_CLOSE_PAIRS = {
+        "{": "}",
+        "(": ")",
+        "[": "]",
+    }
 
     def __init__(self, parent=None):
         """Configura texto sin ajuste de línea y sincroniza el margen con Qt."""
@@ -44,11 +40,14 @@ class CodeEditor(QPlainTextEdit):
         self._search_matches = []
         self._diagnostic_ranges = []
         self._diagnostic_lines = set()
+        self._quick_fixes = {}
         self.viewport().setMouseTracking(True)
         self.set_code_font_size(14)
         self.blockCountChanged.connect(self._update_margin)
         self.updateRequest.connect(self._update_numbers)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self._update_margin()
 
     def set_code_font_size(self, size: int):
@@ -75,11 +74,7 @@ class CodeEditor(QPlainTextEdit):
         return 26 + self.fontMetrics().horizontalAdvance("9") * max(2, digits)
 
     def _update_margin(self, *_):
-        """Reserva espacio para los números tras cambiar la fuente o las líneas.
-
-        El argumento opcional absorbe la cantidad emitida por blockCountChanged;
-        el cálculo consulta directamente el estado actual del documento.
-        """
+        """Reserva espacio para los números tras cambiar la fuente o las líneas."""
         self.setViewportMargins(self._margin_width(), 0, 0, 0)
         self._position_numbers()
 
@@ -89,11 +84,7 @@ class CodeEditor(QPlainTextEdit):
         self.line_numbers.setGeometry(QRect(rect.left(), rect.top(), self._margin_width(), rect.height()))
 
     def _update_numbers(self, rect, dy):
-        """Acompaña el desplazamiento vertical y repinta solo el área afectada.
-
-        Qt entrega un desplazamiento dy al hacer scroll y un rectángulo cuando
-        cambia el contenido. Reutilizar esos datos evita repintar todo el margen.
-        """
+        """Acompaña el desplazamiento vertical y repinta solo el área afectada."""
         if dy:
             self.line_numbers.scroll(0, dy)
         else:
@@ -107,11 +98,7 @@ class CodeEditor(QPlainTextEdit):
         self._position_numbers()
 
     def _highlight_current_line(self):
-        """Dibuja el fondo de la línea activa mediante una selección adicional.
-
-        ExtraSelection es una decoración: no modifica ni selecciona el texto
-        real del usuario. Hasta recibir el primer tema no se aplica ningún color.
-        """
+        """Dibuja el fondo de la línea activa y las decoraciones de diagnóstico."""
         if not self._colors:
             return
         selection = QTextEdit.ExtraSelection()
@@ -139,6 +126,7 @@ class CodeEditor(QPlainTextEdit):
         self._search_matches = []
         self._diagnostic_ranges = []
         self._diagnostic_lines = set()
+        self._quick_fixes = {}
         QToolTip.hideText()
         super().setDocument(document)
         self._update_margin()
@@ -150,15 +138,19 @@ class CodeEditor(QPlainTextEdit):
         prefix = block.text()[:max(0, column)]
         return block.position() + len(prefix.encode("utf-16-le")) // 2
 
-    def set_diagnostics(self, diagnostics):
+    def set_diagnostics(self, diagnostics, quick_fixes=None):
         """Decora rangos del buffer actual sin cambiar texto, selección ni Deshacer.
 
         Un rango vacío representa un símbolo ausente. Se conserva vacío para
         dibujar una marca de inserción en paintEvent, sin subrayar un carácter
         correcto ni desplazar la navegación al token anterior o siguiente.
+
+        quick_fixes es un dict {id(diagnostic): [QuickFix, ...]}, opcional, que
+        asocia cada diagnóstico con sus correcciones rápidas disponibles.
         """
         self._diagnostic_ranges = []
         self._diagnostic_lines = set()
+        self._quick_fixes = quick_fixes or {}
         for diagnostic in diagnostics:
             if not diagnostic.has_location:
                 continue
@@ -198,6 +190,72 @@ class CodeEditor(QPlainTextEdit):
             return True
         return super().viewportEvent(event)
 
+    def _show_context_menu(self, pos):
+        """Construye un menú contextual estándar y añade correcciones rápidas.
+
+        Si el clic cae sobre un diagnóstico (o su marca de inserción), se
+        añaden las acciones de ``QuickFix`` disponibles para ese diagnóstico.
+        """
+        menu = self.createStandardContextMenu()
+        click_cursor = self.cursorForPosition(pos)
+        click_pos = click_cursor.position()
+
+        diagnostic_under_cursor = None
+        for diag_cursor, diagnostic in self._diagnostic_ranges:
+            if diag_cursor.hasSelection():
+                if diag_cursor.selectionStart() <= click_pos <= diag_cursor.selectionEnd():
+                    diagnostic_under_cursor = diagnostic
+                    break
+            else:
+                if abs(diag_cursor.position() - click_pos) <= 1:
+                    diagnostic_under_cursor = diagnostic
+                    break
+        if diagnostic_under_cursor is not None:
+            fixes = self._quick_fixes.get(id(diagnostic_under_cursor), [])
+            if fixes:
+                menu.addSeparator()
+                for fix in fixes:
+                    action = QAction(fix.title, menu)
+                    action.triggered.connect(
+                        lambda checked=False, f=fix: self._apply_quick_fix(f)
+                    )
+                    menu.addAction(action)
+
+        menu.exec(self.mapToGlobal(pos))
+
+    def _apply_quick_fix(self, fix):
+        """Aplica una corrección rápida como una única operación de Deshacer."""
+        cursor = QTextCursor(self.document())
+        start_pos = self._text_position(fix.line, fix.column)
+
+        cursor.beginEditBlock()
+        if fix.end_line is not None and fix.end_column is not None:
+            end_pos = self._text_position(fix.end_line, fix.end_column)
+            cursor.setPosition(start_pos)
+            cursor.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText(fix.replacement)
+            final_pos = start_pos + len(fix.replacement)
+        else:
+            cursor.setPosition(start_pos)
+            cursor.insertText(fix.replacement)
+            final_pos = start_pos + len(fix.replacement)
+
+        # Si el reemplazo contiene el marcador de snippet $0, colocar el cursor
+        # allí y eliminar el marcador del texto real del documento.
+        if fix.is_snippet and "$0" in fix.replacement:
+            offset = fix.replacement.find("$0")
+            marker_start = start_pos + offset
+            cleanup = QTextCursor(self.document())
+            cleanup.setPosition(marker_start)
+            cleanup.setPosition(marker_start + 2, QTextCursor.MoveMode.KeepAnchor)
+            cleanup.removeSelectedText()
+            final_pos = marker_start
+
+        cursor.endEditBlock()
+        final_cursor = QTextCursor(self.document())
+        final_cursor.setPosition(final_pos)
+        self.setTextCursor(final_cursor)
+
     def search_flags(self, case_sensitive=False, whole_words=False):
         """Construye las opciones nativas de búsqueda literal, sin expresiones regulares."""
         flags = QTextDocument.FindFlag(0)
@@ -208,12 +266,7 @@ class CodeEditor(QPlainTextEdit):
         return flags
 
     def highlight_search(self, query: str, flags) -> tuple[int, bool]:
-        """Destaca hasta mil coincidencias y devuelve (cantidad, hay_más).
-
-        El límite evita crear millones de selecciones al buscar un carácter en
-        un archivo grande. Siguiente/Anterior sigue buscando en todo el documento.
-        Qt calcula las posiciones, incluyendo correctamente caracteres Unicode.
-        """
+        """Destaca hasta mil coincidencias y devuelve (cantidad, hay_más)."""
         self._search_matches = []
         cursor = QTextCursor(self.document())
         if query:
@@ -286,8 +339,85 @@ class CodeEditor(QPlainTextEdit):
             cursor.setPosition(end.position() + end.length() - 1, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
 
+    def _inside_block_comment(self, position: int) -> bool:
+        """Indica si ``position`` está dentro de un comentario ``*** ... ***``"""
+        text = self.toPlainText()[:position]
+        return text.count("***") % 2 == 1
+
+    def _insert_pair(self, opening: str, closing: str) -> None:
+        """Inserta ``opening + closing`` y deja el cursor entre ambos."""
+        cursor = self.textCursor()
+        selected = cursor.selectedText()
+        cursor.beginEditBlock()
+        if selected:
+            cursor.insertText(opening + selected + closing)
+            cursor.setPosition(cursor.position() - len(closing))
+        else:
+            cursor.insertText(opening + closing)
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
+                                QTextCursor.MoveMode.MoveAnchor, len(closing))
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+
+    def _handle_auto_close(self, typed: str) -> bool:
+        """Intenta aplicar auto-cierre para el texto recién tecleado.
+
+        Retorna ``True`` si la pulsación fue consumida; ``False`` si el editor
+        debe procesar la tecla de forma normal."""
+
+        cursor = self.textCursor()
+
+        # Skip over: no duplicar cierres 
+        if typed in (")", "]", "}") and not cursor.hasSelection():
+            block = cursor.block()
+            position_in_block = cursor.positionInBlock()
+            if (position_in_block < len(block.text())
+                    and block.text()[position_in_block] == typed):
+                cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
+                self.setTextCursor(cursor)
+                return True
+
+        # Delimitador ``|`` para dimensiones de arreglos
+        if typed == "|":
+            block_text = cursor.block().text()
+            pos_in_block = cursor.positionInBlock()
+            if (not cursor.hasSelection()
+                    and pos_in_block < len(block_text)
+                    and block_text[pos_in_block] == "|"):
+                cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
+                self.setTextCursor(cursor)
+                return True
+            self._insert_pair("|", "|")
+            return True
+
+        # Comentario de bloque ``***``
+        if typed == "*":
+            block_text = cursor.block().text()
+            pos_in_block = cursor.positionInBlock()
+            if (pos_in_block >= 2 and block_text[pos_in_block - 2:pos_in_block] == "**"
+                    and not cursor.hasSelection()):
+                if not self._inside_block_comment(cursor.position()):
+                    cursor.beginEditBlock()
+                    cursor.insertText("* ")
+                    cursor.setPosition(cursor.position() + 1)
+                    cursor.insertText("***")
+                    cursor.setPosition(cursor.position() - 4)
+                    cursor.endEditBlock()
+                    self.setTextCursor(cursor)
+                    return True
+                return False
+            return False
+
+        # Pares clásicos ``{}``, ``()``, ``[]``
+        closing = self._AUTO_CLOSE_PAIRS.get(typed)
+        if closing is not None:
+            self._insert_pair(typed, closing)
+            return True
+
+        return False
+
     def keyPressEvent(self, event):
-        """Mantiene la edición directa y añade indentación, sin modos ni cierre de pares."""
+        """Mantiene la edición directa y añade indentación y auto-cierre de pares."""
         if (event.modifiers() == Qt.KeyboardModifier.ControlModifier
                 and event.key() == Qt.Key.Key_Space):
             self.completionRequested.emit()
@@ -295,6 +425,10 @@ class CodeEditor(QPlainTextEdit):
         if self.isReadOnly() or event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
             super().keyPressEvent(event)
             return
+
+        if self._handle_auto_close(event.text()):
+            return
+
         if event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             self._indent(event.key() == Qt.Key.Key_Backtab or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
             return
@@ -313,12 +447,7 @@ class CodeEditor(QPlainTextEdit):
         super().keyPressEvent(event)
 
     def _visible_blocks(self, bottom):
-        """Produce (bloque, y superior, altura) hasta el límite inferior en píxeles.
-
-        Las posiciones del documento se traducen con contentOffset para obtener
-        coordenadas de la zona visible, incluyendo líneas parcialmente cortadas.
-        Números y guías usan el mismo recorrido para mantenerse alineados.
-        """
+        """Produce (bloque, y superior, altura) hasta el límite inferior en píxeles."""
         block = self.firstVisibleBlock()
         while block.isValid():
             top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
@@ -353,11 +482,7 @@ class CodeEditor(QPlainTextEdit):
                              Qt.AlignmentFlag.AlignRight, str(block.blockNumber() + 1))
 
     def paintEvent(self, event):
-        """Deja a Qt dibujar el texto y superpone guías solo en el espacio inicial.
-
-        Las tabulaciones se interpretan como grupos de cuatro columnas para
-        calcular las guías; no se cambia la indentación escrita por el usuario.
-        """
+        """Deja a Qt dibujar el texto y superpone guías y marcas de inserción."""
         super().paintEvent(event)
         if not self._colors:
             return
