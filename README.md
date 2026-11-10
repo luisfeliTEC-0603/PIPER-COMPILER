@@ -12,9 +12,8 @@
 
 **Ir a:** [Directorios](#directorios-del-repositorio) ·
 [Uso del compilador](#salida-del-compilador) ·
-[Ejemplos y salidas](#ejemplos-incluidos) ·
 [Ejecución en PORYGON](#ejecución-integrada-en-porygon) ·
-[Ensamblador](#ensamblador-porygon)
+[Flujo completo](#flujo-completo)
 
 ## Directorios del repositorio
 
@@ -42,136 +41,62 @@ por Git. `make clean` elimina ambas carpetas, incluidos los resultados en
 
 ### Gramática predictiva LL(1)
 
-La fuente legible de la gramática predictiva es
-[`src/analysis/ll1/piper.ll1`](src/analysis/ll1/piper.ll1). Al ejecutar `make`,
-[`tools/generate_ll1.py`](tools/generate_ll1.py) valida que no existan
-conflictos, calcula FIRST y FOLLOW, y genera la tabla C dentro de
-`build/analysis/ll1/`. Esos archivos generados no se editan ni se guardan en
-Git; la tabla queda compilada dentro de `pipoc` y no se reconstruye al
-analizar cada programa.
-
-`make generate` permite regenerar por separado los artefactos de Bison, Flex
-y LL(1). Si `piper.ll1` no cambió, `make` conserva la tabla existente.
-
-La tabla puede inspeccionarse sin proporcionar un programa Piper:
-
-```sh
-bin/pipoc --ll1
-```
-
-El comando imprime únicamente las celdas definidas de la tabla; no ejecuta ni
-muestra una traza paso a paso del parser.
+La gramática [piper.ll1](src/analysis/ll1/piper.ll1) genera FIRST, FOLLOW y la
+tabla predictiva durante `make`. Los archivos quedan en `build/analysis/ll1/`.
+Para consultar la tabla: `bin/pipoc --ll1` (comando 24 de [comandos.md](docs/comandos.md)).
+El parser Bison construye el AST; LL(1) también permite consultar terminales esperados.
 
 ## Salida del compilador
 
-### Extensión de VS Code
-
-Hay una [extensión local de Piper](editors/vscode/README.md) con colores para
-`.rwt`, snippets y comandos de compilación con errores en el panel Problemas.
-Para empaquetarla e instalarla desde la raíz del repositorio:
+Para instalar y abrir el IDE desde la raíz del repositorio (Python 3.11 o superior):
 
 ```sh
-python3 editors/vscode/package.py
-code --install-extension build/vscode-extension/piper-language-0.1.0.vsix
+python3 -m venv ide/.venv
+ide/.venv/bin/python -m pip install -e ./ide
+ide/.venv/bin/python -m piper_ide
 ```
 
-Para compilar desde el editor, ejecutar primero `make all`. La extensión busca
-`bin/pipoc` en el proyecto o `pipoc` en PATH y guarda las salidas en
-`build/vscode/`. También se puede configurar `piper.compilerPath`.
+La creación del entorno y la instalación se hacen una vez; el comando 51 abre el IDE
+(comandos 49–51 en la tabla).
+Ejecutar `make all` antes de compilar desde el IDE.
 
-Todo programa debe declarar una rutina global `main[]`, sin parámetros.
-Por ejemplo: `routine B32 main[] { output 0. }`.
-El analizador semántico rechaza archivos sin esa entrada, incluso si contienen
-sentencias globales. Los fixtures que solo declaran rutinas necesitan agregar
-`main[]` para pasar el análisis semántico.
-
-La invocación mínima ejecuta el pipeline completo y genera `archivo.bin`:
-
-```sh
-bin/pipoc archivo.rwt
-```
-
-Para pedir un artefacto concreto existen cinco comandos simples:
-
-| Comando | Archivos generados |
-| --- | --- |
-| `bin/pipoc asm archivo.rwt` | `archivo.asm`, sin calendarizar |
-| `bin/pipoc sch archivo.rwt` | `archivo.bundles`, calendarizado por slots |
-| `bin/pipoc mem archivo.rwt` | `archivo.mem`, compatible con `$readmemh` |
-| `bin/pipoc ins archivo.rwt` | `archivo.ast.json` y `archivo.symbols.txt` |
-| `bin/pipoc all archivo.rwt` | Todos los anteriores y `archivo.bin` |
-
-En `asm`, `sch` y `mem`, `-o` cambia la ruta del único artefacto. `ins` acepta
-`--ast-json` y `--emit-symbols` porque produce dos archivos. En `all`, `-o`
-solo cambia la ruta del `.bin`; las demás rutas pueden controlarse con
-`--emit-asm`, `--emit-bundles`, `--emit-mem`, `--ast-json` y
-`--emit-symbols`.
-
-Las opciones de diagnóstico `-t`, `-m`, `-p` y `-v` continúan disponibles, al
-igual que la interfaz avanzada mostrada por `bin/pipoc --help`.
-
-## Ejemplos incluidos
-
-| Ejemplo | Fuente Piper | ASM generado | Memoria de instrucciones |
-| --- | --- | --- | --- |
-| Factorial | [factorial.rwt](tests/codegen/factorial.rwt) | [factorial.asm](tests/codegen/generated/factorial.asm) | [factorial.mem](tests/codegen/generated/factorial.mem) |
-| Búsqueda en matriz | [busqueda_matriz.rwt](tests/codegen/busqueda_matriz.rwt) | [busqueda_matriz.asm](tests/codegen/generated/busqueda_matriz.asm) | [busqueda_matriz.mem](tests/codegen/generated/busqueda_matriz.mem) |
-| Autenticación y cuatro rondas Feistel | [crypto_feistel_pipeline.rwt](tests/codegen/crypto_feistel_pipeline.rwt) | [crypto_feistel_pipeline.asm](tests/codegen/generated/crypto_feistel_pipeline.asm) | [crypto_feistel_pipeline.mem](tests/codegen/generated/crypto_feistel_pipeline.mem) |
-
-Sus archivos `.asm` y `.mem` generados se conservan en
-`tests/codegen/generated/`. Esta carpeta no está ignorada por Git y se conserva
-al ejecutar `make clean`. Para regenerarlos desde la raíz del repositorio:
-
-```sh
-make all
-mkdir -p tests/codegen/generated
-for programa in factorial busqueda_matriz crypto_feistel_pipeline; do
-  bin/pipoc mem -o "tests/codegen/generated/$programa.mem" \
-    --emit-asm "tests/codegen/generated/$programa.asm" \
-    "tests/codegen/$programa.rwt"
-done
-```
+Las salidas disponibles y las opciones futuras de IR, CFG y optimización están
+numeradas en [comandos.md](docs/comandos.md), con su estado de implementación.
 
 ## Ejecución integrada en PORYGON
 
-Desde la raíz del compilador, un solo comando compila Piper, genera la memoria
-de instrucciones y ejecuta el procesador:
-
-El ejemplo `call_simple.rwt` se conserva fuera del repositorio. Para usarlo en
-esta sección, definir `PIPER_TESTS_DIR` con la ruta a la carpeta externa de pruebas.
+Desde la raíz de PIPER-COMPILER, con PORYGON en la carpeta hermana. El archivo
+`programa.rwt` debe declarar una rutina global `main[]` sin parámetros.
+Se requieren GCC, Flex, Bison, Python 3 e Icarus Verilog (`iverilog` y `vvp`).
 
 ```sh
-./run.sh "$PIPER_TESTS_DIR/codegen/call_simple.rwt" 1000 \
-  --expect r1=10 --expect r7=0x20000 --expect errors=0
+# 1. Construir el compilador (comando 1).
+make all
+
+# 2. Compilación mínima: genera programa.bin (comando 5).
+bin/pipoc programa.rwt
+
+# 3. Convertir el binario a memoria de instrucciones (comando 29).
+bin/pipoc --bin-to-mem programa.bin -o programa.mem
+
+# 4. Ejecutar el procesador, con límite de 1000 ciclos (comando 46).
+make -C ../PORYGON sim PROG=../PIPER-COMPILER/programa.mem MAX_CYCLES=1000
+
+# 5. Extraer 32 bytes de memoria de datos desde 0x10000 (comando 48).
+../PORYGON/tools/memory/extract.sh programa 0x10000 32 resultado.bin
 ```
 
- `--data archivo.mem` inicializa la
-RAM de datos y `--expect clave=valor` valida registros `r0`–`r7`, `pc` o los
-contadores presentes en `results.txt`. Los artefactos quedan en
-`build/runs/<programa>/`. El runner detecta PORYGON en la carpeta hermana
-esperada; `PORYGON_DIR=/otra/ruta/PORYGON` permite cambiarla sin editar scripts.
+La simulación guarda `results.txt`, `memory.dump.mem`, `waves.vcd` y logs en
+`../PORYGON/build/sim/programa/`; la extracción guarda `resultado.bin` allí.
+Ajustar dirección y tamaño al dato que se quiera recuperar.
 
-La extracción pertenece a PORYGON. Después de una simulación creada con
-`make sim`, basta indicar el programa, la dirección, el tamaño y el archivo de
-salida:
+## Flujo completo
 
-```sh
-cd ../../ProyectoArqui/PORYGON
-./extract.sh programa 0x10000 32 salida.bin
-```
+Piper pasa por lexer, parser Bison, AST y análisis semántico. El codegen actual
+traduce el AST a ASM; el [ensamblador](src/assembler/) construye el programa
+máquina y el [scheduler](src/scheduler/) reordena y empaqueta instrucciones en
+bundles con NOPs. Se emiten `.bin` y, al solicitarlo, `.mem` para ejecutar en
+PORYGON y recuperar resultados de registros y memoria.
 
-El wrapper lee `sim_output/programa/memory.dump.mem` y guarda la salida junto al
-dump. El primer argumento también puede ser una ruta explícita a cualquier dump
-`.mem`.
-
-## Ensamblador PORYGON
-
-El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/).
-El `Makefile` lo compila y enlaza con `pipoc`. Su parser recibe ASM PORYGON
-lineal, escrito a mano o generado desde el AST, y construye el `MachineProgram`
-que consume el scheduler. `bin/porygon-schedule entrada.asm salida.bundles [salida.mem]`
-genera bundles con selección de ALU y, opcionalmente, la imagen hexadecimal
-para el hardware. Este pipeline también está integrado en `pipoc` mediante los
-comandos `sch`, `mem` y `all`.
-
-Los demás casos de prueba se conservan fuera del repositorio.
+La etapa AST → IR con bloques → CFG → optimización → codegen está
+planificada en las guías de [IR](docs/todoIR.md) y [CFG](docs/todoCFG.md), pendiente de implementación.
