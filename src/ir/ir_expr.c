@@ -1,7 +1,8 @@
 /** @file ir_expr.c
- * I3: literales, lecturas y operaciones escalares. Llamadas e índices pendientes.
+ * I3/I4: literales, lecturas, operaciones escalares y llamadas. Índices pendientes.
  */
 #include "ir_internal.h"
+#include <stdlib.h>
 
 /* Solo consulta árboles de literales para decidir B32/uB32 cuando semántica
  * no anotó un tipo exacto, igual que el backend actual. No sustituye el árbol
@@ -104,17 +105,21 @@ static IrOpcode operator_opcode(AstOperator op)
 }
 
 /* Reserva un ID virtual y emite su definición. No reserva registros ni pila.
- * Los atributos aritméticos se solicitan aquí; I6 completará efectos y validación. */
+ * Consume argumentos de CALL incluso si falla. Los atributos aritméticos se
+ * solicitan aquí; I6 completará efectos y validación. */
 static IrOperand emit_value(IrContext *ctx, IrInstruction instruction, IrType type)
 {
-    if (ctx->error.status != IR_OK) return (IrOperand){0};
-    if (ctx->program == NULL || ctx->current_routine >= ctx->program->routine_count) {
+    if (ctx->error.status == IR_OK &&
+        (ctx->program == NULL || ctx->current_routine >= ctx->program->routine_count))
         ir_fail(ctx, IR_INVALID_INPUT, instruction.location, "No hay rutina IR activa.");
+    if (ctx->error.status != IR_OK) {
+        ir_emit(ctx, instruction); /* Descarta también los argumentos de CALL. */
         return (IrOperand){0};
     }
     IrRoutine *routine = &ctx->program->routines[ctx->current_routine];
     if (routine->temp_count == IR_NO_ID) {
         ir_fail(ctx, IR_OUT_OF_MEMORY, instruction.location, "Se agotaron los temporales IR.");
+        ir_emit(ctx, instruction);
         return (IrOperand){0};
     }
     instruction.result = (IrOperand){
@@ -124,6 +129,60 @@ static IrOperand emit_value(IrContext *ctx, IrInstruction instruction, IrType ty
     if (ctx->error.status != IR_OK) return (IrOperand){0};
     routine->temp_count++;
     return instruction.result;
+}
+
+/* Evaluar cada argumento una vez y conservar su valor antes del siguiente.
+ * La firma es prestada; solo la lista de operandos pertenece a la llamada. */
+static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
+{
+    const Symbol *callee = expression->resolved_symbol;
+    const AstNodeList *args = expression->data.call_expression.arguments;
+    if (callee == NULL) {
+        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Las llamadas intrínsecas se incorporarán en I7.");
+        return (IrOperand){0};
+    }
+    if (callee->symbol_class != SYMBOL_FUNC || args == NULL ||
+        callee->param_count < 0 || args->count != (size_t)callee->param_count) {
+        ir_fail(ctx, IR_INVALID_INPUT, expression->location, "La llamada no tiene una firma resuelta válida.");
+        return (IrOperand){0};
+    }
+    IrInstruction call = {.op = IR_OP_CALL, .location = expression->location,
+        .flags = IR_READ_MEMORY | IR_WRITE_MEMORY | IR_MAY_TRAP};
+    call.extra.call.callee = callee;
+    call.extra.call.argument_count = args->count;
+    if (args->count > SIZE_MAX / sizeof(IrOperand)) {
+        ir_fail(ctx, IR_OUT_OF_MEMORY, expression->location, "Demasiados argumentos IR.");
+        return (IrOperand){0};
+    }
+    if (args->count) {
+        call.extra.call.arguments = malloc(args->count * sizeof(IrOperand));
+        if (call.extra.call.arguments == NULL) {
+            ir_fail(ctx, IR_OUT_OF_MEMORY, expression->location, "No se pudieron reservar los argumentos IR.");
+            return (IrOperand){0};
+        }
+    }
+    for (size_t i = 0; i < args->count; i++) {
+        const Symbol *parameter = callee->params[i];
+        if (parameter->is_array) {
+            ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Los argumentos de arreglo se incorporarán en I7.");
+        } else {
+            IrOperand value = ir_expr(ctx, args->items[i]);
+            if (ctx->error.status == IR_OK && value.kind == IR_OPERAND_NONE)
+                ir_fail(ctx, IR_INVALID_INPUT, args->items[i]->location, "Un argumento escalar no puede ser none.");
+            if (value.kind == IR_OPERAND_CONSTANT)
+                value.type.piper = parameter->declared_type;
+            call.extra.call.arguments[i] = value;
+        }
+        if (ctx->error.status != IR_OK) {
+            free(call.extra.call.arguments); /* Todavía no se transfirió a ir_emit. */
+            return (IrOperand){0};
+        }
+    }
+    if (callee->declared_type == PIPER_TYPE_NONE) {
+        ir_emit(ctx, call); /* Sin temporal: NONE con IR_OK es una llamada válida. */
+        return (IrOperand){0};
+    }
+    return emit_value(ctx, call, (IrType){.piper = callee->declared_type});
 }
 
 /** Resuelve el destino sin leerlo. Usa el enlace de I2, nunca busca por nombre.
@@ -165,6 +224,8 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
     IrInstruction instruction = {.location = expression->location};
     IrType type = expression_type(expression);
     switch (expression->kind) {
+    case AST_CALL_EXPRESSION:
+        return call_expression(ctx, expression);
     case AST_NONE_LITERAL:
         return (IrOperand){0};
     case AST_INTEGER_LITERAL:
@@ -227,7 +288,7 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
             instruction.flags = IR_CHECKED | IR_MAY_TRAP;
         return emit_value(ctx, instruction, type);
     default:
-        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Expresión pendiente de una etapa posterior a I3.");
+        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Expresión pendiente de una etapa posterior a I4.");
         return (IrOperand){0};
     }
 }

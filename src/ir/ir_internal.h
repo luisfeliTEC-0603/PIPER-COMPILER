@@ -3,8 +3,8 @@
 
 /** @file ir_internal.h
  * Estado compartido del generador. I1 implementa su ciclo de vida y almacenamiento;
- * I3 recorre expresiones y sentencias escalares. El recorrido del programa,
- * las llamadas y el control siguen pendientes.
+ * I3/I4 recorren escalares, rutinas, llamadas y retornos. Control, validación
+ * completa y publicación siguen pendientes.
  * Un primer error queda en error.status: las funciones siguientes no emiten más.
  * Así el resultado de una expresión no necesita otro parámetro de salida.
  * Mantener IR_OK con operando NONE para none; un fallo cambia error.status.
