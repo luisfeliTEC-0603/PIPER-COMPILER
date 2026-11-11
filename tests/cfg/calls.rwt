@@ -1,0 +1,10 @@
+create B32 contador.
+contador store 2.
+
+routine B32 incrementar[B32 x] {
+    output x + 1.
+}
+
+routine B32 main[] {
+    output incrementar[contador].
+}

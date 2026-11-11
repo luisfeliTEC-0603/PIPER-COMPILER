@@ -1,0 +1,11 @@
+routine B32 main[] {
+    create B32 i.
+    i store 0.
+    alwhen [i < 3] {
+        i store i + 1.
+        when [i = 2] {
+            break.
+        }
+    }
+    output i.
+}

@@ -1,0 +1,20 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B32\l    variables: local p:bool, local x:B32\l    temporales: t0:bool, t1:B32\l    constantes: 1:bool, 1:B32, 2:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    p = 1:bool\l    t0 = p\l    if t0 jump B1 else B2\l"];
+    r0_b1 [label="B1:\l    x = 1:B32\l    jump B3\l"];
+    r0_b2 [label="B2:\l    x = 2\l    jump B3\l"];
+    r0_b3 [label="B3:\l    t1 = x\l    return t1\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_b1 [label="TRUE"];
+    r0_b0 -> r0_b2 [label="FALSE"];
+    r0_b1 -> r0_b3 [label="JUMP"];
+    r0_b2 -> r0_b3 [label="JUMP"];
+    r0_b3 -> r0_exit [label="RETURN"];
+  }
+}

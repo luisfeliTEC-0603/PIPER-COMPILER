@@ -1,0 +1,25 @@
+function main() -> B32
+    variables: local i:B32
+    temporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:bool, t6:B32
+    constantes: 0:B32, 3:B32, 1:B32, 2:B32
+B0:
+    i = 0
+    jump B1
+B1:
+    t0 = i
+    t1 = t0 < 3
+    if t1 jump B2 else B3
+B2:
+    t2 = i
+    t3 = t2 + 1 ; comprueba rango del resultado B32, puede fallar
+    i = t3
+    t4 = i
+    t5 = t4 == 2
+    if t5 jump B4 else B5
+B3:
+    t6 = i
+    return t6
+B4:
+    jump B3
+B5:
+    jump B1
