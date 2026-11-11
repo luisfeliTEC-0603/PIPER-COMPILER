@@ -9,10 +9,11 @@
  *
  * Secuencia que implementará este punto de entrada:
  * 1. Comprobar precondiciones: out válido con *out=NULL; entradas prestadas.
- * 2. Crear programa y contexto; IDs opcionales en IR_NO_ID, error.status=IR_OK.
+ * 2. Usar ir_context_init: programa/pila vacíos e IDs opcionales en IR_NO_ID.
  * 3. Llamar ir_build_program para producir el TAC en bloques.
  * 4. Validar el modelo antes de publicarlo; copiar el diagnóstico si hubo fallo.
- * 5. Liberar pila del contexto siempre y programa parcial solo al fallar.
+ * 5. En éxito, retirar ctx.program antes de ir_context_dispose; al fallar,
+ *    descartar el contexto con todo su programa parcial y preservar el error.
  *
  * No ejecuta análisis previos, no abre archivos y no modifica AST ni símbolos.
  * La tabla debe sobrevivir a la IR y a los consumidores posteriores. */

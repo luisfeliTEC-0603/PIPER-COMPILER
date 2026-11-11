@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: estructura declarada, implementación pendiente. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: I1 implementado y comprobado de forma aislada; I2–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -26,13 +26,13 @@ Estado: estructura declarada, implementación pendiente. Contrato normativo: [co
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados; sigue sin cuerpos de funciones ni conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas y siete auxiliares compartidos, sin agregar otra capa de intermediarios.
+La estructura mantiene seis archivos C y dos encabezados. `ir.c` ya implementa el almacenamiento de I1; el resto sigue declarado, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Los siete auxiliares de recorrido/emisión se complementan con tres de ciclo de vida necesarios para I1: iniciar/descartar contexto y reservar rutina, todos en `ir.c`.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
 | `include/ir.h` | Alta | Modelo compacto y cuatro entradas públicas: `ir_generate`, `ir_validate`, `ir_write`, `ir_program_free`. |
-| `src/ir/ir_internal.h` | Alta | Contexto de generación y siete auxiliares compartidos; sin mapas ni metadatos semánticos duplicados. |
-| `src/ir/ir.c` | Alta | `ir_new_block`, `ir_emit`, `ir_fail` y liberación. Un único emisor para instrucciones normales y terminadores. |
+| `src/ir/ir_internal.h` | Alta | Contexto de generación y diez auxiliares compartidos; sin mapas ni metadatos semánticos duplicados. |
+| `src/ir/ir.c` | Alta | `ir_context_init`, `ir_context_dispose`, `ir_new_routine`, `ir_new_block`, `ir_emit`, `ir_fail` y liberación implementados. Los flags se almacenan; se calcularán en I6. |
 | `src/ir/ir_generate.c` | Alta | `ir_generate` e `ir_build_program`: registro/recorrido de rutinas y arranque, validación y publicación. |
 | `src/ir/ir_expr.c` | Alta | `ir_expr` e `ir_target`: valores/destinos, incluyendo llamadas, intrínsecas e índices. Helpers específicos serán `static`. |
 | `src/ir/ir_stmt.c` | Alta | `ir_stmt`: bloques léxicos, asignaciones, ramas, ciclos y retornos. Inicialización/copia de arreglos se resuelve aquí. |
@@ -45,7 +45,7 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 
 | ID | Prioridad | Trabajo concreto | Resultado que permite avanzar |
 | --- | --- | --- | --- |
-| I1 | Alta | Reservar/liberar `IrProgram`, arreglos de rutinas/bloques/instrucciones, argumentos de llamadas y pila de salidas de ciclos. Definir contadores, IDs y operandos con tipo. | El modelo puede construirse parcialmente y descartarse sin liberar AST/símbolos prestados ni perder recursos. Ninguna variable de Piper cambia de dirección. |
+| I1 — completado | Alta | Reservar/liberar `IrProgram`, arreglos de rutinas/bloques/instrucciones, argumentos de llamadas y pila de salidas de ciclos. Definir contadores, IDs y operandos con tipo. | El modelo puede construirse parcialmente y descartarse sin liberar AST/símbolos prestados ni perder recursos. Ninguna variable de Piper cambia de dirección. |
 | I2 | Alta | Registrar en el AST la referencia a la declaración que el semántico ya resolvió para cada identificador, llamada y control de `loop`. | Dos usos de la misma variable comparten el mismo `Symbol *`; dos declaraciones homónimas tienen referencias distintas. |
 | I3 | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
 | I4 | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
@@ -83,6 +83,28 @@ Un **operando tipado** contiene la clase de valor, el valor/referencia y su tipo
 | Dirección de elemento B32 | Temporal con `type={B32,true}`. | Dirección hacia un elemento B32; no es el valor entero almacenado allí. |
 
 `SYMBOL`, `CONSTANT` y `TEMP` abrevian los enums `IR_OPERAND_*`; `{B32,false}` resume los campos `piper` y `address`, no es la escritura literal de C. Tipar no significa guardar solamente el carácter `+` ni escoger arbitrariamente el tipo mayor. Por ejemplo, B8 + B16 puede tener resultado B16 conforme al semántico, pero B32 < B32 produce bool. Mezclas con/sin signo deben respetar las reglas existentes. El contenedor C `int64_t` no convierte las operaciones de Piper a 64 bits.
+
+#### I1 implementado: uso y comprobación
+
+1. `ir_context_init(&ctx, root, symbols)` crea un programa vacío y reserva la pila de salidas; no ejecuta análisis ni publica IR.
+2. `ir_new_routine(&ctx, symbol)` reserva una rutina vacía, devuelve su índice y no la selecciona. Un símbolo NULL crea el único arranque sintético.
+3. Seleccionar `ctx.current_routine`; crear bloques con `ir_new_block` y seleccionar `ctx.current_block` antes de emitir.
+4. `ir_emit` almacena el descriptor y sus flags recibidos. Los saltos/condiciones/retornos cierran el camino; el cálculo de efectos y la validación completa siguen en I6.
+5. `ir_context_dispose(&ctx)` libera pila y programa propios. Para transferir un programa al llamador, extraer `ctx.program` y poner ese campo en NULL antes de descartar el contexto. El diagnóstico se conserva.
+
+Cada contexto se inicia una sola vez mientras tenga recursos; para reutilizarlo, descartarlo primero. Descartar uno ya inicializado o fallido más de una vez es seguro.
+
+Los tres programas funcionales IR-T1–IR-T3 siguen pendientes para comprobar la traducción cuando el módulo esté completo. I1 no implementa I2/I3 ni enlaza IR con `pipoc`.
+
+El almacenamiento mantiene solo dos auxiliares privados compartidos:
+
+| Función privada | Qué hace y por qué se comparte |
+| --- | --- |
+| `grow_array` | Si el arreglo C está lleno, reserva más espacio preservando los elementos; por ejemplo, pasa de capacidad 4 a 8. Solo cambia la capacidad en éxito. La usan las listas de rutinas, bloques e instrucciones. |
+| `free_call_arguments` | Libera el arreglo de operandos de `call f(x,y)`, no las variables x/y ni los operandos de una suma. Se usa al descartar una llamada y al destruir el programa que ya la almacenó. |
+
+Crear bloques y emitir instrucciones sigue en `ir_new_block`/`ir_emit`; estas son las operaciones que usarán `when`, `alwhen` y `loop`. Las comprobaciones de rutina activa y el almacenamiento se leen directamente dentro de ellas, sin pasar por `source_origin`, `active_routine` ni `store_instruction`.
+
 
 ### I2. Enlazar usos con declaraciones, no ordenar el AST
 

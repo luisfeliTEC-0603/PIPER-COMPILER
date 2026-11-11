@@ -2,7 +2,8 @@
 #define PIPER_IR_INTERNAL_H
 
 /** @file ir_internal.h
- * Estado compartido y siete auxiliares del futuro generador. Solo declaraciones.
+ * Estado compartido del generador. I1 implementa su ciclo de vida y almacenamiento;
+ * los recorridos de AST siguen pendientes.
  * Un primer error queda en error.status: las funciones siguientes no emiten más.
  * Así el resultado de una expresión no necesita otro parámetro de salida.
  * Mantener IR_OK con operando NONE para none; un fallo cambia error.status.
@@ -11,13 +12,27 @@
 
 typedef struct {
     const AstNode *root;       /**< Entrada prestada, solo durante generación. */
-    IrProgram *program;        /**< Propiedad provisional del orquestador. */
+    IrProgram *program;        /**< Propio hasta transferirlo al llamador. */
     IrId current_routine;      /**< Índice de rutina activa, no puntero movible. */
     IrId current_block;        /**< ID activo; IR_NO_ID si el camino terminó. */
     IrId *break_targets;       /**< Pila propia, vacía al comenzar cada rutina. */
     size_t break_count, break_capacity;
     IrDiagnostic error;       /**< IR_OK mientras el recorrido sea válido. */
 } IrContext;
+
+/* ir.c: inicializa un contexto nuevo (sin recursos previos) y su programa vacío.
+ * No analiza root ni construye funciones. Ante fallo se puede llamar dispose. */
+IrStatus ir_context_init(IrContext *ctx, const AstNode *root,
+                         const SymbolTable *symbols);
+
+/* Libera programa y pila propios; acepta NULL y llamadas repetidas.
+ * Para publicar un programa, retirar antes ctx->program poniéndolo en NULL.
+ * Conserva el diagnóstico para que el orquestador pueda copiarlo al salir. */
+void ir_context_dispose(IrContext *ctx);
+
+/* Reserva una rutina vacía sin seleccionarla. symbol es prestado; NULL crea
+ * el único arranque sintético. Retorna índice o IR_NO_ID con error guardado. */
+IrId ir_new_routine(IrContext *ctx, const Symbol *symbol);
 
 /* ir_generate.c: registra firmas y traduce rutinas/arranque desde ctx->root. */
 void ir_build_program(IrContext *ctx);
@@ -43,8 +58,9 @@ void ir_stmt(IrContext *ctx, const AstNode *statement);
  * Su almacenamiento es del compilador; no asigna direcciones de datos Piper. */
 IrId ir_new_block(IrContext *ctx);
 
-/* ir.c: única entrada de emisión, también para terminadores. Calcula efectos;
- * cerrar bloque deja current_block=IR_NO_ID. instruction se pasa por valor, pero
+/* ir.c: única entrada de emisión, también para terminadores. I1 almacena los
+ * flags recibidos; el cálculo de efectos se añadirá en I6. Cerrar un bloque
+ * deja current_block=IR_NO_ID. instruction se pasa por valor, pero
  * su lista dinámica se transfiere incluso al fallar: el llamador no la libera.
  * Si ya hubo error, no emite y descarta solo esa lista recibida. */
 void ir_emit(IrContext *ctx, IrInstruction instruction);

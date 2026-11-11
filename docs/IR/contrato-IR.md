@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; solo existen estructuras y declaraciones, sin cuerpos de funciones. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 ya implementa almacenamiento/liberación; la generación de TAC, la validación completa y la exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -184,8 +184,14 @@ Las APIs y la sintaxis son decisiones de este contrato. El enunciado §4 exige T
 
 ## 8. Auxiliares y errores internos
 
-Mantener las cuatro funciones públicas. El contexto privado agrupa entrada, programa, rutina/bloque activos, pila de `break` y primer diagnóstico. Los auxiliares internos se limitan a construir programa, evaluar expresión, resolver destino, traducir sentencia, crear bloque, emitir instrucción y registrar fallo.
+Mantener las cuatro funciones públicas. El contexto privado agrupa entrada, programa, rutina/bloque activos, pila de `break` y primer diagnóstico. Los auxiliares de recorrido/emisión siguen siendo construir programa, evaluar expresión, resolver destino, traducir sentencia, crear bloque, emitir instrucción y registrar fallo. I1 añade únicamente el ciclo de vida: `ir_context_init`, `ir_context_dispose` e `ir_new_routine`; no añade módulos ni cambia las cuatro entradas públicas.
 
 `ir_expr`/`ir_target` devuelven el operando directamente; el estado de error queda por separado en `ctx->error.status`. Un `NONE` con estado `IR_OK` es válido; con error detiene la generación. Todos los auxiliares preservan el primer fallo y dejan de emitir después de él. El API público conserva el retorno explícito `IrStatus`.
 
 `ir_emit` agrega tanto operaciones normales como terminadores y consume los argumentos dinámicos del descriptor incluso si falla. En éxito, un terminador cierra el camino actual; la siguiente emisión requiere seleccionar otro bloque. Los helpers exclusivos de un archivo serán `static` al implementarse, sin añadir más interfaces compartidas anticipadamente.
+
+### Almacenamiento de I1 disponible
+
+`ir_context_init` recibe un contexto nuevo, raíz AST_PROGRAM y tabla final prestadas; retorna estado y crea un programa vacío. `ir_new_routine` reserva almacenamiento sin traducir la función. `ir_context_dispose` acepta NULL y descarte repetido, libera pila/modelo y conserva el diagnóstico. Para publicar posteriormente un modelo validado, el generador deberá retirar antes el programa del contexto, dejándolo en NULL.
+
+`ir_emit` ya respeta transferencia de argumentos, primer fallo y cierre de bloque. Por alcance de I1, preserva los flags proporcionados, sin calcularlos ni validar todavía todos los tipos/firmas. Una rutina recién creada tiene entrada IR_NO_ID hasta que el recorrido la establezca.

@@ -5,7 +5,8 @@
  * @file ir.h
  * @brief Modelo mínimo de TAC tipado y bloques básicos de Piper.
  *
- * Solo estructuras y declaraciones; todavía no hay cuerpos de funciones.
+ * I1 implementa almacenamiento y liberación en ir.c; traducción, validación
+ * completa e impresión permanecen declaradas para las tareas siguientes.
  * Flujo: ir_generate(AST, símbolos) -> IrProgram -> ir_write/consumidores
  * -> ir_program_free. ir_generate debe validar antes de publicar su resultado.
  * La tabla semántica final se presta y debe sobrevivir a todos los consumidores.
@@ -192,11 +193,10 @@ IrStatus ir_validate(const IrProgram *program, IrDiagnostic *diagnostic);
 IrStatus ir_write(FILE *output, const IrProgram *program);
 
 /**
- * @brief Liberará un programa completo o parcialmente construido; acepta NULL.
+ * @brief Libera un programa completo o parcialmente construido; acepta NULL.
  * @param program Propiedad a consumir: rutinas, bloques, instrucciones y las
  * listas de argumentos activas según opcode. No libera AST ni símbolos prestados.
  * Los consumidores se liberan primero; el llamador no vuelve a usar este puntero.
- * Pendiente: no existe un cuerpo vacío que aparente liberar memoria.
  */
 void ir_program_free(IrProgram *program);
 
