@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; las APIs y operaciones siguientes todavía no existen. Plan: [todoIR.md](todoIR.md).
+Especificación para implementar; solo existen estructuras y declaraciones, sin cuerpos de funciones. Plan: [todoIR.md](todoIR.md). Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -12,6 +12,19 @@ Especificación para implementar; las APIs y operaciones siguientes todavía no 
 | Control del flujo | `compile_piper` ejecuta los análisis una sola vez. `--check`, clones y consultas LL(1) conservan sus salidas actuales, sin generar IR. |
 
 El generador no ejecuta análisis ni interpreta stdout/stderr. `main.c` comprueba los retornos antes de invocarlo.
+
+### Uso de la tabla de símbolos
+
+| Dato consultado | Para qué se usa |
+| --- | --- |
+| Declaración exacta y ámbito | Distinguir variables homónimas y globales/locales sin resolver el nombre nuevamente. |
+| Tipo declarado | Conservar ancho y signo de la variable o parámetro. |
+| Dimensiones de arreglo | Calcular direcciones y comprobar índices. |
+| Firma de rutina | Conservar orden/tipos de parámetros y retorno, incluidos arreglos por referencia. |
+| Declaraciones globales y locales | Imprimir datos y firmas sin crear otra tabla dentro de la IR. |
+
+Es una decisión de reutilización: un AST que contuviera toda esa información podría ser la única entrada. En el AST actual, identificadores y llamadas conservan principalmente nombres y anotaciones de tipo; la referencia directa al `Symbol` resuelto todavía debe incorporarse según el plan. La tabla final se presta sin modificarla; sus direcciones físicas no se usan para identificar variables ni para asignar temporales.
+
 
 ## 2. API pública propuesta
 
@@ -40,29 +53,39 @@ Usar estructuras C y arreglos dinámicos durante la compilación. Operaciones si
 
 | Estructura | Campos mínimos |
 | --- | --- |
-| `IrProgram` | Símbolos referenciados, globales, rutinas y rutina de arranque opcional. |
-| `IrSymbol` | ID estable, referencia prestada a `Symbol`, ámbito propietario, nombre, clase, tipo y dimensiones. |
-| `IrRoutine` | ID, símbolo o marca de arranque sintético, retorno, parámetros ordenados, temporales, bloques y bloque de entrada. |
-| `IrType` | Tipo Piper exacto o dirección interna de 32 bits; para direcciones, tipo de elemento y dimensiones cuando apliquen. |
-| `IrOperand` | Variante: constante, símbolo, temporal o ausente. Constantes enteras conservan valor/signo sin truncarlo a `int`. |
-| `IrInstruction` | ID, operación, operandos, resultado opcional, tipos de operandos/resultado, `SourceLocation` y efectos. |
-| Datos adicionales | `CALL`: rutina y lista ordenada de argumentos; intrínsecas: identificador y argumentos; terminadores: destinos explícitos. |
-| `IrBlock` | ID estable dentro de la rutina, instrucciones ordenadas y exactamente un terminador. |
+| `IrProgram` | Tabla semántica final prestada, rutinas y arranque opcional. |
+| `IrRoutine` | `Symbol` de función prestado, bloques, bloque de entrada y contador de temporales. Símbolo nulo identifica el arranque sintético. |
+| `IrType` | Tipo Piper exacto y bandera de dirección de 32 bits hacia elementos de ese tipo. |
+| `IrOperand` | Constante `int64_t`, referencia directa a `Symbol`, ID temporal o ausencia de valor; con tipo. |
+| `IrInstruction` | Opcode, dos argumentos tipados, resultado tipado, ubicación, flags y datos adicionales para llamadas/control. |
+| `IrBlock` | ID estable y una sola lista de instrucciones; el terminador es su último elemento. |
 
-IDs de símbolos únicos por programa; IDs de temporales, instrucciones y bloques únicos por rutina, asignados en orden determinista. Usar IDs al referenciar arreglos que puedan moverse por `realloc`. Variables de usuario pueden reasignarse; cada temporal tiene una única definición. No implementar SSA.
+Reutilizar `Symbol`/`SymbolTable` para nombres, firmas, parámetros, ámbitos y dimensiones. No crear otra tabla `IrSymbol`, mapas de nombres ni copias de esos metadatos. Todos los enteros válidos de Piper caben en `int64_t`; el tipo Piper sigue limitando el valor a su dominio original.
+
+Usar `IrId` para IDs de bloque y temporal; no conservar punteros a arreglos que puedan moverse por `realloc`. Los temporales tienen una única definición y su tipo se registra en los operandos. No hace falta una tabla adicional `IrTemporary`. Las posiciones de rutina/instrucción se usan para localizar diagnósticos, no para identificar valores. Variables de usuario pueden reasignarse; no implementar SSA.
+
+La instrucción tiene tres formas de almacenamiento: cuádruplo normal, destinos de control o lista de argumentos de llamada. Comparaciones producen bool y `BRANCH` consume ese valor. Memoria e intrínsecas usan la misma estructura, sin un modelo distinto para cada opcode.
 
 ## 4. Operaciones y efectos
 
-| Familia | Operaciones | Reglas |
+| Familia | Notación impresa | Representación interna / regla |
 | --- | --- | --- |
-| Escalares | `COPY` | Temporal ← valor o símbolo escalar ← valor. Leer un símbolo crea un temporal que captura su valor en ese punto. |
-| Aritmética | `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `POW`, `NEG` | Una operación por instrucción; conservar tipos y comprobaciones actuales mediante atributos, incluido `may_trap`. |
-| Comparación/lógica | `EQ`, `NE`, `LT`, `LE`, `GT`, `GE`, `AND`, `OR`, `XOR`, `NOT`, `TO_BOOL` | Comparaciones conservan signo de sus operandos; resultado lógico normalizado a bool. `TO_BOOL` convierte condiciones enteras mediante comparación con cero. |
-| Memoria | `ADDR`, `LOAD`, `STORE`, `CHECK_BOUNDS` | `ADDR` obtiene la dirección de datos, también para parámetros de arreglo. `LOAD`/`STORE` usan dirección y tipo de elemento. `CHECK_BOUNDS(index, length)` exige `0 <= index < length`; tiene `may_trap`. |
-| Llamadas | `CALL`, `INTRINSIC` | Argumentos evaluados antes de emitir la llamada, resultado temporal solo si retorna valor. Funciones `none` no producen valor. |
-| Control | `JUMP`, `BRANCH`, `RETURN` | Destinos de bloque explícitos; `BRANCH` tiene condición bool y destinos verdadero/falso; `RETURN` lleva valor compatible o ninguno. |
+| Asignación | `x = y` | `IR_OP_COPY`; también captura una lectura en un temporal. |
+| Aritmética | `+`, `-`, `*`, `/`, `%`, `^`, `-x` | Operaciones distintas por opcode; conservar tipo y comprobaciones. `^` es potencia de Piper, no XOR de C. |
+| Comparación | `==`, `!=`, `<`, `<=`, `>`, `>=` | Resultado bool; preservar signo de los operandos. |
+| Lógica | `and`, `or`, `xor`, `not` | Ambos operandos se evalúan según las reglas actuales; resultado bool. |
+| Condición entera | `t = x != 0` | `IR_OP_NE` con cero; no se necesita un opcode adicional de conversión a bool. |
+| Dirección y acceso | `t = &a`, `t = *p`, `*p = x` | `IR_OP_ADDR`, `IR_OP_LOAD`, `IR_OP_STORE`; el tipo de dirección incluye el del elemento. |
+| Índice | `check 0 <= i < n` | `IR_OP_CHECK_BOUNDS`; no es un cálculo booleano descartable: falla si el índice no es válido. |
+| Llamada | `t = call f(x, y)` o `call f(x, y)` | Rutina y argumentos ya evaluados; sin temporal si retorna none. |
+| Intrínseca | `crypto_auth(...)`, `crypto_feistel(...)`, etc. | `IR_OP_INTRINSIC`; preservar sus efectos. |
+| Salto | `jump B1` | `IR_OP_JUMP`; un destino. |
+| Condición | `if t jump B1 else B2` | `IR_OP_BRANCH`; dos destinos explícitos. |
+| Retorno | `return t` o `return` | `IR_OP_RETURN`; valor opcional. |
 
-Por instrucción deben poder enumerarse lecturas y escrituras de símbolos/temporales. Guardar efectos de memoria (`read`, `write`), estado criptográfico y `may_trap`, calculados centralmente desde la operación y sus atributos. Llamadas sin análisis interprocedimental se consideran conservadoramente lectoras/escritoras de memoria y potencialmente fallidas. Las operaciones sobre símbolos globales también tienen efecto de memoria. Las locales escalares se representan por símbolo; las escrituras por direcciones conservan su posible alias.
+Los nombres C `IR_OP_*` identifican operaciones internamente: no se imprimen como sustitutos de `+`, `=`, etc. Los atributos se muestran en comentarios, por ejemplo `t = a + b  ; comprueba rango`. Efectos como lectura/escritura y posible error son metadatos, no nuevas instrucciones aritméticas. Cada opcode y cada bandera se definen por separado en el [glosario](glosario-IR.md).
+
+Reconocer lecturas/escrituras explícitas mediante opcode, `arg1`, `arg2`, `result` y argumentos de llamada. Guardar efectos como bits en `flags`: `IR_READ_MEMORY`, `IR_WRITE_MEMORY`, `IR_READ_CRYPTO`, `IR_WRITE_CRYPTO` e `IR_MAY_TRAP`. `IR_CHECKED` conserva la solicitud de comprobación. El emisor común calcula los efectos a partir de operación/atributos; no se expone una API separada de visitas para esta fase. Llamadas sin análisis interprocedimental se consideran conservadoramente lectoras/escritoras de memoria y potencialmente fallidas. Las operaciones sobre símbolos globales también tienen efecto de memoria. Las locales escalares se representan por símbolo; las escrituras por direcciones conservan su posible alias.
 
 Las comprobaciones y operaciones fallidas tienen salida de error implícita y no producen continuación normal cuando fallan. Esta fase no crea bloques de error ni elimina operaciones potencialmente fallidas. El backend futuro deberá reproducir el comportamiento de error actual, no sustituirlo por un retorno normal.
 
@@ -70,7 +93,7 @@ Las comprobaciones y operaciones fallidas tienen salida de error implícita y no
 
 | Construcción | Regla |
 | --- | --- |
-| Identificador escalar | Emitir `t = COPY símbolo` al evaluarlo. No retrasar la lectura hasta después de otra expresión con efectos. |
+| Identificador escalar | Emitir `t = símbolo` al evaluarlo. No retrasar la lectura hasta después de otra expresión con efectos. |
 | Expresión binaria | Evaluar izquierda, capturar su valor, evaluar derecha y emitir la operación. `and`/`or` evalúan ambos lados, como el codegen actual. |
 | Asignación escalar | Evaluar origen y escribir el símbolo de destino. La declaración solo registra almacenamiento; no introduce inicialización inexistente. |
 | Asignación indexada | Evaluar índices y comprobar límites antes del origen; conservar la dirección calculada y emitir un solo `STORE`. |
@@ -86,14 +109,38 @@ Las comprobaciones y operaciones fallidas tienen salida de error implícita y no
 | Intrínsecas | Conservar `crypto_auth` (4 argumentos), `crypto_write_key` (3), `crypto_feistel` (3) y `crypto_revoke` (0). Feistel lee/escribe el arreglo y el estado criptográfico es observable. |
 | Arranque | Globales se registran como datos; sentencias globales se traducen en orden a una rutina sintética que luego llama a `main[]`. No emitir prólogos, registros ni convenciones físicas. |
 
-Resolver tipos con `has_piper_type`/`has_element_piper_type` antes de leer el campo correspondiente. Si una operación entera carece de tipo exacto, reproducir `result_type`/`unsigned_operand` de `codegen_arithmetic.c`: B32 por defecto o uB32 para el valor constante que requiere ese rango. El contexto de asignación/argumento/retorno no debe estrechar arbitrariamente un cálculo intermedio. Registrar por separado tipo de operación y conversión al destino.
+Resolver tipos con `has_piper_type`/`has_element_piper_type` antes de leer el campo correspondiente. Si una operación entera carece de tipo exacto, reproducir `result_type`/`unsigned_operand` de `codegen_arithmetic.c`: B32 por defecto o uB32 para el valor constante que requiere ese rango. El contexto de asignación/argumento/retorno no debe estrechar arbitrariamente un cálculo intermedio. Mantener el tipo en cada operando y resultado. El destino de una asignación conserva su tipo, sin cambiar el del temporal que contiene el cálculo previo; no agregar otro campo de tipo por instrucción.
 
 La identidad de usos, declaraciones, llamadas y control de `loop` se registra durante el semántico con referencias a símbolos finales, antes de que una búsqueda posterior pueda encontrar otra declaración. El generador no reconstruye esa resolución solamente a partir del nombre.
 
 ## 6. Bloques y validación
 
+La presentación (diapositivas 9 y 14) usa etiquetas, saltos y continuación secuencial; no exige que todo bloque termine con un salto escrito. Esta IR explicita la continuación para que el destino no cambie al mover bloques. Es una convención del modelo, no una instrucción extra obligatoria de PORYGON; un backend podrá omitir un salto al bloque físicamente siguiente si respeta las reglas de control del procesador.
+
+Una etiqueta nombra una posición de entrada, no un dato ni una instrucción. Si aparece sola antes de otras instrucciones, nombra el comienzo de ellas; varias etiquetas consecutivas pueden referir al mismo bloque. No se necesita un bloque vacío independiente por etiqueta. La salida de una rutina debe tener el retorno correspondiente, no una etiqueta vacía que invente un valor.
+
+Ejemplo con ambos caminos explícitos:
+
+```text
+B0:
+    t0 = x < 10
+    if t0 jump B1 else B2
+B1:
+    x = 1
+    jump B3
+B2:
+    x = 2
+    jump B3
+B3:
+    t1 = x
+    return t1
+```
+
+En el listado de los apuntes, el paso de la última rama a la continuación puede quedar implícito. Aquí se escribe `jump B3`. Usar `jump` en el texto es una elección de nombre para el mismo salto incondicional; no cambia su semántica.
+
+
 1. Construir bloques dentro de `ir_generate`; las etiquetas/destinos se resuelven antes de devolver el programa.
-2. Cada bloque pertenece a una sola rutina y termina en `JUMP`, `BRANCH` o `RETURN`; no existe caída implícita entre bloques.
+2. Convención interna elegida: cada bloque pertenece a una sola rutina y su última instrucción es `IR_OP_JUMP`, `IR_OP_BRANCH` o `IR_OP_RETURN`. Se imprimen con la notación de la tabla anterior. No hay caída implícita ni otro campo que duplique el terminador.
 3. Un destino inicia bloque; después de una transferencia no se agrega otra instrucción al mismo bloque. Omitir sentencias sin continuación alcanzable durante el recorrido, sin aplicar DCE general.
 4. Validar operandos, tipos, IDs, firma/retorno de llamadas, definición única de temporales, referencias existentes y destinos dentro de la misma rutina.
 5. Verificar disponibilidad de temporales mediante el orden estructurado de emisión y su contexto de control: un valor creado solo en una rama no puede escapar a la unión; allí se consulta el símbolo reasignado. No exigir resultados de análisis de flujo futuros.
@@ -101,8 +148,42 @@ La identidad de usos, declaraciones, llamadas y control de `loop` se registra du
 
 ## 7. Propiedad y exportación
 
-La IR posee arreglos, instrucciones, temporales, nombres auxiliares y listas de argumentos. AST y símbolos se prestan; la tabla debe vivir hasta terminar consumidores y liberar la IR. Orden de limpieza: consumidores → IR → AST → tabla. No conservar punteros al contexto temporal del semántico ni a la tabla descartada del parser.
+La IR posee arreglos de rutinas/bloques/instrucciones y listas de argumentos. Los temporales son IDs y los nombres/metadatos se consultan en los símbolos prestados. AST y símbolos se prestan; la tabla debe vivir hasta terminar consumidores y liberar la IR. Orden de limpieza: consumidores → IR → AST → tabla. No conservar punteros al contexto temporal del semántico ni a la tabla descartada del parser.
 
-El formato `.ir` imprime rutinas, declaraciones/tipos, bloques y TAC en orden estable. Usar nombres originales; solo ante ambigüedad añadir calificación de ámbito. Distinguir visualmente símbolos de usuario y temporales si sus nombres coinciden. Incluir atributos de comprobación/efectos en las operaciones donde sean necesarios para inspección.
+### Formato de salida acordado
+
+`ir_write` imprime una vista fiel de la misma IR que recibirán los consumidores: las instrucciones son sencillas y los tipos se declaran aparte. No crea una segunda IR ni vuelve a recorrer el fuente para producir el texto.
+
+| Sección | Información obligatoria |
+| --- | --- |
+| Cabecera de rutina | Nombre, parámetros en orden y tipo exacto de retorno. |
+| Variables | Nombre inequívoco, clase global/local, tipo exacto y dimensiones cuando existan. Los parámetros ya se declaran en la firma. |
+| Temporales | Cada temporal creado y su tipo exacto, una sola vez en la cabecera. Una dirección se escribe `&B32` para indicar dirección a elemento B32, por ejemplo. |
+| Constantes | Valores y tipos usados, agrupados por rutina y sin repetir parejas valor/tipo. Si un mismo valor tiene varios tipos y el contexto no lo distingue, anotar el tipo en su aparición. |
+| Bloques e instrucciones | Etiquetas y TAC con símbolos normales. No repetir tipos en cada operación salvo ambigüedad. |
+| Atributos/efectos | Comentarios junto a la instrucción con todos sus flags activos; sin comentario significa flags=0. |
+
+Imprimir en orden determinista. Para temporales, recorrer resultados y usos y comprobar coherencia de tipos; no agregar una segunda tabla persistente para el exportador. Para variables, consultar declaraciones finales y calificar el ámbito solo cuando haya homónimos o colisión con nombres de temporales.
+
+| Flag interno | Comentario legible |
+| --- | --- |
+| `IR_CHECKED` | `comprueba rango` |
+| `IR_READ_MEMORY` | `lee memoria` |
+| `IR_WRITE_MEMORY` | `escribe memoria` |
+| `IR_READ_CRYPTO` | `lee estado criptográfico` |
+| `IR_WRITE_CRYPTO` | `escribe estado criptográfico` |
+| `IR_MAY_TRAP` | `puede fallar` |
+
+Cuando concurran, listar los comentarios en ese orden y separados por coma. La operación `check` conserva además su condición explícita. Constantes y temporales se imprimen con sus valores/IDs, nunca con direcciones C. Punteros, capacidades de arreglos y otros detalles de almacenamiento del compilador no forman parte del TAC exportado; la ubicación fuente sigue disponible para diagnósticos.
+
+La salida en archivo no es la entrada que se vuelve a analizar: CFG/optimizador/codegen usarán las estructuras con sus tipos, referencias a símbolos y flags. Se puede comprobar la correspondencia leyendo cabeceras y comentarios del `.ir`. Recorrido completo y salidas de referencia: [ejemplo-flujo-IR.md](ejemplo-flujo-IR.md).
 
 Las APIs y la sintaxis son decisiones de este contrato. El enunciado §4 exige TAC exportable y útil para optimizar; §7.2 exige identificar bloques. La presentación, diapositivas 5–9 y 14, fundamenta operaciones y partición. La construcción de conexiones se especifica aparte en [todoCFG.md](todoCFG.md).
+
+## 8. Auxiliares y errores internos
+
+Mantener las cuatro funciones públicas. El contexto privado agrupa entrada, programa, rutina/bloque activos, pila de `break` y primer diagnóstico. Los auxiliares internos se limitan a construir programa, evaluar expresión, resolver destino, traducir sentencia, crear bloque, emitir instrucción y registrar fallo.
+
+`ir_expr`/`ir_target` devuelven el operando directamente; el estado de error queda por separado en `ctx->error.status`. Un `NONE` con estado `IR_OK` es válido; con error detiene la generación. Todos los auxiliares preservan el primer fallo y dejan de emitir después de él. El API público conserva el retorno explícito `IrStatus`.
+
+`ir_emit` agrega tanto operaciones normales como terminadores y consume los argumentos dinámicos del descriptor incluso si falla. En éxito, un terminador cierra el camino actual; la siguiente emisión requiere seleccionar otro bloque. Los helpers exclusivos de un archivo serán `static` al implementarse, sin añadir más interfaces compartidas anticipadamente.

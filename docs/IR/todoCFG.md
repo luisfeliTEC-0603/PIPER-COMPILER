@@ -57,11 +57,11 @@ void cfg_program_free(CfgProgram *cfg);
 
 1. Crear mapa de IDs de bloques a nodos, independiente de su posición en el arreglo.
 2. Crear todos los nodos antes de resolver aristas. Rechazar destinos inexistentes o de otra rutina.
-3. Derivar aristas exclusivamente de los terminadores. No inferir caída por el orden del listado ni simplificar condiciones constantes.
+3. Derivar aristas exclusivamente de la última instrucción de cada bloque (su terminador). No inferir caída por el orden del listado ni simplificar condiciones constantes.
 4. Conservar etiquetas `TRUE`/`FALSE` distintas aunque coincida el destino; las listas de vecinos no repiten el mismo nodo.
 5. Calcular predecesores y sucesores desde las mismas aristas y comprobar simetría.
 6. Recorrer desde `ENTRY` para marcar alcanzables. Conservar nodos inalcanzables y ciclos sin camino a salida; no añadir aristas artificiales para hacer alcanzable `EXIT`.
-7. Una llamada normal continúa en su bloque. Los efectos `may_trap` mantienen salida de error implícita, conforme al contrato de IR; este CFG representa el flujo normal y no crea arista a `EXIT` para un error.
+7. Una llamada normal continúa en su bloque. Los efectos `IR_MAY_TRAP` mantienen salida de error implícita, conforme al contrato de IR; este CFG representa el flujo normal y no crea arista a `EXIT` para un error.
 8. La rutina sintética de arranque, si existe, tiene grafo propio. Su llamada a `main` no se convierte en arista entre rutinas.
 
 ## 5. Validación y reconstrucción
@@ -87,7 +87,7 @@ Si una transformación futura cambia bloques o terminadores, invalidar y reconst
 
 Ejecutar `cfg_build` después de `ir_generate`. Agregar ruta CFG a las validaciones de combinaciones y colisiones del CLI. Publicar DOT mediante temporal y renombrado tras escritura/cierre exitosos; preservar archivos previos si falla. Orden de limpieza: CFG → IR → AST → tabla.
 
-El DOT contiene un subgrafo por rutina, IDs globalmente inequívocos como `r0_b0`, `ENTRY`/`EXIT`, instrucciones escapadas y aristas etiquetadas. Marcar visualmente nodos inalcanzables. Escapar comillas, barras invertidas y saltos de línea; Graphviz no es dependencia para compilar ni para escribir DOT.
+El DOT contiene un subgrafo por rutina, IDs globalmente inequívocos como `r0_b0`, `ENTRY`/`EXIT`, instrucciones escapadas y aristas etiquetadas. La etiqueta de rutina incluye su firma y las cabeceras de variables, temporales y constantes; cada bloque usa el mismo TAC/comentarios de flags que `.ir`, con la notación acordada en el contrato. El grafo no reconstruye ni pierde tipos: presta referencias a los bloques IR. Ejemplo de ambas salidas: [ejemplo-flujo-IR.md](ejemplo-flujo-IR.md). Marcar visualmente nodos inalcanzables. Escapar comillas, barras invertidas y saltos de línea; Graphviz no es dependencia para compilar ni para escribir DOT.
 
 ## 7. Pruebas pendientes
 
@@ -107,5 +107,5 @@ Comparar conjuntos de aristas/adyacencias e invariantes; verificar DOT como text
 | --- | --- |
 | `Apuntes_PresentacionOptimizacion.pdf`, diapositivas 14–15 | Bloques, conexiones, entrada/salida y predecesores/sucesores. |
 | `proyecto-ii-grupal-perf-cache.pdf`, §6 | El CFG prepara el análisis de liveness para DCE y las transformaciones posteriores; no las implementa. |
-| [asm_program_parser.c](../src/assembler/asm_program_parser.c), [machine_program.h](../src/assembler/machine_program.h) | Referencia de bloques/aristas existentes sobre ASM; mantener separado el modelo IR. |
-| [scheduler.c](../src/scheduler/scheduler.c) | Consumidor de máquina existente; no modificar su algoritmo en esta etapa. |
+| [asm_program_parser.c](../../src/assembler/asm_program_parser.c), [machine_program.h](../../src/assembler/machine_program.h) | Referencia de bloques/aristas existentes sobre ASM; mantener separado el modelo IR. |
+| [scheduler.c](../../src/scheduler/scheduler.c) | Consumidor de máquina existente; no modificar su algoritmo en esta etapa. |

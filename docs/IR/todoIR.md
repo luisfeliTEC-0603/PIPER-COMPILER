@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: pendiente. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: estructura declarada, implementación pendiente. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -26,23 +26,20 @@ Estado: pendiente. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta gu
 
 ## 3. Módulos y métodos
 
-Los nombres siguientes son la estructura acordada para implementar; no describen código ya existente.
+La estructura mantiene seis archivos C y dos encabezados; sigue sin cuerpos de funciones ni conexión con `main`.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
-| `include/ir.h` | Alta | Tipos, operandos, operaciones, instrucciones, programa, estados y API pública del contrato. |
-| `src/ir/ir.c` | Alta | Crear/liberar estructuras, añadir símbolos/rutinas y centralizar efectos y enumeración de usos/definiciones. |
-| `src/ir/ir_internal.h` | Alta | `IrContext`: tabla prestada, rutina/bloque actual, contadores, mapa símbolo→ID, pila de salidas de ciclos y diagnóstico. |
-| `src/ir/ir_generate.c` | Alta | `ir_generate`, `generate_program`, `generate_routine`: orquestar recorrido, bloques, validación y limpieza. |
-| `src/ir/ir_expr.c` | Alta | `generate_expr(ctx, node, expected_type, out_value)`; devolver constante, temporal o ausencia de valor para `none`. Capturar lecturas de símbolos en temporales. |
-| `src/ir/ir_stmt.c` | Alta | `generate_stmt`, `generate_lvalue`, `generate_block`; traducir asignaciones, condicionales, ciclos y retornos. |
-| `src/ir/ir_blocks.c` | Alta | `new_block`, `select_block`, `emit_instruction`, `terminate_block`, `finalize_blocks`. Impedir emisiones tras terminador y resolver destinos. |
-| `src/ir/ir_memory.c` | Media | `generate_index_address`, `generate_array_assignment`: límites, direcciones, cargas y stores por elemento. |
-| `src/ir/ir_call.c` | Alta | `generate_call`, `generate_intrinsic`: argumentos ordenados, resultados y efectos. Intrínsecas se incorporan después del núcleo de llamadas. |
-| `src/ir/ir_validate.c` | Alta | `ir_validate`: invariantes del contrato, sin ejecutar optimizaciones ni requerir liveness. |
-| `src/ir/ir_print.c` | Alta | `ir_write`: serialización determinista y detección de errores del stream. |
+| `include/ir.h` | Alta | Modelo compacto y cuatro entradas públicas: `ir_generate`, `ir_validate`, `ir_write`, `ir_program_free`. |
+| `src/ir/ir_internal.h` | Alta | Contexto de generación y siete auxiliares compartidos; sin mapas ni metadatos semánticos duplicados. |
+| `src/ir/ir.c` | Alta | `ir_new_block`, `ir_emit`, `ir_fail` y liberación. Un único emisor para instrucciones normales y terminadores. |
+| `src/ir/ir_generate.c` | Alta | `ir_generate` e `ir_build_program`: registro/recorrido de rutinas y arranque, validación y publicación. |
+| `src/ir/ir_expr.c` | Alta | `ir_expr` e `ir_target`: valores/destinos, incluyendo llamadas, intrínsecas e índices. Helpers específicos serán `static`. |
+| `src/ir/ir_stmt.c` | Alta | `ir_stmt`: bloques léxicos, asignaciones, ramas, ciclos y retornos. Inicialización/copia de arreglos se resuelve aquí. |
+| `src/ir/ir_validate.c` | Alta | `ir_validate`: invariantes del modelo, sin requerir CFG/liveness. |
+| `src/ir/ir_print.c` | Alta | `ir_write`: cabeceras de tipos, TAC sencillo y comentarios con todos los flags activos. |
 
-Los métodos internos retornan `IrStatus` y usan parámetros de salida; no emplear un temporal inválido o `TYPE_VOID` como único indicador de fallo. Para `none`, devolver operando ausente con `IR_OK`.
+Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modifican el contexto. `ctx->error.status` distingue ausencia válida de valor de un error y conserva el primer fallo. Los auxiliares dejan de emitir tras un error; el API público devuelve `IrStatus` y solo publica el modelo en éxito.
 
 ## 4. Secuencia de implementación
 
@@ -62,15 +59,15 @@ No agregar inicializaciones implícitas ni asignar almacenamiento a temporales. 
 
 ## 5. Reglas para generar expresiones y bloques
 
-1. `generate_expr` evalúa hijos en orden y produce un valor estable. Para `a + llamada[]`, emitir primero una copia del valor de `a`, después la llamada y finalmente la suma.
-2. El tipo esperado proviene del destino, parámetro o retorno; usarlo para conversiones y literales, sin estrechar cálculos intermedios. Dar prioridad a las anotaciones y aplicar la regla B32/uB32 del contrato cuando falte tipo exacto. Una categoría `TYPE_INT` sola no determina ancho/signo.
-3. `generate_lvalue` devuelve símbolo escalar o dirección tipada; no carga el valor del destino salvo que la operación lo requiera.
+1. `ir_expr` evalúa hijos en orden y produce un valor estable. Para `a + llamada[]`, emitir primero una copia del valor de `a`, después la llamada y finalmente la suma.
+2. Obtener tipos de las anotaciones/símbolos y considerar el destino, parámetro o retorno al convertir, sin pasar un tipo esperado por toda la recursión ni estrechar cálculos intermedios. Dar prioridad a las anotaciones y aplicar la regla B32/uB32 del contrato cuando falte tipo exacto. Una categoría `TYPE_INT` sola no determina ancho/signo.
+3. `ir_target` devuelve símbolo escalar o dirección tipada; no carga el valor del destino salvo que la operación lo requiera.
 4. Para un destino indexado, evaluar y comprobar cada índice en orden antes del origen. No volver a evaluar índices durante el `STORE`.
-5. Crear bloques para entrada, destinos y continuaciones. Condiciones enteras se convierten mediante `TO_BOOL`; `BRANCH` almacena ambos destinos.
+5. Crear bloques para entrada, destinos y continuaciones. Condiciones enteras se expresan con `t = x != 0`; `BRANCH` almacena ambos destinos y es la última instrucción del bloque.
 6. El cuerpo de `alwhen` vuelve a condición. El de `loop` pasa al avance y luego a condición. `break` salta a salida; `RETURN` cierra el camino sin continuación.
 7. Si ambas ramas retornan, no crear unión ejecutable. Omitir sentencias posteriores de un camino ya cerrado; no hacer eliminación global de bloques ni plegado de constantes.
 8. Finalizar con `RETURN` sin valor solo cuando el retorno de la rutina sea `none`; un camino final sin retorno en una rutina con valor es error estructural. Nunca inventar `return 0`.
-9. Antes de publicar, resolver IDs de destinos y ejecutar `ir_validate`. No producir predecesores/sucesores en esta etapa.
+9. Antes de publicar, resolver IDs de destinos y ejecutar `ir_validate`. No producir predecesores/sucesores en esta etapa. No mantener `has_terminator` ni un campo de terminador separado: consultar la última operación de la lista.
 
 Las comprobaciones que pueden fallar son atributos/operaciones con salida de error implícita según el contrato; no requieren dividir un bloque por cada comprobación.
 
@@ -93,19 +90,22 @@ Ejemplo esquemático para `a store 2`, `b store a + 3 * 4` y `output b`, con amb
 
 ```text
 function main() -> B32
-    local B32 a
-    local B32 b
+    variables: local a:B32, local b:B32
+    temporales: t0:B32, t1:B32, t2:B32, t3:B32
+    constantes: 2:B32, 3:B32, 4:B32
 B0:
     a = 2
-    t0:B32 = a
-    t1:B32 = 3 * 4 [checked]
-    t2:B32 = t0 + t1 [checked]
+    t0 = a
+    t1 = 3 * 4  ; comprueba rango, puede fallar
+    t2 = t0 + t1 ; comprueba rango, puede fallar
     b = t2
-    t3:B32 = b
+    t3 = b
     return t3
 ```
 
-Imprimir declaración de tipos, nombres inequívocos, temporales tipados, etiquetas, destinos y atributos relevantes. No imprimir registros, offsets de spill ni instrucciones PORYGON. `checked` indica que debe conservarse el comportamiento de comprobación del tipo; no se aplicó plegado de constantes.
+La cabecera declara tipos sin recargar cada instrucción. Los comentarios muestran flags activos, no operaciones nuevas. No se pliegan constantes ni se omiten metadatos que afecten tipos/efectos; las comprobaciones potenciales son conservadoras antes de optimizar. El detalle de escritura es normativo en [contrato-IR.md](contrato-IR.md).
+
+El ejemplo completo de fuente, AST, tabla semántica, recorrido y salidas está en [ejemplo-flujo-IR.md](ejemplo-flujo-IR.md). El inventario de nombres sigue en [glosario-IR.md](glosario-IR.md).
 
 ## 8. Pruebas de IR pendientes — tres casos
 
@@ -123,9 +123,9 @@ Usar fuentes completas de aproximadamente 8–15 líneas, snapshots pequeños de
 | --- | --- |
 | Enunciado `proyecto-ii-grupal-perf-cache.pdf`, §4 y §7.2 | TAC definido por el grupo, bandera de exportación e identificación de bloques. |
 | Presentación `Apuntes_PresentacionOptimizacion.pdf`, diapositivas 5–9 y 14 | Operaciones, cuádruplos, recorrido del AST y líderes de bloques. |
-| [main.c](../src/main.c), [Makefile](../Makefile) | Orquestación, CLI, rutas y construcción. |
-| [ast.h](../include/ast.h), [semantic.c](../src/analysis/semantic.c), [symbol_table.h](../include/symbol_table.h) | Entrada, resolución, tipos, ámbitos y almacenamiento existente. |
-| [codegen_expr.c](../src/codegen/codegen_expr.c), [codegen_stmt.c](../src/codegen/codegen_stmt.c) | Orden de evaluación, prefijos, ciclos y destinos. |
-| [codegen_array.c](../src/codegen/codegen_array.c), [codegen_arithmetic.c](../src/codegen/codegen_arithmetic.c), [codegen_crypto.c](../src/codegen/codegen_crypto.c) | Límites dinámicos, errores de aritmética e intrínsecas. |
+| [main.c](../../src/main.c), [Makefile](../../Makefile) | Orquestación, CLI, rutas y construcción. |
+| [ast.h](../../include/ast.h), [semantic.c](../../src/analysis/semantic.c), [symbol_table.h](../../include/symbol_table.h) | Entrada, resolución, tipos, ámbitos y almacenamiento existente. |
+| [codegen_expr.c](../../src/codegen/codegen_expr.c), [codegen_stmt.c](../../src/codegen/codegen_stmt.c) | Orden de evaluación, prefijos, ciclos y destinos. |
+| [codegen_array.c](../../src/codegen/codegen_array.c), [codegen_arithmetic.c](../../src/codegen/codegen_arithmetic.c), [codegen_crypto.c](../../src/codegen/codegen_crypto.c) | Límites dinámicos, errores de aritmética e intrínsecas. |
 
 Las APIs/formatos de esta guía son decisiones de implementación. No se presupone que el enunciado imponga esos nombres.

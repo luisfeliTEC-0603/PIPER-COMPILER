@@ -1,22 +1,16 @@
-/**
- * @file ir_print.c
- * @brief Estructura de exportación del modelo IR como TAC legible.
- *
- * Solo declaración. El modelo en memoria será la entrada de los consumidores;
- * el archivo es una vista para inspección, no un protocolo a volver a analizar.
+/** @file ir_print.c
+ * @brief Estructura de impresión del modelo como TAC. Solo declaración.
  */
-#include "ir_internal.h"
+#include "ir.h"
 
-/**
- * @brief Escribirá rutinas, datos, bloques e instrucciones en orden determinista.
- * @param output Stream prestado y abierto por el orquestador.
- * @param program IR validada, prestada e inmutable.
- * @return IR_OK, IR_INVALID_INPUT o IR_IO_ERROR; no altera el programa.
- *
- * Mantener nombres originales, distinguir homónimos por ámbito cuando haga
- * falta y evitar colisiones visuales entre nombres de usuario y temporales.
- * Mostrar tipos, destinos y atributos de comprobación/efectos relevantes.
- * No imprimir registros físicos ni offsets de spill. El caller administra
- * archivo temporal, cierre, publicación atómica y limpieza al fallar.
- */
+/** Entrada: stream prestado e IR validada. Salida: texto determinista y estado.
+ * Lee firmas/declaraciones de la tabla prestada; nombres homónimos se califican
+ * solo si hace falta. Declara variables, temporales y constantes tipadas en
+ * cabeceras; las instrucciones quedan sencillas, sin repetir tipos innecesarios.
+ * Usa =, +, -, *, /, %, ^, ==, != y operadores similares donde corresponda.
+ * La última instrucción se imprime como jump, if ... jump ... else ... o return.
+ * Cada flag activo se muestra en un comentario según el contrato; sin comentario
+ * significa flags=0. No oculta tipos/efectos de la IR ni imprime punteros/capacidades.
+ * No modifica IR, no cierra output y no publica archivos: lo hará el orquestador.
+ * Las funciones de formato específicas serán static dentro de este módulo. */
 IrStatus ir_write(FILE *output, const IrProgram *program);
