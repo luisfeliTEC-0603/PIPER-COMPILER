@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; solo existen estructuras y declaraciones, sin cuerpos de funciones. Plan: [todoIR.md](todoIR.md). Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; solo existen estructuras y declaraciones, sin cuerpos de funciones. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -83,7 +83,7 @@ La instrucción tiene tres formas de almacenamiento: cuádruplo normal, destinos
 | Condición | `if t jump B1 else B2` | `IR_OP_BRANCH`; dos destinos explícitos. |
 | Retorno | `return t` o `return` | `IR_OP_RETURN`; valor opcional. |
 
-Los nombres C `IR_OP_*` identifican operaciones internamente: no se imprimen como sustitutos de `+`, `=`, etc. Los atributos se muestran en comentarios, por ejemplo `t = a + b  ; comprueba rango`. Efectos como lectura/escritura y posible error son metadatos, no nuevas instrucciones aritméticas. Cada opcode y cada bandera se definen por separado en el [glosario](glosario-IR.md).
+Los nombres C `IR_OP_*` identifican operaciones internamente: no se imprimen como sustitutos de `+`, `=`, etc. Los atributos se muestran en comentarios, por ejemplo `t = a + b  ; comprueba rango del resultado B32`. Efectos como lectura/escritura y posible error son metadatos, no nuevas instrucciones aritméticas. Cada opcode y cada bandera se definen por separado en el [glosario](glosario-IR.md).
 
 Reconocer lecturas/escrituras explícitas mediante opcode, `arg1`, `arg2`, `result` y argumentos de llamada. Guardar efectos como bits en `flags`: `IR_READ_MEMORY`, `IR_WRITE_MEMORY`, `IR_READ_CRYPTO`, `IR_WRITE_CRYPTO` e `IR_MAY_TRAP`. `IR_CHECKED` conserva la solicitud de comprobación. El emisor común calcula los efectos a partir de operación/atributos; no se expone una API separada de visitas para esta fase. Llamadas sin análisis interprocedimental se consideran conservadoramente lectoras/escritoras de memoria y potencialmente fallidas. Las operaciones sobre símbolos globales también tienen efecto de memoria. Las locales escalares se representan por símbolo; las escrituras por direcciones conservan su posible alias.
 
@@ -114,6 +114,8 @@ Resolver tipos con `has_piper_type`/`has_element_piper_type` antes de leer el ca
 La identidad de usos, declaraciones, llamadas y control de `loop` se registra durante el semántico con referencias a símbolos finales, antes de que una búsqueda posterior pueda encontrar otra declaración. El generador no reconstruye esa resolución solamente a partir del nombre.
 
 ## 6. Bloques y validación
+
+Restricciones iniciales y ejemplos completos de control: [estructuras para I5](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5).
 
 La presentación (diapositivas 9 y 14) usa etiquetas, saltos y continuación secuencial; no exige que todo bloque termine con un salto escrito. Esta IR explicita la continuación para que el destino no cambie al mover bloques. Es una convención del modelo, no una instrucción extra obligatoria de PORYGON; un backend podrá omitir un salto al bloque físicamente siguiente si respeta las reglas de control del procesador.
 
@@ -167,7 +169,7 @@ Imprimir en orden determinista. Para temporales, recorrer resultados y usos y co
 
 | Flag interno | Comentario legible |
 | --- | --- |
-| `IR_CHECKED` | `comprueba rango` |
+| `IR_CHECKED` | `comprueba rango del resultado <tipo>`; sustituir `<tipo>` por el tipo exacto de `result`. |
 | `IR_READ_MEMORY` | `lee memoria` |
 | `IR_WRITE_MEMORY` | `escribe memoria` |
 | `IR_READ_CRYPTO` | `lee estado criptográfico` |

@@ -43,17 +43,101 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 
 ## 4. Secuencia de implementación
 
-| ID | Prioridad | Trabajo | Regla de cierre |
+| ID | Prioridad | Trabajo concreto | Resultado que permite avanzar |
 | --- | --- | --- | --- |
-| I1 | Alta | Implementar modelo y propiedad de memoria del contrato. | Creación/liberación segura, IDs estables y operandos tipados. |
-| I2 | Alta | Transportar referencias semánticas finales. | Cada uso apunta a su declaración incluso con sombreado o declaraciones posteriores en el mismo bloque. No identificar símbolos por dirección de memoria asignada. |
-| I3 | Alta | Literales, lecturas, asignación y expresiones escalares. | Evaluación izquierda a derecha; ninguna lectura queda diferida a través de una llamada que pueda modificarla. |
-| I4 | Alta | Rutinas, llamadas y retornos. | Parámetros en orden; `none` sin resultado; declaraciones globales como datos y arranque explícito cuando haya sentencias globales. |
-| I5 | Alta | `when`, `alwhen`, `loop` y `break`; finalizar bloques. | Destinos explícitos y terminadores únicos. Aplicar las restricciones iniciales del contrato para `loop` e incrementos. |
-| I6 | Alta | Efectos, comprobaciones y validador. | Conservar errores de aritmética, división, exponente e índice del backend actual. No eliminar llamadas aunque su resultado no se use. |
-| I7 | Media | Arreglos/matrices e intrínsecas. | Direcciones y parámetros por referencia; mantener orden por filas y efectos criptográficos. |
-| I8 | Alta | CLI, impresión y Makefile. | Exportación solo IR o adicional sin cambiar el backend actual; fallos de E/S comunicados. |
-| I9 | Alta | Ejecutar las tres pruebas de esta guía y construcción habitual. | IR esperada e invariantes correctas; comandos actuales conservan su comportamiento. |
+| I1 | Alta | Reservar/liberar `IrProgram`, arreglos de rutinas/bloques/instrucciones, argumentos de llamadas y pila de salidas de ciclos. Definir contadores, IDs y operandos con tipo. | El modelo puede construirse parcialmente y descartarse sin liberar AST/símbolos prestados ni perder recursos. Ninguna variable de Piper cambia de dirección. |
+| I2 | Alta | Registrar en el AST la referencia a la declaración que el semántico ya resolvió para cada identificador, llamada y control de `loop`. | Dos usos de la misma variable comparten el mismo `Symbol *`; dos declaraciones homónimas tienen referencias distintas. |
+| I3 | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
+| I4 | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
+| I5 | Alta | Construir bloques y saltos para condicionales/ciclos; apilar la salida de cada ciclo para `break` y cerrar cada camino una sola vez. | `when`, `alwhen`, `loop` y `break` siguen las restricciones y esquemas del [ejemplo de control](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). |
+| I6 | Alta | Asignar flags por operación y validar tipos, temporales, firmas, destinos y transferencias finales. | Los errores y efectos actuales están representados; no se publica IR malformada ni se eliminan llamadas con resultado sin uso. |
+| I7 | Media | Calcular direcciones y accesos por elemento para arreglos/matrices; emitir las cuatro intrínsecas con efectos de memoria/criptografía. | Índices evaluados una vez, límites conservados, parámetros por referencia y orden por filas. |
+| I8 | Alta | Implementar `ir_write` con cabeceras y TAC; preparar reglas de construcción y opciones de CLI cuando el módulo esté completo. | Exportación solo IR o adicional con rutas comprobadas, sin publicar archivo parcial ni cambiar el codegen actual. No conectar a `main` antes de completar el módulo. |
+| I9 | Alta | Ejecutar los tres casos IR-T1–IR-T3 y la construcción habitual al completar el módulo. | Coinciden las instrucciones/tipos/bloques esperados y se conservan los comandos existentes. |
+
+### I1. Qué memoria se administra y qué identifica cada ID
+
+La memoria administrada es la RAM del equipo donde corre `pipoc`. No se mueven variables de Piper, no se calculan nuevas direcciones de PORYGON y no se reservan posiciones de pila para temporales.
+
+| Recurso | Quién lo crea / libera | Regla concreta |
+| --- | --- | --- |
+| `IrProgram` y arreglos de rutinas/bloques/instrucciones | Generador / `ir_program_free`. | Inicializar punteros y cantidades; incrementar `count` solo cuando el elemento queda registrado. |
+| Arreglo que necesita crecer | Módulo que lo agrega. | Reservar más capacidad; si se usa `realloc`, conservar la referencia anterior hasta comprobar éxito. |
+| Argumentos de `call`/intrínseca | Generación de llamada / emisor y luego programa. | `ir_emit` consume la lista incluso al fallar; el descriptor original no la vuelve a liberar. |
+| Pila `break_targets` | Contexto de generación. | Liberarla al terminar o abortar el recorrido; no pertenece al programa publicado. |
+| AST, tabla y objetos `Symbol` | Frontend/orquestador. | IR solo los consulta. No los libera ni cambia sus ubicaciones. |
+| Fallo a mitad de generación | Orquestador IR. | Liberar lo propio construido hasta ese punto, conservar el primer diagnóstico y dejar `*out = NULL`. |
+
+Un **ID estable** es una identidad que no cambia porque un arreglo C cambie de dirección: el bloque B3 sigue siendo B3 después de crecer o reordenar el arreglo. No guardar como identidad un puntero a un elemento del arreglo. Los IDs de bloque no se confunden con posiciones físicas de memoria.
+
+Los temporales también tienen IDs propios de su rutina: t0, t1, etc. Son resultados virtuales, no variables asignadas a RAM. La posición de rutina/instrucción de un diagnóstico es un índice de inspección; no se exige que identifique un resultado estable durante futuras transformaciones.
+
+Un **operando tipado** contiene la clase de valor, el valor/referencia y su tipo exacto:
+
+| Operando de ejemplo | Contenido interno | Significado |
+| --- | --- | --- |
+| Variable `a` B32 | `kind=SYMBOL`, referencia a su `Symbol`, `type={B32,false}`. | Variable entera de 32 bits con signo. |
+| Constante `3` usada como B32 | `kind=CONSTANT`, valor 3, `type={B32,false}`. | Literal interpretado como B32 en esta operación. |
+| Resultado temporal t0 B32 | `kind=TEMP`, ID 0, `type={B32,false}`. | Resultado virtual B32, todavía sin registro ni pila. |
+| Resultado de `a < b` | Temporal con `type={bool,false}`. | El resultado es booleano aunque los argumentos sean B32. |
+| Dirección de elemento B32 | Temporal con `type={B32,true}`. | Dirección hacia un elemento B32; no es el valor entero almacenado allí. |
+
+`SYMBOL`, `CONSTANT` y `TEMP` abrevian los enums `IR_OPERAND_*`; `{B32,false}` resume los campos `piper` y `address`, no es la escritura literal de C. Tipar no significa guardar solamente el carácter `+` ni escoger arbitrariamente el tipo mayor. Por ejemplo, B8 + B16 puede tener resultado B16 conforme al semántico, pero B32 < B32 produce bool. Mezclas con/sin signo deben respetar las reglas existentes. El contenedor C `int64_t` no convierte las operaciones de Piper a 64 bits.
+
+### I2. Enlazar usos con declaraciones, no ordenar el AST
+
+Entrada: el semántico está visitando un nodo y ya obtuvo el `Symbol *` correcto. Acción: conservar esa referencia en el nodo correspondiente. Salida: el generador puede copiar la referencia a `IrOperand.value.symbol` sin buscar otra vez por nombre.
+
+| Nodo | Referencia que debe conservar |
+| --- | --- |
+| Declaración/identificador `a` | Declaración exacta de `a` en su ámbito. |
+| Destino de asignación | Misma declaración que se va a escribir. |
+| Llamada `f[...]` | Declaración de la función aprobada y su firma. |
+| Control `i` de `loop` | Declaración de la variable/parámetro que se actualizará. |
+
+No se extraen, mueven ni reordenan nodos. Si hay un `a` exterior y otro `a` local declarado después de un uso, ese uso anterior conserva el símbolo que era visible al analizarlo; no se cambia por el símbolo local que aparece en la tabla final.
+
+### I3. Convertir valores y cálculos escalares a TAC
+
+Entrada: nodo de expresión/asignación aprobado. Salida: operandos de `ir_expr` e instrucciones añadidas por `ir_emit` al bloque activo.
+
+| Paso para `b store a + 3` | Resultado |
+| --- | --- |
+| `ir_target(b)` | Referencia al destino `b`; todavía no se escribe. |
+| `ir_expr(a)` | Emite `t0 = a` y devuelve t0 con tipo de `a`. |
+| `ir_expr(3)` | Devuelve el operando constante; no necesita emitir una instrucción solo por el literal. |
+| Combinar el nodo `+` | Emite `t1 = t0 + 3`, con tipo/flags resueltos. |
+| Completar asignación | Emite `b = t1`. |
+
+Capturar una lectura fija el valor en el momento correcto. Para `a + cambiar[]`, si `a` vale 2 y la llamada cambia `a` a 10 y devuelve 1, el cálculo debe usar 2 + 1, no 10 + 1:
+
+```text
+t0 = a
+t1 = call cambiar()
+t2 = t0 + t1
+```
+
+I3 prepara esa regla incluso antes de implementar llamadas en I4. No aplica propagación de constantes, reordenamiento ni evaluación de la función durante compilación.
+
+### I4. Agregar funciones, llamadas y retorno a la traducción
+
+La generación de tres direcciones ya empieza en I3. I4 extiende esa traducción a la organización por rutinas, paso de argumentos y transferencia del resultado; no es una extracción genérica de todos los nodos.
+
+| Construcción | Traducción requerida |
+| --- | --- |
+| `routine B32 incrementar[B32 x]` | Crear `IrRoutine` ligada al símbolo de función; firma `incrementar(x:B32) -> B32`. El parámetro `x` sigue siendo su símbolo, sin asignarle un registro aquí. |
+| Cuerpo `output x + 1` | Capturar `x`, emitir suma y `return` del temporal resultante. |
+| Llamada `incrementar[2]` | Evaluar argumento 2; emitir `t = call incrementar(2)`, donde t tiene el tipo de retorno B32. |
+| Rutina de retorno none | Llamada sin temporal ficticio y `return` sin valor para `output none`. |
+| Sentencias globales | Generarlas en una rutina sintética previa a la llamada de entrada a `main`; no mezclar sus instrucciones con el cuerpo de otra función. |
+
+Cada rutina tiene sus temporales y bloque de entrada. La firma se consulta en el símbolo final; las convenciones de argumentos en registros, marcos de pila y bundles quedan fuera de I4.
+
+### I5. Control estructurado a bloques y saltos
+
+Entrada: nodos de condición/ciclo ya aprobados. Salida: bloques con transferencias explícitas. Cada destino es un ID de bloque de la misma rutina. La pila de `break` contiene las salidas de ciclos, no salidas de `when`.
+
+Las reglas, fuentes pequeñas y TAC esperado se describen en [estructuras de control para I5](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). Son ejemplos de documentación; no amplían los tres tests acordados ni implementan todavía el módulo.
 
 No agregar inicializaciones implícitas ni asignar almacenamiento a temporales. `piper_type_storage_size` determina el ancho de los elementos, no un tamaño fijo de cuatro bytes para todos los tipos.
 
@@ -96,8 +180,8 @@ function main() -> B32
 B0:
     a = 2
     t0 = a
-    t1 = 3 * 4  ; comprueba rango, puede fallar
-    t2 = t0 + t1 ; comprueba rango, puede fallar
+    t1 = 3 * 4  ; comprueba rango del resultado B32, puede fallar
+    t2 = t0 + t1 ; comprueba rango del resultado B32, puede fallar
     b = t2
     t3 = b
     return t3

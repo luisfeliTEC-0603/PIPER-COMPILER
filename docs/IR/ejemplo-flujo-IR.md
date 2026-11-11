@@ -2,6 +2,8 @@
 
 El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales, que todavía no tienen implementación. No se aplican optimizaciones.
 
+Los comentarios `comprueba rango del resultado B32, puede fallar` verifican que el resultado de esa operación quepa en B32 (−2147483648 a 2147483647). Desbordar ese rango es una posibilidad del tipo de dato, no un defecto del compilador; la comprobación conserva la política de error de Piper. En estos ejemplos los valores sí caben y no se espera ningún fallo. El tipo comprobado es el resultado de la operación, no necesariamente el de una variable que lo reciba después.
+
 ## 1. Entrada al compilador
 
 Contenido de `ejemplo.rwt`:
@@ -130,7 +132,7 @@ La instrucción de suma de B1 tendrá estos datos:
 | `flags` | `IR_CHECKED` e `IR_MAY_TRAP`. |
 | `location` | Expresión `a + 3`, línea 6, columnas 17–22 según el AST actual. |
 
-Se verá como `t3 = t2 + 3 ; comprueba rango, puede fallar`; su tipo aparece en la cabecera. Las copias escalares locales, comparación y transferencias de este ejemplo no tienen flags activos. No se confunde el resultado bool `t1` con los temporales enteros.
+Se verá como `t3 = t2 + 3 ; comprueba rango del resultado B32, puede fallar`; su tipo aparece en la cabecera. Las copias escalares locales, comparación y transferencias de este ejemplo no tienen flags activos. No se confunde el resultado bool `t1` con los temporales enteros.
 
 Al terminar: una rutina, cuatro bloques, siete temporales, catorce instrucciones contando los saltos/retorno y ningún destino de `break`. La tabla semántica sigue viva; no se le agregaron los temporales.
 
@@ -148,12 +150,12 @@ B0:
     if t1 jump B1 else B2
 B1:
     t2 = a
-    t3 = t2 + 3 ; comprueba rango, puede fallar
+    t3 = t2 + 3 ; comprueba rango del resultado B32, puede fallar
     b = t3
     jump B3
 B2:
     t4 = a
-    t5 = t4 - 1 ; comprueba rango, puede fallar
+    t5 = t4 - 1 ; comprueba rango del resultado B32, puede fallar
     b = t5
     jump B3
 B3:
@@ -192,8 +194,8 @@ digraph EjemploIR {
         label="main() -> B32\nvariables: local a:B32, local b:B32\ntemporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:B32, t6:B32\nconstantes: 2:B32, 5:B32, 3:B32, 1:B32";
         r0_entry [label="ENTRY"];
         r0_b0 [shape=box, label="B0:\la = 2\lt0 = a\lt1 = t0 < 5\lif t1 jump B1 else B2\l"];
-        r0_b1 [shape=box, label="B1:\lt2 = a\lt3 = t2 + 3 ; comprueba rango, puede fallar\lb = t3\ljump B3\l"];
-        r0_b2 [shape=box, label="B2:\lt4 = a\lt5 = t4 - 1 ; comprueba rango, puede fallar\lb = t5\ljump B3\l"];
+        r0_b1 [shape=box, label="B1:\lt2 = a\lt3 = t2 + 3 ; comprueba rango del resultado B32, puede fallar\lb = t3\ljump B3\l"];
+        r0_b2 [shape=box, label="B2:\lt4 = a\lt5 = t4 - 1 ; comprueba rango del resultado B32, puede fallar\lb = t5\ljump B3\l"];
         r0_b3 [shape=box, label="B3:\lt6 = b\lreturn t6\l"];
         r0_exit [label="EXIT"];
         r0_entry -> r0_b0 [label="entrada"];
@@ -217,3 +219,171 @@ digraph EjemploIR {
 | Lector humano | `.ir` con tipos/efectos y `.dot` con conexiones; ambos describen el mismo modelo. |
 
 Liberación posterior: CFG → IR → AST → tabla de símbolos. El ejemplo documenta el flujo y no agrega implementación ni una prueba automatizada nueva.
+
+## 10. Estructuras de control para I5
+
+Las fuentes de esta sección son ejemplos completos de una sola rutina; sus análisis previos se pueden comprobar con `--check`. El TAC es **el cuerpo esquemático**: se omiten las cabeceras de variables/temporales/constantes para mostrar las conexiones. Un archivo `.ir` completo sí incluirá esas cabeceras, como en la sección 6. Cada ejemplo comienza sus propios IDs B0/t0.
+
+### Reglas y restricciones iniciales
+
+| Construcción | Entrada / restricciones | Estructura y regla de traducción |
+| --- | --- | --- |
+| `when [condición]` | Condición bool o entera aprobada por semántica. Una condición entera se compara con cero. `fallback` es opcional. | Evaluar una vez al llegar. Emitir dos destinos; sin fallback, el falso es la continuación. Cada rama que continúa salta a la unión. Si ambas retornan, no crear continuación ejecutable. |
+| `alwhen [condición]` | Condición bool o entera; puede ejecutarse cero veces. | Entrada → condición → cuerpo o salida. Cada vuelta regresa a condición y vuelve a evaluar sus lecturas/llamadas. No convertir una condición dinámica en un valor calculado una sola vez. |
+| `loop [i & inicio -> fin & paso]` | Control entero declarado. Inicio/fin enteros aprobados. En esta primera versión, paso es un literal entero positivo: no cero, negativo ni expresión general. | Asignar inicio una vez. Reevaluar fin antes de comparar en cada vuelta. Ejecutar mientras control < fin; fin es exclusivo. Tras el cuerpo, avanzar control y volver a condición. |
+| `break` | Debe estar dentro de un ciclo de la misma rutina; una condición por sí sola no habilita break. | Saltar a la salida del ciclo más interno. Omitir el resto de ese camino, incluido el avance del loop. No salir accidentalmente de todos los ciclos anidados. |
+| `output` dentro de cualquiera | Retorno compatible con la firma, ya comprobado. | Emitir return y no agregar luego otro salto al mismo bloque. |
+
+Las restricciones del paso de `loop` reflejan la compatibilidad inicial con el codegen actual: parser/semántica aceptan más formas, pero la IR no debe traducirlas incorrectamente; informará `IR_UNSUPPORTED` mientras no se defina su soporte. `++`/`--` siguen siendo prefijos y se limitan inicialmente a identificadores escalares, conforme al contrato.
+
+### 10.1. `when` con y sin `fallback`
+
+El ejemplo principal de las secciones 1–8 ya muestra `when` con dos ramas y unión. Sin fallback, el camino falso va directamente a la continuación:
+
+```piper
+routine B32 main[] {
+    create B32 a.
+    create B32 b.
+    a store 2.
+    b store 0.
+    when [a < 5] { b store a + 1. }
+    output b.
+}
+```
+
+```text
+B0:
+    a = 2
+    b = 0
+    t0 = a
+    t1 = t0 < 5
+    if t1 jump B1 else B2
+B1:
+    t2 = a
+    t3 = t2 + 1 ; comprueba rango del resultado B32, puede fallar
+    b = t3
+    jump B2
+B2:
+    t4 = b
+    return t4
+```
+
+No se crea un bloque falso vacío: B2 es la continuación. `b` se inicializa antes de la condición porque la rama verdadera podría no ejecutarse. Resultado esperado: 3.
+
+### 10.2. `alwhen`: condición reevaluada
+
+```piper
+routine B32 main[] {
+    create B32 i.
+    i store 0.
+    alwhen [i < 3] { i store i + 1. }
+    output i.
+}
+```
+
+```text
+B0:
+    i = 0
+    jump B1
+B1:
+    t0 = i
+    t1 = t0 < 3
+    if t1 jump B2 else B3
+B2:
+    t2 = i
+    t3 = t2 + 1 ; comprueba rango del resultado B32, puede fallar
+    i = t3
+    jump B1
+B3:
+    t4 = i
+    return t4
+```
+
+`jump B1` vuelve a ejecutar la lectura de `i` y la comparación. t0/t1 son las mismas instrucciones del ciclo y se ejecutan cada vuelta; no se generan temporales nuevos por iteración en tiempo de ejecución. Resultado esperado: 3.
+
+### 10.3. `loop`: inicio, condición, cuerpo, avance y salida
+
+```piper
+routine B32 main[] {
+    create B32 i.
+    create B32 suma.
+    suma store 0.
+    loop [i & 0 -> 3 & 1] {
+        suma store suma + i.
+    }
+    output suma.
+}
+```
+
+```text
+B0:
+    suma = 0
+    i = 0
+    jump B1
+B1:
+    t0 = i
+    t1 = t0 < 3
+    if t1 jump B2 else B4
+B2:
+    t2 = suma
+    t3 = i
+    t4 = t2 + t3 ; comprueba rango del resultado B32, puede fallar
+    suma = t4
+    jump B3
+B3:
+    t5 = i
+    t6 = t5 + 1
+    i = t6
+    jump B1
+B4:
+    t7 = suma
+    return t7
+```
+
+El inicio solo se asigna en B0. Aquí el fin es el literal 3, por lo que su evaluación no emite instrucciones; si fuese una expresión, sus instrucciones irían dentro de B1 y se ejecutarían cada vuelta. El cuerpo usa i=0, 1 y 2; resultado esperado: 3.
+
+El avance B3 conserva el comportamiento actual del incremento del control de `loop`, sin agregar una nueva comprobación de rango. No se confunde con una expresión prefija `++i`, que tiene sus propias comprobaciones. No se realiza unrolling en esta etapa.
+
+### 10.4. `break`: salida del ciclo desde un `when`
+
+```piper
+routine B32 main[] {
+    create B32 i.
+    i store 0.
+    alwhen [i < 5] {
+        when [i = 2] { break. }
+        i store i + 1.
+    }
+    output i.
+}
+```
+
+```text
+B0:
+    i = 0
+    jump B1
+B1:
+    t0 = i
+    t1 = t0 < 5
+    if t1 jump B2 else B3
+B2:
+    t2 = i
+    t3 = t2 == 2
+    if t3 jump B4 else B5
+B3:
+    t6 = i
+    return t6
+B4:
+    jump B3
+B5:
+    t4 = i
+    t5 = t4 + 1 ; comprueba rango del resultado B32, puede fallar
+    i = t5
+    jump B1
+```
+
+Al entrar al ciclo se apila B3. El `when` no apila otra salida de ciclo: `break` consulta B3 y emite el salto de B4. Así evita el incremento de B5 y retorna 2. Los números de etiqueta no indican ejecución consecutiva; la transferencia explícita determina el camino.
+
+En ciclos anidados, cada ciclo apila su propia salida. El `break` usa el último destino; al terminar de traducir ese ciclo, se retira su entrada y vuelve a quedar visible la salida del ciclo exterior.
+
+Estos ejemplos explican I5; no son nuevas pruebas automatizadas ni salidas producidas por la IR aún no implementada.
