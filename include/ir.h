@@ -5,8 +5,8 @@
  * @file ir.h
  * @brief Modelo mínimo de TAC tipado y bloques básicos de Piper.
  *
- * I1 implementa almacenamiento y liberación en ir.c; traducción, validación
- * completa e impresión permanecen declaradas para las tareas siguientes.
+ * I1 implementa almacenamiento/liberación; I3 traduce expresiones y asignaciones
+ * escalares. Orquestación, validación completa e impresión siguen pendientes.
  * Flujo: ir_generate(AST, símbolos) -> IrProgram -> ir_write/consumidores
  * -> ir_program_free. ir_generate debe validar antes de publicar su resultado.
  * La tabla semántica final se presta y debe sobrevivir a todos los consumidores.

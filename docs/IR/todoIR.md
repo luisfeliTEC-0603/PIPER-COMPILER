@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: I1 e I2 implementados y comprobados de forma aislada; I3–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: I1–I3 implementados y comprobados de forma aislada; I4–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -26,7 +26,7 @@ Estado: I1 e I2 implementados y comprobados de forma aislada; I3–I9 pendientes
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados. `ir.c` ya implementa el almacenamiento de I1; el resto sigue declarado, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Los siete auxiliares de recorrido/emisión se complementan con tres de ciclo de vida necesarios para I1: iniciar/descartar contexto y reservar rutina, todos en `ir.c`.
+La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar de I3. La orquestación, validación completa e impresión siguen declaradas, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Los siete auxiliares de recorrido/emisión se complementan con tres de ciclo de vida necesarios para I1: iniciar/descartar contexto y reservar rutina, todos en `ir.c`.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 | --- | --- | --- | --- |
 | I1 — completado | Alta | Reservar/liberar `IrProgram`, arreglos de rutinas/bloques/instrucciones, argumentos de llamadas y pila de salidas de ciclos. Definir contadores, IDs y operandos con tipo. | El modelo puede construirse parcialmente y descartarse sin liberar AST/símbolos prestados ni perder recursos. Ninguna variable de Piper cambia de dirección. |
 | I2 — completado | Alta | Registrar en `AstNode.resolved_symbol` la declaración que el semántico ya resolvió para cada identificador, llamada y control de `loop`. | Dos usos de la misma variable comparten el mismo `const Symbol *`; dos declaraciones homónimas tienen referencias distintas. |
-| I3 | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
+| I3 — completado | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
 | I4 | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
 | I5 | Alta | Construir bloques y saltos para condicionales/ciclos; apilar la salida de cada ciclo para `break` y cerrar cada camino una sola vez. | `when`, `alwhen`, `loop` y `break` siguen las restricciones y esquemas del [ejemplo de control](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). |
 | I6 | Alta | Asignar flags por operación y validar tipos, temporales, firmas, destinos y transferencias finales. | Los errores y efectos actuales están representados; no se publica IR malformada ni se eliminan llamadas con resultado sin uso. |
@@ -94,7 +94,7 @@ Un **operando tipado** contiene la clase de valor, el valor/referencia y su tipo
 
 Cada contexto se inicia una sola vez mientras tenga recursos; para reutilizarlo, descartarlo primero. Descartar uno ya inicializado o fallido más de una vez es seguro.
 
-Los tres programas funcionales IR-T1–IR-T3 siguen pendientes para comprobar la traducción cuando el módulo esté completo. I1 e I2 todavía no generan TAC ni enlazan IR con `pipoc`.
+Los tres programas funcionales IR-T1–IR-T3 siguen pendientes para comprobar la traducción cuando el módulo esté completo. I3 ya genera TAC escalar de forma aislada; IR todavía no se enlaza con `pipoc`.
 
 El almacenamiento mantiene solo dos auxiliares privados compartidos:
 
@@ -145,6 +145,31 @@ t2 = t0 + t1
 ```
 
 I3 prepara esa regla incluso antes de implementar llamadas en I4. No aplica propagación de constantes, reordenamiento ni evaluación de la función durante compilación.
+
+#### I3 implementado: alcance y reglas de uso
+
+| Entrada / operación | Comportamiento actual |
+| --- | --- |
+| Contexto | Seleccionar una rutina y un bloque antes de traducir; I4 implementará esa orquestación. |
+| Literales | Entero/bool devuelve constante tipada sin instrucción; `none` devuelve operando ausente con estado `IR_OK`. |
+| Lectura / destino | `ir_expr(a)` emite copia a temporal; `ir_target(a)` devuelve el símbolo de I2 sin leerlo ni buscar por nombre. |
+| Operadores | Aritmética, comparaciones y lógica; ambos lados se evalúan en orden, sin cortocircuito ni plegado. |
+| `++` / `--` | Capturar identificador escalar, sumar/restar 1 con comprobación, escribir y devolver el temporal nuevo. |
+| Asignación | Resolver destino, evaluar origen y emitir `COPY`; una constante adopta el tipo del destino aprobado. Un temporal conserva su tipo previo. |
+| Bloque / declaración | Recorrer sentencias en orden; una declaración no emite inicialización. También se admiten expresiones como sentencias. |
+| Atributos | Aritmética solicita `IR_CHECKED` y `IR_MAY_TRAP`; copia entre tipos distintos también conserva comprobación del destino. I6 completará el cálculo común de efectos y la validación. |
+| Fuera de I3 | Llamadas, retornos, control e índices devuelven `IR_UNSUPPORTED`; no se ignoran ni se publican como traducción completa. |
+
+Los cuatro auxiliares privados de `ir_expr.c` tienen una responsabilidad cada uno:
+
+| Auxiliar | Propósito |
+| --- | --- |
+| `constant_integer` | Consultar únicamente árboles de literales para decidir B32/uB32 si falta anotación exacta, sin eliminar sus operaciones TAC. |
+| `expression_type` | Priorizar el tipo semántico; usar la regla B32/uB32 solo como respaldo. |
+| `operator_opcode` | Relacionar cada operador AST con su opcode TAC. |
+| `emit_value` | Asignar el siguiente ID temporal de la rutina y emitir su definición; no asigna memoria de Piper. |
+
+Comprobación aislada con fuentes pequeñas: secuencia TAC, identidad de símbolos, tipos B8/B16/B32/uB32/bool, operadores, límites enteros, orden con incrementos, evaluación completa de `and`/`or` y preservación del primer error. Sin pruebas permanentes ni cambios al Makefile.
 
 ### I4. Agregar funciones, llamadas y retorno a la traducción
 

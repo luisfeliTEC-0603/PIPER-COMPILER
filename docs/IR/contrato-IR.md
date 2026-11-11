@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; I1 ya implementa almacenamiento/liberación e I2 los enlaces semánticos del AST; la generación de TAC, la validación completa y la exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3 la traducción TAC escalar aislada. La orquestación, llamadas, control, validación completa y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
