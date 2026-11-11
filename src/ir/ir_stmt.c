@@ -1,15 +1,22 @@
 /** @file ir_stmt.c
- * @brief Estructura de sentencias y flujo de control. Solo declaración.
+ * @brief Traducción de sentencias y caminos; solo declaración.
  */
 #include "ir_internal.h"
 
-/** Entrada: sentencia o bloque AST. Salidas: efectos/bloques o error en contexto.
- * Asignación: ir_target -> ir_expr -> COPY/STORE mediante ir_emit.
- * Literales/copia de arreglo se escriben por filas, sin alterar efectos o alias.
- * when: ir_expr -> BRANCH -> ramas -> unión si alguna continúa.
- * alwhen: condición -> cuerpo -> vuelta; loop agrega inicio y avance explícitos.
- * break usa el último destino apilado; output emite RETURN.
- * Usa ctx->block=IR_NO_ID para un camino terminado y omite su resto.
- * El manejo de bloques léxicos, pila de break y ciclos quedará en helpers static;
- * no duplica el camino de emisión para cada tipo de terminador. */
-void ir_stmt(IrContext *ctx, const AstNode *node);
+/** Entradas: contexto y statement, que puede ser sentencia o bloque léxico AST.
+ * Salidas: efectos/bloques en el programa y current_block actualizado; no devuelve
+ * un valor de expresión. Error en contexto aborta el recorrido.
+ *
+ * Reglas que guiarán el cuerpo:
+ * - Declarar no inicializa ni vuelve a asignar memoria a las variables.
+ * - Asignar: ir_target -> ir_expr -> ir_emit con COPY/STORE.
+ * - when: condición una vez, destinos verdadero/falso y unión si se continúa.
+ * - alwhen: condición reevaluada -> cuerpo o salida; vuelta a condición.
+ * - loop: inicio una vez, fin por vuelta, cuerpo y avance; paso literal positivo.
+ * - break: salto a última salida apilada; output: RETURN del valor/none.
+ * - Cerrar un camino pone current_block=IR_NO_ID; no emitir luego otro salto.
+ * - Inicialización/copia de arreglos mantiene orden por filas y posibles alias.
+ *
+ * Pila de ciclos y helpers de control quedan aquí como detalles static futuros;
+ * no hace análisis de liveness, optimizaciones ni CFG. */
+void ir_stmt(IrContext *ctx, const AstNode *statement);

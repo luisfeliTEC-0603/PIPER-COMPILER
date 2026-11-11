@@ -13,12 +13,16 @@
  * la impresión usa =, +, -, *, comparaciones, jump, if y return.
  */
 #include "ast.h"
+#include "symbol_table.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
-/* Un mismo tipo de ID; su ámbito lo determina el campo que lo contiene.
- * Temporales y bloques pertenecen a una rutina. IR_NO_ID expresa ausencia. */
+/* Identidad numérica, no dirección de una variable de Piper.
+ * Los IDs de bloque/temporal pertenecen a una rutina y no cambian al mover un
+ * arreglo C. Los índices de rutina/instrucción solo localizan datos actuales.
+ * Cero es válido; IR_NO_ID expresa ausencia, incluido un camino terminado. */
 typedef size_t IrId;
 #define IR_NO_ID SIZE_MAX
 
@@ -36,8 +40,10 @@ typedef struct {
     char message[256];
 } IrDiagnostic;
 
-/** Tipo escalar exacto, o dirección de 32 bits hacia elementos de tipo piper.
- * Las dimensiones permanecen en Symbol. NONE es ausencia de valor, no error. */
+/** Tipo de un valor, no regla de promoción automática al operando más grande.
+ * piper conserva el tipo resuelto por semántica; address=true lo interpreta como
+ * tipo del elemento apuntado por una dirección de 32 bits. Dimensiones en Symbol.
+ * En un operando ausente, este campo no se interpreta. */
 typedef struct {
     PiperType piper;
     bool address;
@@ -50,7 +56,8 @@ typedef enum {
 /** Valor sin memoria propia. symbol identifica directamente la declaración
  * final, incluso con nombres repetidos. int64_t conserva todos los enteros
  * válidos de Piper, incluidos uB32 y los negativos, sin una estructura de signo.
- * El tipo del operando limita el valor: no se amplía Piper a enteros de 64 bits. */
+ * El tipo del operando limita el valor: no se amplía Piper a enteros de 64 bits.
+ * NONE es ausencia válida de resultado; no informa si la traducción falló. */
 typedef struct {
     IrOperandKind kind;
     IrType type;
@@ -77,9 +84,10 @@ typedef enum {
     IR_INTRINSIC_FEISTEL, IR_INTRINSIC_REVOKE
 } IrIntrinsic;
 
-/* Atributos y efectos combinables en flags. CHECKED solicita las comprobaciones
- * del backend; MAY_TRAP impide tratar una operación fallida como cálculo puro.
- * Los demás bits describen efectos observables para consumidores posteriores. */
+/* Atributos/efectos combinables. CHECKED exige comprobar que el resultado quepa
+ * en result.type; no anuncia un error del compilador ni un fallo esperado del
+ * ejemplo. MAY_TRAP conserva la posibilidad de error dinámico. Los otros bits
+ * describen lecturas/escrituras observables de memoria o estado criptográfico. */
 typedef enum {
     IR_CHECKED      = 1u << 0,
     IR_READ_MEMORY  = 1u << 1,
@@ -113,7 +121,7 @@ typedef struct {
             const Symbol *callee; /**< CALL: préstamo a la función final. */
             IrIntrinsic intrinsic; /**< INTRINSIC: identificador reservado. */
             IrOperand *arguments;  /**< Lista propia; tipos en cada valor. */
-            size_t count;          /**< Longitud exacta conocida por el AST. */
+            size_t argument_count; /**< Cantidad exacta, sin otra capacidad. */
         } call;
     } extra;
 } IrInstruction;
@@ -126,17 +134,18 @@ typedef struct {
 typedef struct {
     IrId id;
     IrInstruction *instructions;
-    size_t count, capacity;
+    size_t instruction_count, instruction_capacity;
 } IrBlock;
 
 /** La firma/nombre/tipos/parámetros se consultan en symbol, sin copiarlos.
  * symbol=NULL identifica el arranque sintético (retorno none, sin parámetros).
  * temp_count asigna IDs virtuales; su tipo figura en los operandos, sin otra
- * tabla de temporales. El programa posee blocks y sus instrucciones. */
+ * tabla de temporales. La rutina posee blocks y sus instrucciones; las variables
+ * locales y parámetros siguen perteneciendo a la tabla semántica prestada. */
 typedef struct {
     const Symbol *symbol;
     IrBlock *blocks;
-    size_t count, capacity;
+    size_t block_count, block_capacity;
     size_t temp_count;
     IrId entry;
 } IrRoutine;
@@ -147,29 +156,48 @@ typedef struct {
 typedef struct {
     const SymbolTable *symbols;
     IrRoutine *routines;
-    size_t count, capacity;
+    size_t routine_count, routine_capacity;
     IrId startup;
 } IrProgram;
 
 /**
- * Construirá y validará IR desde AST_PROGRAM aprobado y tabla final prestada.
- * out debe apuntar a NULL; recibe propiedad solo en IR_OK y queda NULL al fallar.
- * diagnostic es opcional. No ejecuta análisis previos ni modifica AST/tabla.
- * Pendiente: solo declaración, sin conexión con main.
+ * @brief Construirá y validará todo el programa antes de entregarlo al llamador.
+ * @param root AST_PROGRAM aprobado, con referencias semánticas finales por uso.
+ * @param symbols Tabla final prestada; debe vivir hasta liberar IR y consumidores.
+ * @param out Puntero inicialmente NULL; recibe propiedad solo al retornar IR_OK.
+ * @param diagnostic Receptor opcional del estado y primer error localizado.
+ * @return Estado explícito. Un fallo libera la construcción parcial y deja
+ * *out=NULL; ni AST ni tabla se modifican o liberan. No imprime ni abre archivos.
+ * @note Solo declaración. La integración con main espera al módulo completo.
  */
 IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
                      IrProgram **out, IrDiagnostic *diagnostic);
 
-/** Revisará estructura, tipos, firmas, destinos y definición de temporales.
- * program se presta y no se modifica; diagnostic opcional. Sin CFG ni liveness. */
+/**
+ * @brief Revisará la traducción, sin volver a analizar el lenguaje fuente.
+ * @param program IR completa prestada: tipos, firmas, destinos y temporales.
+ * @param diagnostic Receptor opcional del primer incumplimiento del contrato.
+ * @return IR_OK si es consistente; error de entrada/modelo en otro caso.
+ * No modifica datos ni depende de CFG, registros o análisis de variables vivas.
+ */
 IrStatus ir_validate(const IrProgram *program, IrDiagnostic *diagnostic);
 
-/** Imprimirá un programa validado en un stream prestado. Retorna estado de E/S;
- * no abre/cierra archivos ni los publica. El llamador debe comprobar fclose. */
+/**
+ * @brief Exportará el modelo con cabeceras tipadas, TAC sencillo y flags visibles.
+ * @param output Stream prestado, abierto y escribible; no se cierra aquí.
+ * @param program IR validada y tabla final aún viva, ambas consultadas sin cambios.
+ * @return Estado de entrada/E/S. El llamador comprueba fclose y publica el archivo.
+ * No recorre el AST. Cada IR_CHECKED muestra el tipo exacto de result.type.
+ */
 IrStatus ir_write(FILE *output, const IrProgram *program);
 
-/** Consumirá toda la memoria propia del modelo; NULL será válido.
- * No libera símbolos ni AST. Pendiente: no existe una liberación ficticia vacía. */
+/**
+ * @brief Liberará un programa completo o parcialmente construido; acepta NULL.
+ * @param program Propiedad a consumir: rutinas, bloques, instrucciones y las
+ * listas de argumentos activas según opcode. No libera AST ni símbolos prestados.
+ * Los consumidores se liberan primero; el llamador no vuelve a usar este puntero.
+ * Pendiente: no existe un cuerpo vacío que aparente liberar memoria.
+ */
 void ir_program_free(IrProgram *program);
 
 #endif

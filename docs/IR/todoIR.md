@@ -26,7 +26,7 @@ Estado: estructura declarada, implementación pendiente. Contrato normativo: [co
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados; sigue sin cuerpos de funciones ni conexión con `main`.
+La estructura mantiene seis archivos C y dos encabezados; sigue sin cuerpos de funciones ni conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas y siete auxiliares compartidos, sin agregar otra capa de intermediarios.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
@@ -61,7 +61,7 @@ La memoria administrada es la RAM del equipo donde corre `pipoc`. No se mueven v
 
 | Recurso | Quién lo crea / libera | Regla concreta |
 | --- | --- | --- |
-| `IrProgram` y arreglos de rutinas/bloques/instrucciones | Generador / `ir_program_free`. | Inicializar punteros y cantidades; incrementar `count` solo cuando el elemento queda registrado. |
+| `IrProgram` y arreglos de rutinas/bloques/instrucciones | Generador / `ir_program_free`. | Inicializar punteros y cantidades; incrementar la cantidad correspondiente (`routine_count`, `block_count` o `instruction_count`) solo cuando el elemento queda registrado. |
 | Arreglo que necesita crecer | Módulo que lo agrega. | Reservar más capacidad; si se usa `realloc`, conservar la referencia anterior hasta comprobar éxito. |
 | Argumentos de `call`/intrínseca | Generación de llamada / emisor y luego programa. | `ir_emit` consume la lista incluso al fallar; el descriptor original no la vuelve a liberar. |
 | Pila `break_targets` | Contexto de generación. | Liberarla al terminar o abortar el recorrido; no pertenece al programa publicado. |
