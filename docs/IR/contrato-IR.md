@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; I1 ya implementa almacenamiento/liberación; la generación de TAC, la validación completa y la exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 ya implementa almacenamiento/liberación e I2 los enlaces semánticos del AST; la generación de TAC, la validación completa y la exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -8,7 +8,7 @@ Especificación para implementar; I1 ya implementa almacenamiento/liberación; l
 | --- | --- |
 | `const AstNode *root` | Raíz `AST_PROGRAM` de un único archivo; `yyparse` terminó con 0 y produjo AST. |
 | `const SymbolTable *symbols` | Tabla final de la misma ejecución; `analyze_semantics_with_trace` retornó 1. |
-| Anotaciones | Usar tipos, dimensiones y ámbitos semánticos. Las referencias a declaraciones deben pertenecer a la tabla final. Para el cuerpo de rutina, tomar el ámbito de la rutina o `Symbol.function_scope`: el semántico visita su lista sin anotar necesariamente el nodo `AST_BLOCK` del cuerpo. |
+| Anotaciones | Usar tipos, dimensiones, ámbitos semánticos y `AstNode.resolved_symbol`. Sus referencias a declaraciones pertenecen a la tabla final. Para el cuerpo de rutina, tomar el ámbito de la rutina o `Symbol.function_scope`: el semántico visita su lista sin anotar necesariamente el nodo `AST_BLOCK` del cuerpo. |
 | Control del flujo | `compile_piper` ejecuta los análisis una sola vez. `--check`, clones y consultas LL(1) conservan sus salidas actuales, sin generar IR. |
 
 El generador no ejecuta análisis ni interpreta stdout/stderr. `main.c` comprueba los retornos antes de invocarlo.
@@ -23,7 +23,7 @@ El generador no ejecuta análisis ni interpreta stdout/stderr. `main.c` comprueb
 | Firma de rutina | Conservar orden/tipos de parámetros y retorno, incluidos arreglos por referencia. |
 | Declaraciones globales y locales | Imprimir datos y firmas sin crear otra tabla dentro de la IR. |
 
-Es una decisión de reutilización: un AST que contuviera toda esa información podría ser la única entrada. En el AST actual, identificadores y llamadas conservan principalmente nombres y anotaciones de tipo; la referencia directa al `Symbol` resuelto todavía debe incorporarse según el plan. La tabla final se presta sin modificarla; sus direcciones físicas no se usan para identificar variables ni para asignar temporales.
+El AST conserva nombres, tipos y la referencia `resolved_symbol` a la declaración final. La tabla aporta las declaraciones y sus metadatos sin duplicarlos en el AST ni en IR. Se presta sin modificarla; sus direcciones físicas no se usan para asignar temporales. Sus símbolos deben permanecer vivos durante la generación y todos los consumidores del IR; reconstruir o destruir la tabla invalida los préstamos anteriores.
 
 
 ## 2. API pública propuesta
@@ -111,7 +111,7 @@ Las comprobaciones y operaciones fallidas tienen salida de error implícita y no
 
 Resolver tipos con `has_piper_type`/`has_element_piper_type` antes de leer el campo correspondiente. Si una operación entera carece de tipo exacto, reproducir `result_type`/`unsigned_operand` de `codegen_arithmetic.c`: B32 por defecto o uB32 para el valor constante que requiere ese rango. El contexto de asignación/argumento/retorno no debe estrechar arbitrariamente un cálculo intermedio. Mantener el tipo en cada operando y resultado. El destino de una asignación conserva su tipo, sin cambiar el del temporal que contiene el cálculo previo; no agregar otro campo de tipo por instrucción.
 
-La identidad de usos, declaraciones, llamadas y control de `loop` se registra durante el semántico con referencias a símbolos finales, antes de que una búsqueda posterior pueda encontrar otra declaración. El generador no reconstruye esa resolución solamente a partir del nombre.
+La identidad de usos, declaraciones, llamadas ordinarias y control de `loop` se registra durante el semántico en `AstNode.resolved_symbol`, antes de que una búsqueda posterior pueda encontrar otra declaración. El generador no reconstruye esa resolución solamente a partir del nombre. Para asignaciones e índices, usar el enlace del identificador destino/base. Las llamadas intrínsecas no tienen símbolo de función: su enlace queda en NULL y se reconocen por su nombre reservado. Un análisis fallido no habilita la generación de IR.
 
 ## 6. Bloques y validación
 

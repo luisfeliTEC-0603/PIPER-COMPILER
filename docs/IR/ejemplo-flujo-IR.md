@@ -39,9 +39,11 @@ El resultado de una futura ejecución correcta es 5: se toma la rama `2 < 5`, qu
 | Semántico | Registra `main[]`, `a` y `b`; comprueba tipos, uso inicializado de `a`, condición y retorno B32. `b` recibe valor en ambas ramas antes de `output`. | Análisis aprobado y tabla final disponible. |
 | Orquestador | Comprueba `yyparse == 0`, AST no nulo y retorno semántico igual a 1. | Puede llamar al futuro `ir_generate` con AST y tabla de esta ejecución. |
 
-No se vuelve a ejecutar el frontend dentro de IR. La referencia directa al símbolo final por uso es el ajuste pendiente del plan; en este ejemplo se denominarán `S_a` y `S_b` solo para explicar esos enlaces, no para imprimirlos en TAC.
+No se vuelve a ejecutar el frontend dentro de IR. Semántica ya conserva en `AstNode.resolved_symbol` la referencia al símbolo final por uso; en este ejemplo se denominarán `S_a` y `S_b` solo para explicar esos enlaces, no para imprimirlos en TAC.
 
 ## 3. Forma del AST
+
+`ast_print` y `ast_print_json` muestran `resolved_symbol` en cada nodo: nombre, tipo declarado y línea de declaración, o `null` si no hay enlace. El árbol conserva sus mismos nodos e hijos; se imprime un resumen del símbolo, no su dirección ni toda la tabla. La tabla semántica debe seguir viva al imprimir.
 
 Vista resumida del AST obtenido; se omiten ubicaciones y campos vacíos. Es un árbol de nodos, no el TAC ni el formato literal del JSON:
 
@@ -74,17 +76,44 @@ Program
             └── IdentifierExpression b
 ```
 
-Anotaciones relevantes que el semántico mantiene en memoria:
+El AST no contiene solamente elementos de la tabla de símbolos: representa también operaciones, literales y control. En este ejemplo, la tabla tiene declaraciones de `main`, `a` y `b`; los nodos de suma, comparación, asignación, `when`, bloques y retorno no tienen un `Symbol` propio.
+
+Enlaces después del análisis semántico. `S_main`, `S_a` y `S_b` son nombres explicativos para los objetos `Symbol`; los exportadores muestran el resumen de la declaración correspondiente:
+
+| Nodo del ejemplo | `resolved_symbol` |
+| --- | --- |
+| `RoutineDeclaration main` | `S_main`: símbolo creado al registrar la rutina. |
+| `VariableDeclaration a` | `S_a`: símbolo creado al registrar `a`. |
+| Todos los `IdentifierExpression a` | El mismo `S_a`, encontrado al resolver cada uso. |
+| `VariableDeclaration b` | `S_b`: símbolo creado al registrar `b`. |
+| Todos los `IdentifierExpression b` | El mismo `S_b`, encontrado al resolver cada uso. |
+| Literales, operaciones, asignaciones, bloques, `when`, `output` y raíz | NULL: no representan una declaración que deba enlazarse. |
+
+Los enlaces son campos adicionales, no hijos nuevos del árbol. Por ejemplo, `Assignment` sigue teniendo un hijo destino y un hijo valor; el identificador destino es el que apunta al símbolo que se escribe. Semántica ya creaba/buscaba esos símbolos para validar el código; I2 conserva el resultado de esa resolución para que IR lo reutilice.
+
+En el identificador `a` de `a store 2`, la impresión de texto incluye:
+
+```text
+resolved_symbol: a (tipo B32, declaración en línea 2)
+```
+
+El campo correspondiente del JSON es:
+
+```json
+"resolved_symbol": {"name": "a", "type": "B32", "declaration_line": 2}
+```
+
+Otras anotaciones relevantes que el semántico mantiene en memoria:
 
 | Nodo / dato | Información usada por IR |
 | --- | --- |
-| Usos de `a` y `b` | Tipo exacto B32; enlace a sus declaraciones finales cuando se implemente el ajuste del contrato. |
+| Usos de `a` y `b` | Tipo exacto B32; `resolved_symbol` apunta a sus declaraciones finales. |
 | `a < 5` | Resultado bool; comparación de enteros B32. |
 | `a + 3`, `a - 1` | Resultado B32 y semántica aritmética comprobada. |
 | Literales 1, 2, 3 y 5 | Valores constantes; IR concretará B32 a partir de los usos y anotaciones. |
 | `main` | Retorno B32, sin parámetros, ámbito de función. |
 
-El JSON actual muestra la estructura del árbol; no imprime necesariamente todas las anotaciones semánticas internas.
+El tipo de una suma o comparación es una anotación del nodo de expresión; tener tipo no implica tener una entrada propia en la tabla de símbolos.
 
 ## 4. Tabla de símbolos final
 

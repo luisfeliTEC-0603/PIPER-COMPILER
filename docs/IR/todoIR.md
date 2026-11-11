@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: I1 implementado y comprobado de forma aislada; I2–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: I1 e I2 implementados y comprobados de forma aislada; I3–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -21,7 +21,7 @@ Estado: I1 implementado y comprobado de forma aislada; I2–I9 pendientes. Contr
 | Éxito | `IrProgram` validado; rutinas con parámetros, temporales, bloques y terminadores explícitos. |
 | Error | Estado y diagnóstico localizado; no devolver programa parcial. |
 | `src/main.c` | Generar después del éxito semántico y de las salidas tempranas de revisión/clones; antes del retorno que omite ASM cuando no hay salidas de máquina. NO METER A MAIN HASTA QUE MODULO ESTE COMPLETO|
-| `include/ast.h` / `src/analysis/semantic.c` | Agregar referencia al símbolo resuelto para declaraciones/usos/llamadas/control de ciclo. Inicializarla y asignarla durante la resolución existente; no repetir análisis. |
+| `include/ast.h` / `src/analysis/semantic.c` | I2 implementado: `resolved_symbol` conserva la declaración resuelta durante el análisis existente; no repetir búsquedas en IR. |
 | `Makefile` | Agregar fuentes/objetos de `src/ir/`, dependencias del encabezado y enlace de `pipoc`. No enlazar IR en `porygon-schedule`. |
 
 ## 3. Módulos y métodos
@@ -46,7 +46,7 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 | ID | Prioridad | Trabajo concreto | Resultado que permite avanzar |
 | --- | --- | --- | --- |
 | I1 — completado | Alta | Reservar/liberar `IrProgram`, arreglos de rutinas/bloques/instrucciones, argumentos de llamadas y pila de salidas de ciclos. Definir contadores, IDs y operandos con tipo. | El modelo puede construirse parcialmente y descartarse sin liberar AST/símbolos prestados ni perder recursos. Ninguna variable de Piper cambia de dirección. |
-| I2 | Alta | Registrar en el AST la referencia a la declaración que el semántico ya resolvió para cada identificador, llamada y control de `loop`. | Dos usos de la misma variable comparten el mismo `Symbol *`; dos declaraciones homónimas tienen referencias distintas. |
+| I2 — completado | Alta | Registrar en `AstNode.resolved_symbol` la declaración que el semántico ya resolvió para cada identificador, llamada y control de `loop`. | Dos usos de la misma variable comparten el mismo `const Symbol *`; dos declaraciones homónimas tienen referencias distintas. |
 | I3 | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
 | I4 | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
 | I5 | Alta | Construir bloques y saltos para condicionales/ciclos; apilar la salida de cada ciclo para `break` y cerrar cada camino una sola vez. | `when`, `alwhen`, `loop` y `break` siguen las restricciones y esquemas del [ejemplo de control](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). |
@@ -94,7 +94,7 @@ Un **operando tipado** contiene la clase de valor, el valor/referencia y su tipo
 
 Cada contexto se inicia una sola vez mientras tenga recursos; para reutilizarlo, descartarlo primero. Descartar uno ya inicializado o fallido más de una vez es seguro.
 
-Los tres programas funcionales IR-T1–IR-T3 siguen pendientes para comprobar la traducción cuando el módulo esté completo. I1 no implementa I2/I3 ni enlaza IR con `pipoc`.
+Los tres programas funcionales IR-T1–IR-T3 siguen pendientes para comprobar la traducción cuando el módulo esté completo. I1 e I2 todavía no generan TAC ni enlazan IR con `pipoc`.
 
 El almacenamiento mantiene solo dos auxiliares privados compartidos:
 
@@ -108,16 +108,21 @@ Crear bloques y emitir instrucciones sigue en `ir_new_block`/`ir_emit`; estas so
 
 ### I2. Enlazar usos con declaraciones, no ordenar el AST
 
-Entrada: el semántico está visitando un nodo y ya obtuvo el `Symbol *` correcto. Acción: conservar esa referencia en el nodo correspondiente. Salida: el generador puede copiar la referencia a `IrOperand.value.symbol` sin buscar otra vez por nombre.
+Entrada: el semántico está visitando un nodo y ya obtuvo el `Symbol *` correcto. Acción implementada: conservarlo en `AstNode.resolved_symbol`, de tipo `const Symbol *`. Salida: el generador podrá copiar la referencia a `IrOperand.value.symbol` sin buscar otra vez por nombre.
 
 | Nodo | Referencia que debe conservar |
 | --- | --- |
-| Declaración/identificador `a` | Declaración exacta de `a` en su ámbito. |
-| Destino de asignación | Misma declaración que se va a escribir. |
-| Llamada `f[...]` | Declaración de la función aprobada y su firma. |
+| Declaración de variable, parámetro o rutina | Símbolo creado en la tabla semántica final. |
+| Identificador `a` | Declaración exacta de `a` en su ámbito. |
+| Destino de asignación / base de acceso indexado | El identificador correspondiente conserva la declaración; no se duplica en el nodo de asignación/índice. |
+| Llamada ordinaria `f[...]` | Declaración de la función aprobada y su firma. |
 | Control `i` de `loop` | Declaración de la variable/parámetro que se actualizará. |
 
 No se extraen, mueven ni reordenan nodos. Si hay un `a` exterior y otro `a` local declarado después de un uso, ese uso anterior conserva el símbolo que era visible al analizarlo; no se cambia por el símbolo local que aparece en la tabla final.
+
+El constructor inicializa la referencia en NULL. Semántica la renueva al analizar cada nodo, incluidos los parámetros; queda en NULL cuando no aplica, la resolución falla o la llamada es intrínseca. La tabla final es dueña de los símbolos: el AST no los libera. Al repetir semántica se reemplaza la tabla y se renuevan los enlaces; no conservar IR de una ejecución anterior.
+
+Comprobación aislada realizada: pertenencia a la tabla final, sombreado antes/después de una declaración, parámetros/control de `loop`, llamadas ordinarias/intrínsecas, base de índices y reconstrucción del análisis. No se agregaron pruebas permanentes ni cambios al Makefile.
 
 ### I3. Convertir valores y cálculos escalares a TAC
 

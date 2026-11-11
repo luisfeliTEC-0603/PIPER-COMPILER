@@ -23,6 +23,7 @@ static AstNode *ast_node_create(AstKind kind, SourceLocation location)
     node->kind = kind;
     node->location = location;
     node->semantic_scope = NULL;
+    node->resolved_symbol = NULL;
     node->inferred_type = TYPE_VOID;
     node->element_type = TYPE_VOID;
     node->array_rank = 0;
@@ -717,6 +718,17 @@ static void ast_print_node(FILE *output, const AstNode *node,
             node->location.first_line, node->location.first_column,
             node->location.last_line, node->location.last_column);
 
+    /* Mostrar la declaración enlazada, sin imprimir direcciones ni recorrerla. */
+    ast_print_indentation(output, indentation + 1);
+    if (node->resolved_symbol) {
+        const Symbol *symbol = node->resolved_symbol;
+        fprintf(output, "resolved_symbol: %s (tipo %s, declaración en línea %d)\n",
+                symbol->name, piper_type_name(symbol->declared_type),
+                symbol->line_number);
+    } else {
+        fputs("resolved_symbol: null\n", output);
+    }
+
     switch (node->kind) {
     case AST_PROGRAM:
         ast_print_list(output, "elements", node->data.program.elements,
@@ -1022,6 +1034,21 @@ static void ast_json_node(FILE *output, const AstNode *node,
                     "\"last_column\": %d}",
             node->location.first_line, node->location.first_column,
             node->location.last_line, node->location.last_column);
+
+    /* Resumen del símbolo prestado; no serializar punteros ni toda la tabla. */
+    fputs(",\n", output);
+    ast_json_indent(output, indentation + 1);
+    fputs("\"resolved_symbol\": ", output);
+    if (node->resolved_symbol) {
+        const Symbol *symbol = node->resolved_symbol;
+        fputs("{\"name\": ", output);
+        ast_json_string(output, symbol->name);
+        fputs(", \"type\": ", output);
+        ast_json_string(output, piper_type_name(symbol->declared_type));
+        fprintf(output, ", \"declaration_line\": %d}", symbol->line_number);
+    } else {
+        fputs("null", output);
+    }
 
     switch (node->kind) {
     case AST_PROGRAM:

@@ -523,6 +523,8 @@ static void decorate_symbol(Visitor *v, AstNode *n, Symbol *s)
  * Solo se prohíben duplicados en el ámbito actual: sombrear un padre es válido. */
 static Symbol *declare(Visitor *v, AstNode *n)
 {
+    /* Los parámetros llegan aquí sin pasar por visit; también se renueva su enlace. */
+    n->resolved_symbol = NULL;
     int errors_before = v->errors;
     int parameter = n->kind == AST_PARAMETER;
     const char *name = parameter ? n->data.parameter.name : n->data.variable_declaration.name;
@@ -562,6 +564,7 @@ static Symbol *declare(Visitor *v, AstNode *n)
         dims->count ? TYPE_ARRAY : scalar(type), type, sizes[0], sizes[1], n->location.first_line);
     if (!s) error(v, n, "No se pudo registrar '%s' o asignar su memoria.", name);
     else {
+        n->resolved_symbol = s;
         n->inferred_type = s->type;
         n->element_type = scalar(type);
         n->has_piper_type = dims->count == 0;
@@ -750,6 +753,8 @@ static DataType visit(Visitor *v, AstNode *n)
         if (v->pending_codegen_bytes > *peak) *peak = (int)v->pending_codegen_bytes;
     }
     n->semantic_scope = NULL;
+    /* Al repetir el análisis, no conservar referencias a la tabla anterior. */
+    n->resolved_symbol = NULL;
     n->inferred_type = TYPE_VOID;
     n->array_rank = n->array_rows = n->array_cols = 0;
     n->element_type = TYPE_VOID;
@@ -801,6 +806,7 @@ static DataType visit(Visitor *v, AstNode *n)
             symbol_table_insert(v->table, name, SYMBOL_FUNC, scalar(n->data.routine_declaration.return_type),
                                 n->data.routine_declaration.return_type, 1, 1, n->location.first_line);
         if (valid_name && !f && !symbol_table_lookup_current_scope(v->table, name)) error(v, n, "No se pudo registrar la función '%s'.", name);
+        n->resolved_symbol = f;
         if (f) success(v, n, "Función '%s' registrada en el ámbito %d, línea %d; retorno %s.",
                        name, v->table->current_scope->scope_id, f->line_number, type_name(f->return_type));
         /* Si falla el registro, conservar el retorno esperado para analizar
@@ -895,6 +901,7 @@ static DataType visit(Visitor *v, AstNode *n)
         Symbol *s = lookup(v, n, n->data.identifier.name);
         if (s && s->symbol_class == SYMBOL_FUNC) error(v, n, "La función '%s' requiere una llamada.", s->name);
         else if (s) {
+            n->resolved_symbol = s;
             decorate_symbol(v, n, s);
             Scope *owner = symbol_scope(v, s);
             if (n != v->assignment_target && s->symbol_class == SYMBOL_VAR &&
@@ -994,6 +1001,7 @@ static DataType visit(Visitor *v, AstNode *n)
             if (f) error(v, n, "'%s' no es una función.", f->name);
             break;
         }
+        n->resolved_symbol = f;
         success(v, n, "Destino de llamada '%s' aprobado: clase SYMBOL_FUNC, declarado en la línea %d.", f->name, f->line_number);
         if ((int)args->count != f->param_count) error(v, n, "'%s' requiere %d argumentos; recibió %zu.", f->name, f->param_count, args->count);
         else success(v, n, "Llamada a '%s': cantidad de argumentos aprobada (%zu).", f->name, args->count);
@@ -1212,7 +1220,10 @@ static DataType visit(Visitor *v, AstNode *n)
     case AST_LOOP_STATEMENT: {
         Symbol *control = lookup(v, n, n->data.loop_statement.control_name);
         if (control && (control->symbol_class == SYMBOL_FUNC || control->type != TYPE_INT)) error(v, n, "El control '%s' debe ser una variable entera.", control->name);
-        else if (control) success(v, n, "Control del loop '%s' aprobado: variable o parámetro entero.", control->name);
+        else if (control) {
+            n->resolved_symbol = control;
+            success(v, n, "Control del loop '%s' aprobado: variable o parámetro entero.", control->name);
+        }
         require(v, n->data.loop_statement.begin, TYPE_INT, "El inicio del loop");
         require(v, n->data.loop_statement.end, TYPE_INT, "El fin del loop");
         require(v, n->data.loop_statement.step, TYPE_INT, "El paso del loop");
@@ -1298,7 +1309,9 @@ int analyze_semantics_with_trace(AstNode *root, SymbolTable *symbol_table,
     }
     /* Sustituir la tabla del parser conservando la dirección del objeto público.
      * La tabla anterior se destruye y sus punteros a símbolos dejan de ser válidos.
-     * La reconstruida queda disponible incluso si se encontraron errores. */
+     * La reconstruida queda disponible incluso si se encontraron errores.
+     * resolved_symbol apunta a sus símbolos, que no se mueven al intercambiar
+     * estas estructuras. No remapearlos por nombre ni enlazar el fallback local. */
     SymbolTable old = *symbol_table;
     *symbol_table = *v.table;
     *v.table = old;
