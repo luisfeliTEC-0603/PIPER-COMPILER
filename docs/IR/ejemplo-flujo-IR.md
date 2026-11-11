@@ -1,6 +1,6 @@
 # Ejemplo completo: fuente → análisis → IR → CFG
 
-El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. La salida `.ir` ya puede producirse mediante CLI; la salida `.dot` sigue siendo un **resultado esperado**, pendiente del módulo CFG. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. I6 completa efectos, revisión estructural y entrega del modelo mediante ir_generate. I7 incorpora arreglos e intrínsecas; I8/I9 integran exportación y pruebas finales. No se aplican optimizaciones.
+El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. La salida `.ir` ya puede producirse mediante CLI; la salida `.dot` también está disponible mediante --emit-cfg. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. I6 completa efectos, revisión estructural y entrega del modelo mediante ir_generate. I7 incorpora arreglos e intrínsecas; I8/I9 integran exportación y pruebas finales. No se aplican optimizaciones.
 
 Los comentarios `comprueba rango del resultado B32, puede fallar` verifican que el resultado de esa operación quepa en B32 (−2147483648 a 2147483647). Desbordar ese rango es una posibilidad del tipo de dato, no un defecto del compilador; la comprobación conserva la política de error de Piper. En estos ejemplos los valores sí caben y no se espera ningún fallo. El tipo comprobado es el resultado de la operación, no necesariamente el de una variable que lo reciba después.
 
@@ -29,7 +29,7 @@ El resultado de una futura ejecución correcta es 5: se toma la rama `2 < 5`, qu
 | `bin/pipoc --check ejemplo.rwt` | Disponible: comprueba léxico, sintaxis y semántica; termina con estado 0 y sin archivos. |
 | `bin/pipoc ins ejemplo.rwt -t` | Disponible: imprime AST y genera `ejemplo.ast.json` y `ejemplo.symbols.txt`. |
 | `bin/pipoc ir ejemplo.rwt -o ejemplo.ir` | Disponible: exporta IR sin llamar al codegen. |
-| `bin/pipoc ir ejemplo.rwt -o ejemplo.ir --emit-cfg ejemplo.dot` | Pendiente: la opción CFG todavía no existe. |
+| `bin/pipoc ir ejemplo.rwt -o ejemplo.ir --emit-cfg ejemplo.dot` | Disponible: exporta IR y grafo sin codegen. |
 
 ## 2. Resumen antes de IR
 
@@ -214,27 +214,30 @@ Los temporales/constantes se listan en orden de primera aparición. La cabecera 
 | B2 | B3 | Salto. |
 | B3 | EXIT | Retorno. |
 
-## 8. Salida esperada: `ejemplo.dot`
+## 8. Salida generada: `ejemplo.dot`
 
 DOT es el archivo de descripción del CFG; un visor podrá dibujarlo. `r0` identifica la rutina 0 y evita colisiones si después se agregan más funciones. La firma y las listas de tipos forman la cabecera del subgrafo; no se convierten en nodos de ejecución.
 
 ```dot
-digraph EjemploIR {
-    subgraph cluster_r0 {
-        label="main() -> B32\nvariables: local a:B32, local b:B32\ntemporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:B32, t6:B32\nconstantes: 2:B32, 5:B32, 3:B32, 1:B32";
-        r0_entry [label="ENTRY"];
-        r0_b0 [shape=box, label="B0:\la = 2\lt0 = a\lt1 = t0 < 5\lif t1 jump B1 else B2\l"];
-        r0_b1 [shape=box, label="B1:\lt2 = a\lt3 = t2 + 3 ; comprueba rango del resultado B32, puede fallar\lb = t3\ljump B3\l"];
-        r0_b2 [shape=box, label="B2:\lt4 = a\lt5 = t4 - 1 ; comprueba rango del resultado B32, puede fallar\lb = t5\ljump B3\l"];
-        r0_b3 [shape=box, label="B3:\lt6 = b\lreturn t6\l"];
-        r0_exit [label="EXIT"];
-        r0_entry -> r0_b0 [label="entrada"];
-        r0_b0 -> r0_b1 [label="verdadero"];
-        r0_b0 -> r0_b2 [label="falso"];
-        r0_b1 -> r0_b3 [label="salto"];
-        r0_b2 -> r0_b3 [label="salto"];
-        r0_b3 -> r0_exit [label="retorno"];
-    }
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B32\l    variables: local a:B32, local b:B32\l    temporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:B32, t6:B32\l    constantes: 2:B32, 5:B32, 3:B32, 1:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    a = 2\l    t0 = a\l    t1 = t0 < 5\l    if t1 jump B1 else B2\l"];
+    r0_b1 [label="B1:\l    t2 = a\l    t3 = t2 + 3 ; comprueba rango del resultado B32, puede fallar\l    b = t3\l    jump B3\l"];
+    r0_b2 [label="B2:\l    t4 = a\l    t5 = t4 - 1 ; comprueba rango del resultado B32, puede fallar\l    b = t5\l    jump B3\l"];
+    r0_b3 [label="B3:\l    t6 = b\l    return t6\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_b1 [label="TRUE"];
+    r0_b0 -> r0_b2 [label="FALSE"];
+    r0_b1 -> r0_b3 [label="JUMP"];
+    r0_b2 -> r0_b3 [label="JUMP"];
+    r0_b3 -> r0_exit [label="RETURN"];
+  }
 }
 ```
 
@@ -416,7 +419,7 @@ Al entrar al ciclo se apila B3. El `when` no apila otra salida de ciclo: `break`
 
 En ciclos anidados, cada ciclo apila su propia salida. El `break` usa el último destino; al terminar de traducir ese ciclo, se retira su entrada y vuelve a quedar visible la salida del ciclo exterior.
 
-Estos ejemplos describen el TAC de I5, exportable con el comando ir desde I8. Las cinco pruebas permanentes están en tests/ir; la salida CFG sigue pendiente de su módulo.
+Estos ejemplos describen el TAC de I5, exportable con el comando ir desde I8. Las cinco pruebas permanentes están en tests/ir; el CFG se exporta con --emit-cfg.
 
 
 ## 11. Accesos e intrínsecas de I7
@@ -434,4 +437,4 @@ routine B32 main[] {
 
 Para cada acceso, comprobar fila contra 2 y columna contra 2; calcular `(fila * 2 + columna) * 2` bytes. La escritura conserva la dirección antes de evaluar 5 y emite STORE; el retorno vuelve a calcular el acceso y emite LOAD B16. El resultado esperado es 5. La inicialización se escribe por elementos en orden 1, 2, 3, 4.
 
-`crypto_feistel[bloque,0,1]` se representa mediante ADDR del arreglo B32 de dos elementos y una instrucción INTRINSIC con esa dirección y los índices. No se generan cálculos del algoritmo criptográfico. Estos modelos se exportan con el comando ir; CFG sigue pendiente.
+`crypto_feistel[bloque,0,1]` se representa mediante ADDR del arreglo B32 de dos elementos y una instrucción INTRINSIC con esa dirección y los índices. No se generan cálculos del algoritmo criptográfico. Estos modelos se exportan con el comando ir y --emit-cfg.

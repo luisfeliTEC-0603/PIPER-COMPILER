@@ -2,7 +2,7 @@
  * I8: vista de las mismas instrucciones, tipos y efectos del modelo en memoria.
  * El llamador abre/cierra el stream y publica el archivo al terminar con éxito.
  */
-#include "ir.h"
+#include "ir_format.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -192,63 +192,92 @@ static void write_instruction(FILE *out, const IrProgram *program, const IrInstr
     write_flags(out, in); fputc('\n', out);
 }
 
+/* Preparar una sola vez los tipos/constantes de una rutina para ambos formatos.
+ * Las funciones de abajo siguen consultando las mismas instrucciones del IR. */
+IrStatus ir_print_prepare(IrPrintView *view, const IrProgram *program, size_t r)
+{
+    if (view == NULL) return IR_INVALID_INPUT;
+    *view = (IrPrintView){0};
+    if (program == NULL || program->symbols == NULL || program->symbols->global_scope == NULL ||
+        r >= program->routine_count || program->routines == NULL) return IR_INVALID_INPUT;
+    view->program = program;
+    view->routine = &program->routines[r];
+    size_t capacity = 0;
+    IrStatus status = IR_OK;
+    for (size_t b = 0; b < view->routine->block_count && status == IR_OK; b++)
+        for (size_t i = 0; i < view->routine->blocks[b].instruction_count && status == IR_OK; i++) {
+            const IrInstruction *in = &view->routine->blocks[b].instructions[i];
+            IrOperand operands[] = {in->arg1, in->arg2, in->result};
+            for (size_t j = 0; j < 3 && status == IR_OK; j++)
+                status = collect_value(operands[j], &view->values, &view->value_count, &capacity);
+            if (in->op == IR_OP_CALL || in->op == IR_OP_INTRINSIC)
+                for (size_t j = 0; j < in->extra.call.argument_count && status == IR_OK; j++)
+                    status = collect_value(in->extra.call.arguments[j], &view->values, &view->value_count, &capacity);
+        }
+    if (status != IR_OK) { free(view->values); view->values = NULL; view->value_count = 0; }
+    return status;
+}
+
+/* Firma y cabeceras fieles a la rutina, sin reconstruir metadatos desde texto. */
+IrStatus ir_print_header(FILE *output, const IrPrintView *view)
+{
+    const IrProgram *program = view->program;
+    const IrRoutine *routine = view->routine;
+    fputs("function ", output);
+    if (routine->symbol) write_symbol(output, program->symbols, routine->symbol);
+    else fputs("<startup>", output);
+    fputc('(', output);
+    if (routine->symbol)
+        for (int i = 0; i < routine->symbol->param_count; i++) {
+            if (i) fputs(", ", output);
+            write_declaration(output, program->symbols, routine->symbol->params[i]);
+        }
+    fprintf(output, ") -> %s\n", piper_type_name(routine->symbol ? routine->symbol->declared_type : PIPER_TYPE_NONE));
+    if (routine->blocks[0].id != routine->entry)
+        fprintf(output, "    entrada: B%zu\n", routine->entry);
+    IrStatus status = write_variables(output, program, routine);
+    if (status != IR_OK) return status;
+    fputs("    temporales:", output);
+    bool first = true;
+    for (IrId id = 0; id < routine->temp_count; id++)
+        for (size_t i = 0; i < view->value_count; i++)
+            if (view->values[i].kind == IR_OPERAND_TEMP && view->values[i].value.temp == id) {
+                fprintf(output, "%st%zu:", first ? " " : ", ", id);
+                write_type(output, view->values[i].type); first = false;
+            }
+    fputs("\n    constantes:", output); first = true;
+    for (size_t i = 0; i < view->value_count; i++)
+        if (view->values[i].kind == IR_OPERAND_CONSTANT) {
+            fprintf(output, "%s%" PRId64 ":", first ? " " : ", ", view->values[i].value.constant);
+            write_type(output, view->values[i].type); first = false;
+        }
+    fputc('\n', output);
+    return ferror(output) ? IR_IO_ERROR : IR_OK;
+}
+
+IrStatus ir_print_block(FILE *output, const IrPrintView *view, const IrBlock *block)
+{
+    fprintf(output, "B%zu:\n", block->id);
+    for (size_t i = 0; i < block->instruction_count; i++)
+        write_instruction(output, view->program, &block->instructions[i], view->values, view->value_count);
+    return ferror(output) ? IR_IO_ERROR : IR_OK;
+}
+
 /** Exportar el modelo validado, sin modificarlo ni cerrar el stream prestado. */
 IrStatus ir_write(FILE *output, const IrProgram *program)
 {
     if (output == NULL || program == NULL || program->symbols == NULL ||
         program->symbols->global_scope == NULL) return IR_INVALID_INPUT;
     for (size_t r = 0; r < program->routine_count; r++) {
-        const IrRoutine *routine = &program->routines[r];
-        IrOperand *values = NULL; size_t count = 0, capacity = 0;
-        IrStatus status = IR_OK;
-        for (size_t b = 0; b < routine->block_count && status == IR_OK; b++)
-            for (size_t i = 0; i < routine->blocks[b].instruction_count && status == IR_OK; i++) {
-                const IrInstruction *in = &routine->blocks[b].instructions[i];
-                IrOperand operands[] = {in->arg1, in->arg2, in->result};
-                for (size_t j = 0; j < 3 && status == IR_OK; j++)
-                    status = collect_value(operands[j], &values, &count, &capacity);
-                if (in->op == IR_OP_CALL || in->op == IR_OP_INTRINSIC)
-                    for (size_t j = 0; j < in->extra.call.argument_count && status == IR_OK; j++)
-                        status = collect_value(in->extra.call.arguments[j], &values, &count, &capacity);
-            }
-        if (status != IR_OK) { free(values); return status; }
+        IrPrintView view;
+        IrStatus status = ir_print_prepare(&view, program, r);
+        if (status != IR_OK) return status;
         if (r) fputc('\n', output);
-        fputs("function ", output);
-        if (routine->symbol) write_symbol(output, program->symbols, routine->symbol);
-        else fputs("<startup>", output);
-        fputc('(', output);
-        if (routine->symbol)
-            for (int i = 0; i < routine->symbol->param_count; i++) {
-                if (i) fputs(", ", output);
-                write_declaration(output, program->symbols, routine->symbol->params[i]);
-            }
-        fprintf(output, ") -> %s\n", piper_type_name(routine->symbol ? routine->symbol->declared_type : PIPER_TYPE_NONE));
-        if (routine->blocks[0].id != routine->entry)
-            fprintf(output, "    entrada: B%zu\n", routine->entry);
-        status = write_variables(output, program, routine);
-        if (status != IR_OK) { free(values); return status; }
-        fputs("    temporales:", output);
-        bool first = true;
-        for (IrId id = 0; id < routine->temp_count; id++)
-            for (size_t i = 0; i < count; i++)
-                if (values[i].kind == IR_OPERAND_TEMP && values[i].value.temp == id) {
-                    fprintf(output, "%st%zu:", first ? " " : ", ", id);
-                    write_type(output, values[i].type); first = false;
-                }
-        fputs("\n    constantes:", output); first = true;
-        for (size_t i = 0; i < count; i++)
-            if (values[i].kind == IR_OPERAND_CONSTANT) {
-                fprintf(output, "%s%" PRId64 ":", first ? " " : ", ", values[i].value.constant);
-                write_type(output, values[i].type); first = false;
-            }
-        fputc('\n', output);
-        for (size_t b = 0; b < routine->block_count; b++) {
-            fprintf(output, "B%zu:\n", routine->blocks[b].id);
-            for (size_t i = 0; i < routine->blocks[b].instruction_count; i++)
-                write_instruction(output, program, &routine->blocks[b].instructions[i], values, count);
-        }
-        free(values);
-        if (ferror(output)) return IR_IO_ERROR;
+        status = ir_print_header(output, &view);
+        for (size_t b = 0; b < view.routine->block_count && status == IR_OK; b++)
+            status = ir_print_block(output, &view, &view.routine->blocks[b]);
+        free(view.values);
+        if (status != IR_OK) return status;
     }
     return ferror(output) ? IR_IO_ERROR : IR_OK;
 }

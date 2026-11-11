@@ -26,7 +26,7 @@ Estado: I1–I9 implementados. Exportación CLI y cinco fuentes de prueba con sa
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos, control, arreglos e intrínsecas de I3–I7. `ir_build_program` organiza rutinas y arranque. `ir_generate` construye y revisa la estructura antes de entregar el programa. I8 imprime el modelo e integra CLI/Makefile; I9 deja cinco fuentes pequeñas y salidas esperadas para revisión manual. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Hay once auxiliares compartidos: los de recorrido/emisión, los tres de ciclo de vida de I1 y `ir_emit_value`, compartido por expresiones y control para definir temporales.
+La estructura mantiene seis archivos C, un encabezado público y dos internos (incluido ir_format.h, compartido con DOT). `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos, control, arreglos e intrínsecas de I3–I7. `ir_build_program` organiza rutinas y arranque. `ir_generate` construye y revisa la estructura antes de entregar el programa. I8 imprime el modelo e integra CLI/Makefile; I9 deja cinco fuentes pequeñas y salidas esperadas para revisión manual. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. ir_internal.h conserva once auxiliares de construcción. ir_format.h añade tres funciones internas para compartir preparación, cabecera y bloques entre los exportadores IR/DOT, sin ampliar la API pública.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
@@ -375,3 +375,9 @@ Fuentes y salidas esperadas: `tests/ir/`. Construir con `make all`, exportar con
 | [codegen_array.c](../../src/codegen/codegen_array.c), [codegen_arithmetic.c](../../src/codegen/codegen_arithmetic.c), [codegen_crypto.c](../../src/codegen/codegen_crypto.c) | Límites dinámicos, errores de aritmética e intrínsecas. |
 
 Las APIs/formatos de esta guía son decisiones de implementación. No se presupone que el enunciado imponga esos nombres.
+
+## Formato compartido con CFG
+
+C4/C5 del CFG reutilizan ir_print_prepare, ir_print_header e ir_print_block mediante ir_format.h. Ambos exportadores consultan las mismas instrucciones y metadatos: no se lee un archivo .ir ni se duplican reglas de operadores, nombres o efectos. La salida .ir conserva su formato anterior.
+
+main genera IR una vez al solicitar --emit-ir o --emit-cfg. La segunda opción construye y exporta el grafo después de IR; se combina también con el modo ir. Publicación y comprobaciones de rutas se comparten mediante write_analysis. La entrada del backend sigue siendo AST/símbolos.

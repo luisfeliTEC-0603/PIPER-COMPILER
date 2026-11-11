@@ -30,7 +30,7 @@ Para generar también el binario, con el backend actual:
 bin/pipoc tests/ir/scalar.rwt -o build/runs/ir/scalar.bin --emit-ir build/runs/ir/scalar.ir
 ```
 
-Sin `-o`, `bin/pipoc ir programa.rwt` guarda `programa.ir` junto al fuente. `all` añade IR únicamente si se solicita `--emit-ir`. Las opciones de CFG y optimización siguen pendientes.
+Sin `-o`, `bin/pipoc ir programa.rwt` guarda `programa.ir` junto al fuente. `all` añade IR únicamente si se solicita `--emit-ir`. Para añadir el grafo usar `--emit-cfg salida.dot`; ejemplos en [la guía de CFG](../cfg/README.md). La optimización sigue pendiente.
 
 Para comparar un archivo con la referencia desde terminal:
 

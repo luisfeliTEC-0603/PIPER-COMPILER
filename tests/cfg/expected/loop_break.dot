@@ -1,0 +1,25 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B32\l    variables: local i:B32\l    temporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:bool, t6:B32\l    constantes: 0:B32, 3:B32, 1:B32, 2:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    i = 0\l    jump B1\l"];
+    r0_b1 [label="B1:\l    t0 = i\l    t1 = t0 < 3\l    if t1 jump B2 else B3\l"];
+    r0_b2 [label="B2:\l    t2 = i\l    t3 = t2 + 1 ; comprueba rango del resultado B32, puede fallar\l    i = t3\l    t4 = i\l    t5 = t4 == 2\l    if t5 jump B4 else B5\l"];
+    r0_b3 [label="B3:\l    t6 = i\l    return t6\l"];
+    r0_b4 [label="B4:\l    jump B3\l"];
+    r0_b5 [label="B5:\l    jump B1\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_b1 [label="JUMP"];
+    r0_b1 -> r0_b2 [label="TRUE"];
+    r0_b1 -> r0_b3 [label="FALSE"];
+    r0_b2 -> r0_b4 [label="TRUE"];
+    r0_b2 -> r0_b5 [label="FALSE"];
+    r0_b3 -> r0_exit [label="RETURN"];
+    r0_b4 -> r0_b3 [label="JUMP"];
+    r0_b5 -> r0_b1 [label="JUMP"];
+  }
+}

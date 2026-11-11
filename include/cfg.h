@@ -3,7 +3,7 @@
 
 /** @file cfg.h
  * Grafo de flujo normal sobre bloques IR existentes. No copia instrucciones.
- * C1–C3 implementan almacenamiento, conexiones, alcance y revisión. DOT pendiente.
+ * C1–C5 implementan almacenamiento, conexiones, alcance, revisión y exportación DOT.
  * Mantener vivos IR y su tabla final hasta liberar todos sus grafos.
  */
 #include "ir.h"
@@ -81,8 +81,8 @@ CfgStatus cfg_build(const IrProgram *ir, CfgProgram **out, CfgDiagnostic *diagno
  * alcance. No modifica el grafo ni valida tipos Piper. */
 CfgStatus cfg_validate(const CfgProgram *cfg, CfgDiagnostic *diagnostic);
 
-/* C4: escribir DOT determinista sobre un stream prestado; no cerrarlo ni publicar
- * archivos aquí. El llamador comprueba fclose. Pendiente de implementación. */
+/* C4: CFG completo de cfg_build -> DOT determinista en un stream prestado.
+ * No cerrarlo ni publicar archivos aquí; el llamador comprueba fclose. */
 CfgStatus cfg_write_dot(FILE *output, const CfgProgram *cfg);
 
 /* Liberar también construcciones parciales; acepta NULL y no toca IR prestada.

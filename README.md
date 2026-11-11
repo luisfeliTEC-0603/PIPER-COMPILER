@@ -100,8 +100,11 @@ PORYGON y recuperar resultados de registros y memoria.
 
 La IR tipada con bloques se exporta con `bin/pipoc ir programa.rwt` o
 `bin/pipoc programa.rwt --emit-ir programa.ir` (comandos 32–33). El backend
-actual sigue usando AST y símbolos; CFG y optimización siguen pendientes.
+actual sigue usando AST y símbolos; la optimización sigue pendiente.
+Para añadir el grafo: `--emit-cfg programa.dot` (comando 34), también con `pipoc ir`.
 
 Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
 Fuentes, resultados esperados e instrucciones: [tests/ir/README.md](tests/ir/README.md).
 Guías: [IR](docs/IR/todoIR.md) y [CFG](docs/IR/todoCFG.md).
+
+Ejemplos, DOT de referencia y comandos para dibujarlos: [tests/cfg/README.md](tests/cfg/README.md).

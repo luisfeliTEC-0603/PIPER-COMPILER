@@ -1,0 +1,13 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B32\l    variables: local a:B32, local b:B32\l    temporales: t0:B32, t1:B32, t2:B32, t3:B32\l    constantes: 2:B32, 3:B32, 4:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    a = 2\l    t0 = a\l    t1 = 3 * 4 ; comprueba rango del resultado B32, puede fallar\l    t2 = t0 + t1 ; comprueba rango del resultado B32, puede fallar\l    b = t2\l    t3 = b\l    return t3\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_exit [label="RETURN"];
+  }
+}

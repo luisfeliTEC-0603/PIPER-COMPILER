@@ -7,6 +7,7 @@
  */
 #include "ast.h"
 #include "ir.h"
+#include "cfg.h"
 #include "codegen.h"
 #include "parser.h"
 #include "assembler/asm_program_parser.h"   // antes "porygon_assembler/..."
@@ -44,6 +45,7 @@ enum {
     OPT_DISASM_BIN,
     OPT_EMIT_SYMBOLS,
     OPT_EMIT_IR,
+    OPT_EMIT_CFG,
     OPT_LL1,
     OPT_LL1_EXPECTED,
     OPT_CHECK,
@@ -75,6 +77,7 @@ typedef struct {
     const char *json_output_path;
     const char *symbols_output_path;
     const char *ir_output_path;
+    const char *cfg_output_path;
     const char *requested_output_path;
     int keep_asm;
     int verbose;
@@ -126,6 +129,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-asm <ruta>       Conserva el ASM en la ruta indicada\n"
             "  --emit-mem <ruta>       Emite texto hexadecimal para $readmemh\n"
             "  --emit-bundles <ruta>   Emite los bundles en formato legible\n"
+            "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
             "  --emit-symbols <ruta>   Exporta la tabla de símbolos legible\n"
             "  --bin-to-mem <bin>      Convierte un ejecutable validado a .mem\n"
@@ -221,6 +225,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"emit-asm", required_argument, NULL, OPT_EMIT_ASM},
         {"bin-to-mem", required_argument, NULL, OPT_BIN_TO_MEM},
         {"disasm-bin", required_argument, NULL, OPT_DISASM_BIN},
+        {"emit-cfg", required_argument, NULL, OPT_EMIT_CFG},
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
         {"emit-symbols", required_argument, NULL, OPT_EMIT_SYMBOLS},
         {"ll1", no_argument, NULL, OPT_LL1},
@@ -261,6 +266,9 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             break;
         case OPT_EMIT_ASM:
             if (!assign_once(&options->asm_output_path, optarg, "--emit-asm")) return -1;
+            break;
+        case OPT_EMIT_CFG:
+            if (!assign_once(&options->cfg_output_path, optarg, "--emit-cfg")) return -1;
             break;
         case OPT_EMIT_IR:
             if (!assign_once(&options->ir_output_path, optarg, "--emit-ir")) return -1;
@@ -305,15 +313,15 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     }
     options->requested_output_path = options->binary_output_path;
     options->binary_output_path = NULL;
-    if (options->ir_output_path && (options->check_only || options->clones_min_nodes > 0 ||
+    if ((options->ir_output_path || options->cfg_output_path) && (options->check_only || options->clones_min_nodes > 0 ||
         options->asm_input_path || options->binary_input_path || options->ll1 || options->ll1_expected)) {
-        fputs("error: --emit-ir requiere compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
+        fputs("error: --emit-ir/--emit-cfg requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
         return -1;
     }
     if (options->command == PIPOC_COMMAND_IR && (options->keep_asm || options->print_packages ||
         options->asm_output_path || options->mem_output_path || options->bundles_output_path ||
         options->json_output_path || options->symbols_output_path)) {
-        fputs("error: ir genera únicamente IR; use --emit-ir con otro modo para salidas adicionales\n", stderr);
+        fputs("error: ir solo exporta IR y CFG opcional; use --emit-ir con otro modo para otras salidas\n", stderr);
         return -1;
     }
     /* La revisión es un modo de frontend aislado: no acepta salidas ni modos
@@ -471,34 +479,42 @@ static int validate_paths(const char *input, const char *const *outputs,
     return 1;
 }
 
-/* Escribir junto al destino y renombrar solo tras ir_write/fclose correctos.
- * Ante fallo se borra únicamente el temporal; una salida anterior se conserva. */
-static IrStatus write_ir(const char *path, const IrProgram *program)
+/* Un mismo mecanismo para IR y DOT: escribir/cerrar un temporal y renombrar.
+ * cfg=NULL exporta IR; de otro modo exporta su grafo. No se mezclan sus estados
+ * de error: se convierten aquí a los códigos de salida de la CLI. */
+static int write_analysis(const char *path, const IrProgram *ir, const CfgProgram *cfg)
 {
+    const char *kind = cfg ? "CFG" : "IR";
     size_t length = strlen(path);
-    if (length > SIZE_MAX - 12) return IR_OUT_OF_MEMORY;
+    if (length > SIZE_MAX - 12) return PIPOC_EXIT_COMPILE_ERROR;
     char *temporary = malloc(length + 12);
-    if (temporary == NULL) return IR_OUT_OF_MEMORY;
+    if (temporary == NULL) return PIPOC_EXIT_COMPILE_ERROR;
     snprintf(temporary, length + 12, "%s.tmp.XXXXXX", path);
     int fd = mkstemp(temporary);
     if (fd < 0) {
-        fprintf(stderr, "error: no se pudo crear el temporal IR para '%s': %s\n", path, strerror(errno));
-        free(temporary); return IR_IO_ERROR;
+        fprintf(stderr, "error: no se pudo crear temporal %s para '%s': %s\n", kind, path, strerror(errno));
+        free(temporary); return PIPOC_EXIT_IO_ERROR;
     }
     FILE *file = fdopen(fd, "w");
-    IrStatus status;
-    if (file == NULL) { close(fd); status = IR_IO_ERROR; }
+    int result = PIPOC_EXIT_SUCCESS;
+    if (file == NULL) { close(fd); result = PIPOC_EXIT_IO_ERROR; }
     else {
-        status = ir_write(file, program);
-        if (fclose(file) != 0) status = IR_IO_ERROR;
+        if (cfg) {
+            CfgStatus status = cfg_write_dot(file, cfg);
+            if (status != CFG_OK) result = status == CFG_IO_ERROR ? PIPOC_EXIT_IO_ERROR : PIPOC_EXIT_COMPILE_ERROR;
+        } else {
+            IrStatus status = ir_write(file, ir);
+            if (status != IR_OK) result = status == IR_IO_ERROR ? PIPOC_EXIT_IO_ERROR : PIPOC_EXIT_COMPILE_ERROR;
+        }
+        if (fclose(file) != 0) result = PIPOC_EXIT_IO_ERROR;
     }
-    if (status == IR_OK && rename(temporary, path) != 0) status = IR_IO_ERROR;
-    if (status != IR_OK) {
-        fprintf(stderr, "error: no se pudo publicar IR en '%s' (código %d)\n", path, status);
+    if (result == PIPOC_EXIT_SUCCESS && rename(temporary, path) != 0) result = PIPOC_EXIT_IO_ERROR;
+    if (result != PIPOC_EXIT_SUCCESS) {
+        fprintf(stderr, "error: no se pudo publicar %s en '%s'\n", kind, path);
         unlink(temporary);
     }
     free(temporary);
-    return status;
+    return result;
 }
 
 static int write_bytes(const char *path, const char *bytes, size_t length)
@@ -740,6 +756,7 @@ static int compile_piper(const cli_options_t *options)
     FILE *asm_stream = NULL;
     AstNode *ast = NULL;
     IrProgram *ir = NULL;
+    CfgProgram *cfg = NULL;
     SymbolTable *symbols = NULL;
     char *asm_text = NULL;
     size_t asm_length = 0;
@@ -827,21 +844,34 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
-    if (options->ir_output_path != NULL) {
+    if (options->ir_output_path != NULL || options->cfg_output_path != NULL) {
         IrDiagnostic diagnostic;
         if (options->verbose) fprintf(stderr, "[pipoc] Generación de IR\n");
-        IrStatus status = ir_generate(ast, symbols, &ir, &diagnostic);
-        if (status != IR_OK) {
+        if (ir_generate(ast, symbols, &ir, &diagnostic) != IR_OK) {
             fprintf(stderr, "error IR en %d:%d: %s\n", diagnostic.location.first_line,
                 diagnostic.location.first_column, diagnostic.message);
             goto done;
         }
-        status = write_ir(options->ir_output_path, ir);
-        if (status != IR_OK) {
-            exit_status = status == IR_IO_ERROR ? PIPOC_EXIT_IO_ERROR : PIPOC_EXIT_COMPILE_ERROR;
-            goto done;
+        if (options->cfg_output_path != NULL) {
+            CfgDiagnostic graph_error;
+            if (options->verbose) fprintf(stderr, "[pipoc] Construcción de CFG\n");
+            if (cfg_build(ir, &cfg, &graph_error) != CFG_OK) {
+                fprintf(stderr, "error CFG en rutina %zu: %s\n", graph_error.routine, graph_error.message);
+                goto done;
+            }
         }
-        if (options->verbose) fprintf(stderr, "[pipoc] IR: %s\n", options->ir_output_path);
+        if (options->ir_output_path != NULL) {
+            exit_status = write_analysis(options->ir_output_path, ir, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            if (options->verbose) fprintf(stderr, "[pipoc] IR: %s\n", options->ir_output_path);
+        }
+        if (options->cfg_output_path != NULL) {
+            exit_status = write_analysis(options->cfg_output_path, ir, cfg);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            if (options->verbose) fprintf(stderr, "[pipoc] CFG: %s\n", options->cfg_output_path);
+        }
+        /* Los fallos posteriores de codegen deben seguir siendo errores. */
+        exit_status = PIPOC_EXIT_COMPILE_ERROR;
     }
     if (options->binary_output_path == NULL && options->asm_output_path == NULL &&
         options->mem_output_path == NULL && options->bundles_output_path == NULL &&
@@ -906,6 +936,7 @@ done:
     porygon_schedule_free(&schedule);
     porygon_machine_program_free(&program);
     free(asm_text);
+    cfg_program_free(cfg);
     ir_program_free(ir);
     ast_free(ast);
     symbol_table_destroy(symbols);
@@ -916,6 +947,8 @@ static void report_command_outputs(const cli_options_t *options)
 {
     if (options->ir_output_path != NULL)
         printf("[pipoc] ir: %s\n", options->ir_output_path);
+    if (options->cfg_output_path != NULL)
+        printf("[pipoc] cfg: %s\n", options->cfg_output_path);
     if (options->binary_output_path != NULL)
         printf("[pipoc] bin: %s\n", options->binary_output_path);
     if (options->asm_output_path != NULL)
@@ -934,7 +967,7 @@ int main(int argc, char **argv)
 {
     cli_options_t options;
     char *owned_paths[7] = {0};
-    const char *outputs[7];
+    const char *outputs[8];
     const char *input_path;
     int parsed = parse_cli(argc, argv, &options);
     int exit_status;
@@ -1083,14 +1116,22 @@ int main(int argc, char **argv)
     outputs[4] = options.json_output_path;
     outputs[5] = options.symbols_output_path;
     outputs[6] = options.ir_output_path;
-    if (options.ir_output_path) {
+    outputs[7] = options.cfg_output_path;
+    if (options.ir_output_path || options.cfg_output_path) {
         const char *reserved[] = {".rwt", ".bin", ".asm", ".mem", ".bundles", ".ast.json", ".symbols.txt"};
         for (size_t i = 0; i < sizeof(reserved) / sizeof(*reserved); i++)
-            if (ends_with(options.ir_output_path, reserved[i])) {
-                fputs("error: la salida IR no puede usar la extensión de un fuente u otro artefacto\n", stderr);
+            if ((options.ir_output_path && ends_with(options.ir_output_path, reserved[i])) ||
+                (options.cfg_output_path && ends_with(options.cfg_output_path, reserved[i]))) {
+                fputs("error: la salida IR/CFG no puede usar la extensión de un fuente u otro artefacto\n", stderr);
                 exit_status = PIPOC_EXIT_USAGE;
                 goto cleanup;
             }
+    }
+    if ((options.ir_output_path && ends_with(options.ir_output_path, ".dot")) ||
+        (options.cfg_output_path && ends_with(options.cfg_output_path, ".ir"))) {
+        fputs("error: no intercambiar extensiones .ir y .dot entre las salidas\n", stderr);
+        exit_status = PIPOC_EXIT_USAGE;
+        goto cleanup;
     }
     if (!validate_paths(input_path, outputs, sizeof(outputs) / sizeof(outputs[0]))) {
         exit_status = PIPOC_EXIT_USAGE;

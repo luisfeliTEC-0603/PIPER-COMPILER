@@ -1,6 +1,6 @@
 # Contrato y tareas del constructor de CFG
 
-Estado: C1–C3 implementados; C4/C5 pendientes. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
+Estado: C1–C5 implementados. Exportación disponible mediante --emit-cfg y ejemplos manuales en tests/cfg. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
 
 ## 1. Flujo y alcance
 
@@ -100,8 +100,8 @@ B3: return t1               B1 -> B3
 | C1 — completado | Alta | Definir cfg.h y reservar/liberar grafos y nodos. Inicializar aristas y vecinos vacíos; liberar también sus futuras reservas parciales. | Modelo descartable incluso tras fallo parcial; IR permanece intacta. C2 reserva las conexiones al conocer sus tamaños. |
 | C2 — completado | Alta | Conectar cada rutina con ENTRY, JUMP, BRANCH y RETURN mediante IDs y derivar vecinos de las mismas aristas. | Conexiones correctas sin analizar expresiones ni copiar TAC; C3 completa revisión y alcance. |
 | C3 — completado | Alta | Revisar estructura, recorrer desde ENTRY y entregar el programa solo en éxito. | Ciclos terminan el recorrido; se conservan nodos y EXIT inalcanzables y se detectan conexiones inconsistentes. |
-| C4 | Media | Implementar cfg_write_dot con nombres por rutina, ramas, TAC escapado y efectos. Reutilizar el formato de IR. | DOT determinista y fiel al mismo modelo, sin otro parser ni otra traducción. |
-| C5 | Media | Integrar --emit-cfg, rutas, exportación segura y limpieza en main/Makefile. Preparar fuentes pequeñas y DOT esperados para revisión manual. | Funciona con salida principal o modo ir; sin afectar revisión, clones, ASM directo ni salidas actuales. |
+| C4 — completado | Media | Implementar cfg_write_dot con nombres por rutina, ramas, TAC escapado y efectos. Reutilizar el formato de IR. | DOT determinista y fiel al mismo modelo, sin otro parser ni otra traducción. |
+| C5 — completado | Media | Integrar --emit-cfg, rutas, exportación segura y limpieza en main/Makefile. Preparar fuentes pequeñas y DOT esperados para revisión manual. | Funciona con salida principal o modo ir; sin afectar revisión, clones, ASM directo ni salidas actuales. |
 
 ### Archivos y funciones
 
@@ -115,7 +115,7 @@ B3: return t1               B1 -> B3
 | `src/ir/ir_print.c` | Extraer el formato textual compartido que necesite DOT; evitar duplicar operadores, nombres ambiguos, tipos o flags. Mantener las cuatro entradas públicas del módulo IR. |
 | `src/main.c` / `Makefile` | Generar IR una sola vez si se solicita IR o CFG; construir CFG solo cuando se solicite; exportar y limpiar. No enlazar CFG en porygon-schedule. |
 
-C1 ya incorpora cfg.h, cfg_internal.h y cfg.c. No añadir más interfaces auxiliares que las necesarias al implementar cada tarea. Para C4, compartir formateadores internos en memoria; no escribir un .ir temporal ni interpretar sus líneas para fabricar DOT. Esta reutilización es el ajuste principal pendiente fuera del constructor.
+Los formateadores de C4 se comparten mediante src/ir/ir_format.h. No se escribe un .ir temporal ni se interpretan sus líneas para fabricar DOT; las cuatro funciones públicas de IR se conservan.
 
 ### C1 implementado: almacenamiento y uso
 
@@ -130,7 +130,7 @@ C1 ya incorpora cfg.h, cfg_internal.h y cfg.c. No añadir más interfaces auxili
 | `cfg_program_free` | Liberar vecinos de cada nodo, nodos, aristas, rutinas y programa. Acepta NULL y construcción parcial; no libera la IR prestada. |
 | `cfg_error` | Auxiliar privado que copia diagnóstico y puede descartar reservas propias. C1 pasa el programa parcial; C2 pasa NULL para conservar la propiedad en su llamador. No imprime. Una salida ya ocupada no se sobrescribe ni se libera. |
 
-No se integra CFG en main/Makefile hasta C5. C3 ya implementa `cfg_build` y `cfg_validate`; `cfg_write_dot` sigue declarado hasta C4. Comprobación temporal de C1: reservas, IDs no consecutivos, préstamos intactos, descarte con listas parcialmente reservadas, entradas inválidas y límites de tamaño que abortan tras una reserva parcial. Sin runner ni pruebas permanentes en el repositorio.
+C5 ya integra CFG en main/Makefile. Las cuatro funciones públicas están implementadas. Comprobación temporal de C1: reservas, IDs no consecutivos, préstamos intactos, descarte con listas parcialmente reservadas, entradas inválidas y límites de tamaño que abortan tras una reserva parcial. Sin runner ni pruebas permanentes en el repositorio.
 
 ### C2 implementado: conexiones y asociaciones
 
@@ -149,7 +149,7 @@ Uso interno de C1/C2: `cfg_program_create` → `cfg_connect`. Aún deja `reachab
 
 La información del grafo son conexiones, etiquetas de rama y listas derivadas de vecinos. ENTRY/EXIT son nodos sintéticos de análisis, no instrucciones nuevas. Los cálculos, condiciones, tipos y efectos se consultan en el IR prestado. Esto permitirá recorrer ciclos y propagar información entre predecesores/sucesores en análisis futuros; no realiza optimización por sí mismo.
 
-Comprobación temporal de C2: cinco fuentes IR existentes, ramas con destino igual, vueltas de ciclo y break, IDs dispersos, bloques reordenados, entrada distinta del primer nodo BLOCK, funciones/arranque separados, vecinos sin duplicados y errores al resolver destinos. Sin runner ni nuevas pruebas permanentes; main y Makefile no se modifican en esta etapa.
+Comprobación temporal de C2: cinco fuentes IR existentes, ramas con destino igual, vueltas de ciclo y break, IDs dispersos, bloques reordenados, entrada distinta del primer nodo BLOCK, funciones/arranque separados, vecinos sin duplicados y errores al resolver destinos. La comprobación de C2 fue temporal, sin runner; C5 ya integra main/Makefile.
 
 ### C3 implementado: revisión y alcanzabilidad
 
@@ -164,7 +164,7 @@ Comprobación temporal de C2: cinco fuentes IR existentes, ramas con destino igu
 
 El alcance es estructural: seguir TRUE y FALSE sin evaluar la condición. Conservar nodos inalcanzables y EXIT inalcanzable en ciclos cerrados. No eliminar bloques, forzar una salida ni ejecutar instrucciones.
 
-Comprobación temporal con sanitizadores: cinco fuentes IR, ramas con destino compartido, vecinos faltantes/duplicados/sobrantes, aristas reordenadas, bloque inalcanzable, ciclo cerrado sin camino a EXIT, funciones/arranque separados y descarte ante errores. No se añade runner ni pruebas permanentes; DOT y CLI siguen pendientes.
+Comprobación temporal con sanitizadores: cinco fuentes IR, ramas con destino compartido, vecinos faltantes/duplicados/sobrantes, aristas reordenadas, bloque inalcanzable, ciclo cerrado sin camino a EXIT, funciones/arranque separados y descarte ante errores. La comprobación de C3 fue temporal, sin runner; C4/C5 ya exportan DOT desde CLI.
 
 ## 6. Revisión estructural e invalidación
 
@@ -184,7 +184,7 @@ El optimizador recibirá acceso al mismo IR y a su CFG. El grafo facilita recorr
 
 ## 7. Exportación e integración
 
-| Solicitud | Comportamiento planificado |
+| Solicitud | Comportamiento implementado |
 | --- | --- |
 | `bin/pipoc programa.rwt --emit-cfg salida.dot` | Generar/validar IR en memoria, construir CFG y exportar DOT; continuar con la salida principal. No crear .ir salvo solicitud explícita. |
 | `bin/pipoc ir programa.rwt --emit-cfg salida.dot` | Conservar la salida .ir del comando y añadir DOT, sin codegen. |
@@ -197,9 +197,24 @@ DOT contiene subgrafos por rutina, nodos ENTRY/EXIT y bloques con el TAC/comenta
 
 Ampliar las validaciones de opciones y colisiones existentes, incluyendo rutas equivalentes/enlaces. Reutilizar el mecanismo de temporal y renombrado para DOT y preservar archivos anteriores ante fallo. No agregar un segundo frontend ni un sistema distinto de publicación. Limpieza: CFG → IR → AST → tabla.
 
-La opción --emit-cfg sigue pendiente (comando 34 de [comandos.md](../comandos.md)). La exportación prevista se ilustra en [ejemplo-flujo-IR.md](ejemplo-flujo-IR.md); no confundir el ejemplo DOT con una salida disponible actualmente.
+La opción --emit-cfg está implementada (comando 34 de [comandos.md](../comandos.md)). La salida real se ilustra en [ejemplo-flujo-IR.md](ejemplo-flujo-IR.md).
 
-## 8. Casos de revisión manual — pendientes
+### C4/C5 implementados: formato y publicación
+
+| Elemento | Regla concreta |
+| --- | --- |
+| `IrPrintView` | Vista interna prestada a IR/rutina, con índice local de temporales/constantes. Liberar `values` al terminar. No se duplica IR ni se amplía su API pública. |
+| `ir_print_prepare` | Reunir tipos/constantes una vez por rutina para ambos exportadores. |
+| `ir_print_header` / `ir_print_block` | Imprimir la misma cabecera/TAC que ir_write; DOT usa estas funciones directamente desde estructuras. |
+| `cfg_write_dot` | Un subgrafo por rutina y nodos/aristas con prefijo de rutina. ENTRY/EXIT ovalados; nodos inalcanzables en gris discontinuo. |
+| `write_label` | Buffer local solo para escapar comillas, barras invertidas y saltos de línea de una etiqueta. No se analiza como IR. Se libera también al fallar. |
+| main | Generar IR una sola vez si se pide IR o CFG; construir grafo solo para --emit-cfg. Liberar CFG antes de IR y tabla. |
+| `write_analysis` | Compartir publicación atómica entre IR/DOT, con temporal junto al destino y renombrado tras escritura/cierre correctos. No se agrega otro sistema de archivos. |
+| Makefile | Enlazar CFG solo en pipoc y declarar dependencias del formato compartido; porygon-schedule mantiene sus fuentes anteriores. |
+
+Se comprobaron seis fuentes, igualdad del .ir previo al refactor, DOT determinista aceptado por Graphviz, binario sin cambios, combinaciones CLI incompatibles, colisiones/enlaces, preservación de archivos y limpieza tras fallos. Además se revisaron escape de etiquetas, ramas con destino compartido, estilo de inalcanzables y propagación de errores de stream con comprobaciones temporales.
+
+## 8. Casos de revisión manual
 
 | Caso | Entrada pequeña | Qué comprobar |
 | --- | --- | --- |
@@ -211,4 +226,4 @@ La opción --emit-cfg sigue pendiente (comando 34 de [comandos.md](../comandos.m
 
 Dejar fuentes y archivos esperados para ejecutar desde terminal y comparar aristas/DOT como texto. No añadir runner Python ni pruebas de imágenes. Los casos internos T4/T5 requieren entradas preparadas porque el generador actual evita parte del código inalcanzable y no suele emitir una rama con destinos iguales; una fuente Piper normal no garantiza esas formas de IR.
 
-No implementar estas pruebas durante esta revisión documental. Los casos de matrices/Feistel pueden reutilizarse después para inspeccionar etiquetas; no agregan reglas nuevas de conectividad.
+Los casos internos se verificaron de forma temporal durante el desarrollo. Las fuentes y seis DOT esperados están en tests/cfg y tests/ir; matrices/Feistel comprueban etiquetas, sin nuevas reglas de conexiones. Comandos de exportación, comparación y visualización: [tests/cfg/README.md](../../tests/cfg/README.md). Sin runner permanente.
