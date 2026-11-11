@@ -1,6 +1,6 @@
 # Contrato y tareas del constructor de CFG
 
-Estado: C1 implementado; C2–C5 pendientes. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conectará esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
+Estado: C1/C2 implementados; C3–C5 pendientes. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
 
 ## 1. Flujo y alcance
 
@@ -98,7 +98,7 @@ B3: return t1               B1 -> B3
 | ID | Prioridad | Qué hacer | Por qué / salida verificable |
 | --- | --- | --- | --- |
 | C1 — completado | Alta | Definir cfg.h y reservar/liberar grafos y nodos. Inicializar aristas y vecinos vacíos; liberar también sus futuras reservas parciales. | Modelo descartable incluso tras fallo parcial; IR permanece intacta. C2 reserva las conexiones al conocer sus tamaños. |
-| C2 | Alta | Construir un grafo por rutina y resolver ENTRY, JUMP, BRANCH y RETURN mediante IDs. Derivar vecinos de las aristas. | Conexiones correctas sin analizar expresiones ni copiar TAC. |
+| C2 — completado | Alta | Conectar cada rutina con ENTRY, JUMP, BRANCH y RETURN mediante IDs y derivar vecinos de las mismas aristas. | Conexiones correctas sin analizar expresiones ni copiar TAC; alcance/revisión pendientes de C3. |
 | C3 | Alta | Marcar alcanzabilidad con un recorrido y revisar las invariantes estructurales de la sección 6 antes de entregar el grafo. | Ciclos terminan el recorrido; se conservan nodos inalcanzables y se detectan conexiones inconsistentes. |
 | C4 | Media | Implementar cfg_write_dot con nombres por rutina, ramas, TAC escapado y efectos. Reutilizar el formato de IR. | DOT determinista y fiel al mismo modelo, sin otro parser ni otra traducción. |
 | C5 | Media | Integrar --emit-cfg, rutas, exportación segura y limpieza en main/Makefile. Preparar fuentes pequeñas y DOT esperados para revisión manual. | Funciona con salida principal o modo ir; sin afectar revisión, clones, ASM directo ni salidas actuales. |
@@ -108,7 +108,7 @@ B3: return t1               B1 -> B3
 | Archivo | Responsabilidad |
 | --- | --- |
 | `include/cfg.h` | Modelo compacto, estados y cuatro funciones públicas. |
-| `src/cfg/cfg_internal.h` | Una entrada interna de C1 para reservar almacenamiento; no amplía las cuatro funciones públicas. |
+| `src/cfg/cfg_internal.h` | Dos entradas internas: reservar almacenamiento y conectarlo. No amplía las cuatro funciones públicas. |
 | `src/cfg/cfg.c` | Constructor y liberación; auxiliares privados para rutina, arista, vecinos y recorrido cuando realmente se necesiten. |
 | `src/cfg/cfg_validate.c` | Revisión estructural reducida. |
 | `src/cfg/cfg_print.c` | DOT, nombres únicos y escape de etiquetas. |
@@ -128,9 +128,28 @@ C1 ya incorpora cfg.h, cfg_internal.h y cfg.c. No añadir más interfaces auxili
 | Aristas y vecinos | Punteros NULL y cantidades 0. C2 reservará lo necesario tras conocer conexiones; no agregar capacidades ni funciones grow. |
 | Alcanzabilidad | Inicialmente false para todos los nodos; C3 hará el recorrido. |
 | `cfg_program_free` | Liberar vecinos de cada nodo, nodos, aristas, rutinas y programa. Acepta NULL y construcción parcial; no libera la IR prestada. |
-| `creation_error` | Auxiliar privado que descarta reservas parciales y copia diagnóstico, sin imprimir. Una salida ya ocupada se rechaza sin sobrescribirla ni liberar el programa anterior. |
+| `cfg_error` | Auxiliar privado que copia diagnóstico y puede descartar reservas propias. C1 pasa el programa parcial; C2 pasa NULL para conservar la propiedad en su llamador. No imprime. Una salida ya ocupada no se sobrescribe ni se libera. |
 
 No se integra CFG en main/Makefile hasta C5. `cfg_build`, `cfg_validate` y `cfg_write_dot` permanecen declarados. Comprobación temporal de C1: reservas, IDs no consecutivos, préstamos intactos, descarte con listas parcialmente reservadas, entradas inválidas y límites de tamaño que abortan tras una reserva parcial. Sin runner ni pruebas permanentes en el repositorio.
+
+### C2 implementado: conexiones y asociaciones
+
+| Función / paso | Regla concreta |
+| --- | --- |
+| `cfg_connect` | Entrada interna: almacenamiento nuevo de `cfg_program_create`. Completa aristas y vecinos; no publica todavía desde `cfg_build`, no calcula alcance ni ejecuta la futura revisión de C3. |
+| Reserva de aristas | Contar una por ENTRY, una por JUMP/RETURN y dos por BRANCH; reservar una vez por rutina. Consultar únicamente el terminador, no tipos ni instrucciones intermedias. |
+| `block_node` | Buscar el nodo BLOCK cuyo ID IR coincide con el destino, dentro de la misma rutina. Funciona con IDs dispersos, bloques reordenados y entrada distinta del primer bloque físico. |
+| Condición | La expresión bool ya está en IR. BRANCH registra TRUE/FALSE hacia sus dos destinos, incluso para condición constante. El CFG no elige una salida ni vuelve a calcular la expresión. |
+| `build_neighbors` | Contar grados desde las aristas, reservar espacio para vecinos y llenar ambos sentidos. Registrar solo vecinos distintos; una rama con destinos iguales puede dejar una casilla reservada sin uso, sin repetir vecino ni agregar capacidades al modelo. |
+| RETURN / llamadas | RETURN conecta con EXIT. CALL/intrínsecas no agregan conexiones entre rutinas; el arranque sintético conserva su grafo separado. |
+| Errores | Rechazar al resolver una entrada/destino inexistente o un bloque sin terminador utilizable. No repetir `ir_validate`. Conservar primer diagnóstico con rutina, bloque, terminador y arista disponibles. |
+| Propiedad | También al fallar, el llamador conserva el CFG parcial y debe liberarlo. No reconectar una construcción ya utilizada; liberar y crear otra. C3 añadirá alcance/revisión antes de la entrega pública. |
+
+Uso interno actual: `cfg_program_create(ir, &cfg, &diagnostic)` → `cfg_connect(cfg, &diagnostic)` → inspección o `cfg_program_free(cfg)`. `reachable` permanece en false hasta C3; no interpretarlo todavía como resultado de alcanzabilidad.
+
+La información del grafo son conexiones, etiquetas de rama y listas derivadas de vecinos. ENTRY/EXIT son nodos sintéticos de análisis, no instrucciones nuevas. Los cálculos, condiciones, tipos y efectos se consultan en el IR prestado. Esto permitirá recorrer ciclos y propagar información entre predecesores/sucesores en análisis futuros; no realiza optimización por sí mismo.
+
+Comprobación temporal de C2: cinco fuentes IR existentes, ramas con destino igual, vueltas de ciclo y break, IDs dispersos, bloques reordenados, entrada distinta del primer nodo BLOCK, funciones/arranque separados, vecinos sin duplicados y errores al resolver destinos. Sin runner ni nuevas pruebas permanentes; main y Makefile no se modifican en esta etapa.
 
 ## 6. Revisión estructural e invalidación
 

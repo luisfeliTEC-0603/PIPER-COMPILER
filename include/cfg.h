@@ -3,7 +3,7 @@
 
 /** @file cfg.h
  * Grafo de flujo normal sobre bloques IR existentes. No copia instrucciones.
- * C1 implementa almacenamiento y liberación; conexiones, revisión y DOT pendientes.
+ * C1/C2 implementan almacenamiento y conexiones; alcance, revisión y DOT pendientes.
  * Mantener vivos IR y su tabla final hasta liberar todos sus grafos.
  */
 #include "ir.h"
