@@ -1,6 +1,6 @@
 # Contrato y tareas del constructor de CFG
 
-Estado: C1/C2 implementados; C3–C5 pendientes. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
+Estado: C1–C3 implementados; C4/C5 pendientes. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
 
 ## 1. Flujo y alcance
 
@@ -98,8 +98,8 @@ B3: return t1               B1 -> B3
 | ID | Prioridad | Qué hacer | Por qué / salida verificable |
 | --- | --- | --- | --- |
 | C1 — completado | Alta | Definir cfg.h y reservar/liberar grafos y nodos. Inicializar aristas y vecinos vacíos; liberar también sus futuras reservas parciales. | Modelo descartable incluso tras fallo parcial; IR permanece intacta. C2 reserva las conexiones al conocer sus tamaños. |
-| C2 — completado | Alta | Conectar cada rutina con ENTRY, JUMP, BRANCH y RETURN mediante IDs y derivar vecinos de las mismas aristas. | Conexiones correctas sin analizar expresiones ni copiar TAC; alcance/revisión pendientes de C3. |
-| C3 | Alta | Marcar alcanzabilidad con un recorrido y revisar las invariantes estructurales de la sección 6 antes de entregar el grafo. | Ciclos terminan el recorrido; se conservan nodos inalcanzables y se detectan conexiones inconsistentes. |
+| C2 — completado | Alta | Conectar cada rutina con ENTRY, JUMP, BRANCH y RETURN mediante IDs y derivar vecinos de las mismas aristas. | Conexiones correctas sin analizar expresiones ni copiar TAC; C3 completa revisión y alcance. |
+| C3 — completado | Alta | Revisar estructura, recorrer desde ENTRY y entregar el programa solo en éxito. | Ciclos terminan el recorrido; se conservan nodos y EXIT inalcanzables y se detectan conexiones inconsistentes. |
 | C4 | Media | Implementar cfg_write_dot con nombres por rutina, ramas, TAC escapado y efectos. Reutilizar el formato de IR. | DOT determinista y fiel al mismo modelo, sin otro parser ni otra traducción. |
 | C5 | Media | Integrar --emit-cfg, rutas, exportación segura y limpieza en main/Makefile. Preparar fuentes pequeñas y DOT esperados para revisión manual. | Funciona con salida principal o modo ir; sin afectar revisión, clones, ASM directo ni salidas actuales. |
 
@@ -126,30 +126,45 @@ C1 ya incorpora cfg.h, cfg_internal.h y cfg.c. No añadir más interfaces auxili
 | Nodos | Reservar exactamente cantidad de bloques + 2. Índice 0 para ENTRY, después nodos BLOCK en orden físico de IR, último índice para EXIT. Los nodos BLOCK conservan el ID real del bloque. |
 | Ejemplo de identidad | `nodes[1].block = 9` significa que el nodo CFG de índice 1 representa B9. El índice 1 no se convierte en ID B1. La arista desde ENTRY al `IrRoutine.entry` se resolverá en C2. |
 | Aristas y vecinos | Punteros NULL y cantidades 0. C2 reservará lo necesario tras conocer conexiones; no agregar capacidades ni funciones grow. |
-| Alcanzabilidad | Inicialmente false para todos los nodos; C3 hará el recorrido. |
+| Alcanzabilidad | Inicialmente false para todos los nodos; cfg_build calcula después el alcance de cada rutina. |
 | `cfg_program_free` | Liberar vecinos de cada nodo, nodos, aristas, rutinas y programa. Acepta NULL y construcción parcial; no libera la IR prestada. |
 | `cfg_error` | Auxiliar privado que copia diagnóstico y puede descartar reservas propias. C1 pasa el programa parcial; C2 pasa NULL para conservar la propiedad en su llamador. No imprime. Una salida ya ocupada no se sobrescribe ni se libera. |
 
-No se integra CFG en main/Makefile hasta C5. `cfg_build`, `cfg_validate` y `cfg_write_dot` permanecen declarados. Comprobación temporal de C1: reservas, IDs no consecutivos, préstamos intactos, descarte con listas parcialmente reservadas, entradas inválidas y límites de tamaño que abortan tras una reserva parcial. Sin runner ni pruebas permanentes en el repositorio.
+No se integra CFG en main/Makefile hasta C5. C3 ya implementa `cfg_build` y `cfg_validate`; `cfg_write_dot` sigue declarado hasta C4. Comprobación temporal de C1: reservas, IDs no consecutivos, préstamos intactos, descarte con listas parcialmente reservadas, entradas inválidas y límites de tamaño que abortan tras una reserva parcial. Sin runner ni pruebas permanentes en el repositorio.
 
 ### C2 implementado: conexiones y asociaciones
 
 | Función / paso | Regla concreta |
 | --- | --- |
-| `cfg_connect` | Entrada interna: almacenamiento nuevo de `cfg_program_create`. Completa aristas y vecinos; no publica todavía desde `cfg_build`, no calcula alcance ni ejecuta la futura revisión de C3. |
+| `cfg_connect` | Entrada interna: almacenamiento nuevo de `cfg_program_create`. Completa aristas y vecinos; por sí sola no calcula alcance ni entrega desde la API pública. |
 | Reserva de aristas | Contar una por ENTRY, una por JUMP/RETURN y dos por BRANCH; reservar una vez por rutina. Consultar únicamente el terminador, no tipos ni instrucciones intermedias. |
 | `block_node` | Buscar el nodo BLOCK cuyo ID IR coincide con el destino, dentro de la misma rutina. Funciona con IDs dispersos, bloques reordenados y entrada distinta del primer bloque físico. |
 | Condición | La expresión bool ya está en IR. BRANCH registra TRUE/FALSE hacia sus dos destinos, incluso para condición constante. El CFG no elige una salida ni vuelve a calcular la expresión. |
 | `build_neighbors` | Contar grados desde las aristas, reservar espacio para vecinos y llenar ambos sentidos. Registrar solo vecinos distintos; una rama con destinos iguales puede dejar una casilla reservada sin uso, sin repetir vecino ni agregar capacidades al modelo. |
 | RETURN / llamadas | RETURN conecta con EXIT. CALL/intrínsecas no agregan conexiones entre rutinas; el arranque sintético conserva su grafo separado. |
 | Errores | Rechazar al resolver una entrada/destino inexistente o un bloque sin terminador utilizable. No repetir `ir_validate`. Conservar primer diagnóstico con rutina, bloque, terminador y arista disponibles. |
-| Propiedad | También al fallar, el llamador conserva el CFG parcial y debe liberarlo. No reconectar una construcción ya utilizada; liberar y crear otra. C3 añadirá alcance/revisión antes de la entrega pública. |
+| Propiedad | También al fallar, el llamador interno conserva el CFG parcial y debe liberarlo. No reconectar una construcción ya utilizada; liberar y crear otra. `cfg_build` ya coordina esa limpieza. |
 
-Uso interno actual: `cfg_program_create(ir, &cfg, &diagnostic)` → `cfg_connect(cfg, &diagnostic)` → inspección o `cfg_program_free(cfg)`. `reachable` permanece en false hasta C3; no interpretarlo todavía como resultado de alcanzabilidad.
+Uso interno de C1/C2: `cfg_program_create` → `cfg_connect`. Aún deja `reachable=false`. Para obtener un programa completo en memoria usar `cfg_build`, que añade C3 y entrega propiedad solo en éxito.
 
 La información del grafo son conexiones, etiquetas de rama y listas derivadas de vecinos. ENTRY/EXIT son nodos sintéticos de análisis, no instrucciones nuevas. Los cálculos, condiciones, tipos y efectos se consultan en el IR prestado. Esto permitirá recorrer ciclos y propagar información entre predecesores/sucesores en análisis futuros; no realiza optimización por sí mismo.
 
 Comprobación temporal de C2: cinco fuentes IR existentes, ramas con destino igual, vueltas de ciclo y break, IDs dispersos, bloques reordenados, entrada distinta del primer nodo BLOCK, funciones/arranque separados, vecinos sin duplicados y errores al resolver destinos. Sin runner ni nuevas pruebas permanentes; main y Makefile no se modifican en esta etapa.
+
+### C3 implementado: revisión y alcanzabilidad
+
+| Función / recurso | Regla concreta |
+| --- | --- |
+| `cfg_build` | Reservar con C1, conectar con C2, revisar estructura y recorrer desde ENTRY. Entregar el programa solo en éxito; ante fallo liberar todo lo propio y conservar diagnóstico. No tocar una salida previamente ocupada. |
+| `cfg_validate` | Revisar correspondencia de rutinas/nodos, índices, etiquetas de aristas y listas de vecinos. Comparar el destino ya asociado con el ID almacenado en el terminador, sin volver a buscarlo ni llamar a ir_validate. No depende del orden de aristas. |
+| Máscara de revisión | Un byte temporal por nodo registra salidas vistas: una para ENTRY/JUMP/RETURN; TRUE/FALSE para BRANCH. Detectar conexiones faltantes o repetidas, sin reconstruir el grafo. Se libera al terminar la rutina. |
+| Vecinos | Revisar índices/listas sin duplicados y presencia de cada arista en ambos sentidos. Los totales de pares distintos permiten detectar vecinos sobrantes, incluida una rama con dos aristas y un solo vecino. |
+| `mark_reachable` | Recorrido privado iterativo sobre sucesores, con pila del tamaño de nodos. Marcar al apilar para visitar cada nodo una sola vez y terminar ante ciclos. Liberar la pila después de cada rutina. |
+| Orden de pasos | Revisar estructura antes de recorrer para poder usar índices seguros. El validador no repite el recorrido ni comprueba de nuevo las marcas. |
+
+El alcance es estructural: seguir TRUE y FALSE sin evaluar la condición. Conservar nodos inalcanzables y EXIT inalcanzable en ciclos cerrados. No eliminar bloques, forzar una salida ni ejecutar instrucciones.
+
+Comprobación temporal con sanitizadores: cinco fuentes IR, ramas con destino compartido, vecinos faltantes/duplicados/sobrantes, aristas reordenadas, bloque inalcanzable, ciclo cerrado sin camino a EXIT, funciones/arranque separados y descarte ante errores. No se añade runner ni pruebas permanentes; DOT y CLI siguen pendientes.
 
 ## 6. Revisión estructural e invalidación
 

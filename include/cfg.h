@@ -3,7 +3,7 @@
 
 /** @file cfg.h
  * Grafo de flujo normal sobre bloques IR existentes. No copia instrucciones.
- * C1/C2 implementan almacenamiento y conexiones; alcance, revisión y DOT pendientes.
+ * C1–C3 implementan almacenamiento, conexiones, alcance y revisión. DOT pendiente.
  * Mantener vivos IR y su tabla final hasta liberar todos sus grafos.
  */
 #include "ir.h"
@@ -34,7 +34,7 @@ typedef enum {
 
 /** Nodo sin copia del bloque. Los vecinos son índices en CfgRoutine.nodes,
  * sin duplicados. ENTRY/EXIT no representan un bloque: block=IR_NO_ID.
- * reachable empieza en false; C3 hará el recorrido desde ENTRY. */
+ * reachable empieza en false; cfg_build lo calcula desde ENTRY antes de entregar. */
 typedef struct {
     CfgNodeKind kind;
     IrId block;
@@ -72,12 +72,13 @@ typedef struct {
     size_t routine_count;
 } CfgProgram;
 
-/* C2/C3: IR validada -> grafo conectado y revisado; pendiente.
+/* IR validada -> grafo conectado, revisado y con alcanzabilidad calculada.
  * out debe apuntar a NULL; publicar solo en éxito y descartar parciales al fallar.
  * No leer .ir, ejecutar frontend ni imprimir diagnósticos. */
 CfgStatus cfg_build(const IrProgram *ir, CfgProgram **out, CfgDiagnostic *diagnostic);
 
-/* C3: comprobar estructura del CFG sin repetir semántica ni validar tipos Piper. */
+/* C3: revisar estructura sin repetir semántica, resolver destinos ni recalcular
+ * alcance. No modifica el grafo ni valida tipos Piper. */
 CfgStatus cfg_validate(const CfgProgram *cfg, CfgDiagnostic *diagnostic);
 
 /* C4: escribir DOT determinista sobre un stream prestado; no cerrarlo ni publicar

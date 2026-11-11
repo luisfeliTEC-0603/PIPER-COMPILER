@@ -1,5 +1,5 @@
 /** @file cfg.c
- * C1/C2: almacenamiento y conexiones de bloques sobre IR prestada.
+ * C1–C3: almacenamiento, conexiones y recorrido sobre IR prestada.
  */
 #include "cfg_internal.h"
 #include <stdlib.h>
@@ -124,7 +124,7 @@ static CfgStatus build_neighbors(CfgRoutine *routine, CfgDiagnostic *diagnostic)
 /** Completar almacenamiento nuevo de C1. No volver a validar tipos, firmas ni
  * temporales: solo consumir los terminadores necesarios para crear conexiones.
  * En fallo conserva la construcción parcial; su dueño debe llamar free.
- * C3 añadirá alcance/revisión antes de publicar desde cfg_build. */
+ * cfg_build añade revisión/alcance antes de entregar el programa. */
 CfgStatus cfg_connect(CfgProgram *cfg, CfgDiagnostic *diagnostic)
 {
     CfgDiagnostic error = {.status = CFG_INVALID_INPUT,
@@ -214,6 +214,60 @@ CfgStatus cfg_connect(CfgProgram *cfg, CfgDiagnostic *diagnostic)
         .routine = CFG_NO_INDEX, .block = IR_NO_ID,
         .instruction = CFG_NO_INDEX, .edge = CFG_NO_INDEX};
     return CFG_OK;
+}
+
+/* El grafo ya pasó cfg_validate: visitar vecinos por índice es seguro.
+ * Marcar al apilar evita repetir nodos y limita la pila a node_count incluso
+ * con ciclos. EXIT puede quedar sin alcanzar; no agregar conexiones artificiales. */
+static CfgStatus mark_reachable(CfgProgram *cfg, CfgDiagnostic *diagnostic)
+{
+    for (size_t r = 0; r < cfg->routine_count; r++) {
+        CfgRoutine *routine = &cfg->routines[r];
+        CfgDiagnostic error = {.status = CFG_OUT_OF_MEMORY, .routine = r,
+            .block = IR_NO_ID, .instruction = CFG_NO_INDEX, .edge = CFG_NO_INDEX};
+        if (routine->node_count > SIZE_MAX / sizeof(size_t))
+            return cfg_error(NULL, diagnostic, error, "Demasiados nodos para recorrer CFG.");
+        size_t *pending = malloc(routine->node_count * sizeof(*pending));
+        if (pending == NULL)
+            return cfg_error(NULL, diagnostic, error, "No se pudo reservar la pila de recorrido CFG.");
+        for (size_t n = 0; n < routine->node_count; n++) routine->nodes[n].reachable = false;
+        size_t count = 0;
+        pending[count++] = routine->entry;
+        routine->nodes[routine->entry].reachable = true;
+        while (count) {
+            const CfgNode *node = &routine->nodes[pending[--count]];
+            for (size_t s = 0; s < node->successor_count; s++) {
+                size_t next = node->successors[s];
+                if (!routine->nodes[next].reachable) {
+                    routine->nodes[next].reachable = true;
+                    pending[count++] = next;
+                }
+            }
+        }
+        free(pending);
+    }
+    return CFG_OK;
+}
+
+/** Entrada pública: reservar, conectar, revisar estructura y marcar alcance.
+ * El llamador recibe propiedad solo en éxito; cualquier fallo descarta el
+ * programa parcial y conserva el diagnóstico. IR y su tabla siguen prestadas. */
+CfgStatus cfg_build(const IrProgram *ir, CfgProgram **out, CfgDiagnostic *diagnostic)
+{
+    CfgDiagnostic error = {.status = CFG_INVALID_INPUT,
+        .routine = CFG_NO_INDEX, .block = IR_NO_ID,
+        .instruction = CFG_NO_INDEX, .edge = CFG_NO_INDEX};
+    if (out == NULL || *out != NULL)
+        return cfg_error(NULL, diagnostic, error, "La salida CFG debe apuntar inicialmente a NULL.");
+    CfgProgram *program = NULL;
+    CfgStatus status = cfg_program_create(ir, &program, &error);
+    if (status == CFG_OK) status = cfg_connect(program, &error);
+    if (status == CFG_OK) status = cfg_validate(program, &error);
+    if (status == CFG_OK) status = mark_reachable(program, &error);
+    if (status == CFG_OK) *out = program;
+    else cfg_program_free(program);
+    if (diagnostic) *diagnostic = error;
+    return status;
 }
 
 /** Aceptar NULL y reservas parciales. Solo liberar datos propios: nunca IR,
