@@ -1,8 +1,9 @@
 /** @file ir_expr.c
- * I3/I4: literales, lecturas, operaciones escalares y llamadas. Índices pendientes.
+ * I3/I4/I7: valores, llamadas, direcciones, índices e intrínsecas.
  */
 #include "ir_internal.h"
 #include <stdlib.h>
+#include <string.h>
 
 /* Solo consulta árboles de literales para decidir B32/uB32 cuando semántica
  * no anotó un tipo exacto, igual que el backend actual. No sustituye el árbol
@@ -110,18 +111,36 @@ static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
 {
     const Symbol *callee = expression->resolved_symbol;
     const AstNodeList *args = expression->data.call_expression.arguments;
+    IrInstruction call = {.op = IR_OP_CALL, .location = expression->location};
+    size_t expected;
     if (callee == NULL) {
-        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Las llamadas intrínsecas se incorporarán en I7.");
+        /* Intrínsecas: operación reservada, sin cuerpo ni Symbol de función. */
+        const char *name = expression->data.call_expression.routine_name;
+        call.op = IR_OP_INTRINSIC;
+        if (!strcmp(name, "crypto_auth")) {
+            call.extra.call.intrinsic = IR_INTRINSIC_AUTH; expected = 4;
+        } else if (!strcmp(name, "crypto_write_key")) {
+            call.extra.call.intrinsic = IR_INTRINSIC_WRITE_KEY; expected = 3;
+        } else if (!strcmp(name, "crypto_feistel")) {
+            call.extra.call.intrinsic = IR_INTRINSIC_FEISTEL; expected = 3;
+        } else if (!strcmp(name, "crypto_revoke")) {
+            call.extra.call.intrinsic = IR_INTRINSIC_REVOKE; expected = 0;
+        } else {
+            ir_fail(ctx, IR_INVALID_INPUT, expression->location, "Llamada sin símbolo ni intrínseca reconocida.");
+            return (IrOperand){0};
+        }
+    } else {
+        if (callee->symbol_class != SYMBOL_FUNC || callee->param_count < 0) {
+            ir_fail(ctx, IR_INVALID_INPUT, expression->location, "La llamada no tiene una firma resuelta válida.");
+            return (IrOperand){0};
+        }
+        expected = (size_t)callee->param_count;
+        call.extra.call.callee = callee;
+    }
+    if (args == NULL || args->count != expected) {
+        ir_fail(ctx, IR_INVALID_INPUT, expression->location, "Lista de argumentos IR incompleta.");
         return (IrOperand){0};
     }
-    if (callee->symbol_class != SYMBOL_FUNC || args == NULL ||
-        callee->param_count < 0 || args->count != (size_t)callee->param_count) {
-        ir_fail(ctx, IR_INVALID_INPUT, expression->location, "La llamada no tiene una firma resuelta válida.");
-        return (IrOperand){0};
-    }
-    IrInstruction call = {.op = IR_OP_CALL, .location = expression->location,
-        .flags = IR_READ_MEMORY | IR_WRITE_MEMORY | IR_MAY_TRAP};
-    call.extra.call.callee = callee;
     call.extra.call.argument_count = args->count;
     if (args->count > SIZE_MAX / sizeof(IrOperand)) {
         ir_fail(ctx, IR_OUT_OF_MEMORY, expression->location, "Demasiados argumentos IR.");
@@ -135,14 +154,18 @@ static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
         }
     }
     for (size_t i = 0; i < args->count; i++) {
-        const Symbol *parameter = callee->params[i];
-        if (parameter->is_array) {
-            ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Los argumentos de arreglo se incorporarán en I7.");
+        const Symbol *parameter = callee ? callee->params[i] : NULL;
+        bool array_argument = parameter ? parameter->is_array :
+            call.extra.call.intrinsic == IR_INTRINSIC_FEISTEL && i == 0;
+        if (array_argument && args->items[i]->kind != AST_IDENTIFIER_EXPRESSION) {
+            ir_fail(ctx, IR_UNSUPPORTED, args->items[i]->location,
+                "Un argumento de arreglo requiere una variable, no un literal ni una vista parcial.");
         } else {
+            /* Un identificador de arreglo devuelve su base tipada, no una copia. */
             IrOperand value = ir_expr(ctx, args->items[i]);
             if (ctx->error.status == IR_OK && value.kind == IR_OPERAND_NONE)
-                ir_fail(ctx, IR_INVALID_INPUT, args->items[i]->location, "Un argumento escalar no puede ser none.");
-            if (value.kind == IR_OPERAND_CONSTANT)
+                ir_fail(ctx, IR_INVALID_INPUT, args->items[i]->location, "Un argumento no puede ser none.");
+            if (parameter && !parameter->is_array && value.kind == IR_OPERAND_CONSTANT)
                 value.type.piper = parameter->declared_type;
             call.extra.call.arguments[i] = value;
         }
@@ -151,15 +174,16 @@ static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
             return (IrOperand){0};
         }
     }
-    if (callee->declared_type == PIPER_TYPE_NONE) {
+    if (callee == NULL || callee->declared_type == PIPER_TYPE_NONE) {
         ir_emit(ctx, call); /* Sin temporal: NONE con IR_OK es una llamada válida. */
         return (IrOperand){0};
     }
     return ir_emit_value(ctx, call, (IrType){.piper = callee->declared_type});
 }
 
-/** Resuelve el destino sin leerlo. Usa el enlace de I2, nunca busca por nombre.
- * Índices y arreglos completos se incorporarán en I7. */
+/** Símbolo escalar o dirección de arreglo/elemento. ADDR sobre parámetro de
+ * arreglo significa la referencia recibida, nunca la dirección de su ranura.
+ * Cada índice se evalúa y comprueba antes del siguiente, sin volver a leerlo. */
 IrOperand ir_target(IrContext *ctx, const AstNode *target)
 {
     if (ctx == NULL || ctx->error.status != IR_OK) return (IrOperand){0};
@@ -167,21 +191,64 @@ IrOperand ir_target(IrContext *ctx, const AstNode *target)
         ir_fail(ctx, IR_INVALID_INPUT, (SourceLocation){0}, "Falta el destino IR.");
         return (IrOperand){0};
     }
-    if (target->kind != AST_IDENTIFIER_EXPRESSION) {
-        ir_fail(ctx, IR_UNSUPPORTED, target->location, "I3 solo admite destinos escalares identificadores.");
+    bool indexed = target->kind == AST_INDEX_EXPRESSION;
+    const AstNode *base = indexed ? target->data.index_expression.base : target;
+    if (base == NULL || base->kind != AST_IDENTIFIER_EXPRESSION) {
+        ir_fail(ctx, IR_UNSUPPORTED, target->location, "El destino requiere un identificador o acceso indexado.");
         return (IrOperand){0};
     }
-    const Symbol *symbol = target->resolved_symbol;
+    const Symbol *symbol = base->resolved_symbol;
     if (symbol == NULL || symbol->symbol_class == SYMBOL_FUNC) {
         ir_fail(ctx, IR_INVALID_INPUT, target->location, "El destino no tiene un símbolo de variable resuelto.");
         return (IrOperand){0};
     }
-    if (symbol->is_array) {
-        ir_fail(ctx, IR_UNSUPPORTED, target->location, "Los accesos a arreglos se incorporarán en I7.");
+    IrOperand variable = {.kind = IR_OPERAND_SYMBOL,
+        .type = {.piper = symbol->declared_type}, .value.symbol = symbol};
+    if (!symbol->is_array) {
+        if (!indexed) return variable;
+        ir_fail(ctx, IR_INVALID_INPUT, target->location, "Un acceso indexado requiere arreglo.");
         return (IrOperand){0};
     }
-    return (IrOperand){.kind = IR_OPERAND_SYMBOL,
-        .type = {.piper = symbol->declared_type}, .value.symbol = symbol};
+    if (symbol->declared_type == PIPER_TYPE_BOOL) {
+        ir_fail(ctx, IR_UNSUPPORTED, target->location, "Arreglos bool fuera del soporte actual del backend.");
+        return (IrOperand){0};
+    }
+    IrOperand linear = {0};
+    IrType integer = {.piper = PIPER_TYPE_B32};
+    if (indexed) {
+        const AstNodeList *indices = target->data.index_expression.indices;
+        if (indices == NULL || indices->count < 1 || indices->count > 2) {
+            ir_fail(ctx, IR_INVALID_INPUT, target->location, "Acceso sin uno o dos índices IR.");
+            return (IrOperand){0};
+        }
+        for (size_t i = 0; i < indices->count; i++) {
+            IrOperand index = ir_expr(ctx, indices->items[i]);
+            IrOperand length = {.kind = IR_OPERAND_CONSTANT, .type = integer,
+                .value.constant = i == 0 ? symbol->array_rows : symbol->array_cols};
+            ir_emit(ctx, (IrInstruction){.op = IR_OP_CHECK_BOUNDS, .arg1 = index,
+                .arg2 = length, .location = indices->items[i]->location});
+            if (ctx->error.status != IR_OK) return (IrOperand){0};
+            if (i == 0) linear = index;
+            else {
+                /* Orden por filas: fila * columnas + columna. Ya hay límites;
+                 * estos cálculos de dirección no son aritmética Piper CHECKED. */
+                linear = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_MUL,
+                    .arg1 = linear, .arg2 = length, .location = target->location}, integer);
+                linear = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_ADD,
+                    .arg1 = linear, .arg2 = index, .location = target->location}, integer);
+            }
+        }
+    }
+    IrType address = {.piper = symbol->declared_type, .address = true};
+    IrOperand result = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_ADDR,
+        .arg1 = variable, .location = target->location}, address);
+    if (!indexed || ctx->error.status != IR_OK) return result;
+    IrOperand width = {.kind = IR_OPERAND_CONSTANT, .type = integer,
+        .value.constant = piper_type_storage_size(symbol->declared_type)};
+    IrOperand offset = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_MUL,
+        .arg1 = linear, .arg2 = width, .location = target->location}, integer);
+    return ir_emit_value(ctx, (IrInstruction){.op = IR_OP_ADD,
+        .arg1 = result, .arg2 = offset, .location = target->location}, address);
 }
 
 /** Traduce hijos de izquierda a derecha, sin plegado ni cortocircuito.
@@ -212,10 +279,13 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
         return (IrOperand){.kind = IR_OPERAND_CONSTANT,
             .type = {.piper = PIPER_TYPE_BOOL},
             .value.constant = expression->data.boolean_literal.value};
-    case AST_IDENTIFIER_EXPRESSION:
-        instruction.op = IR_OP_COPY;
-        instruction.arg1 = ir_target(ctx, expression);
-        return ir_emit_value(ctx, instruction, instruction.arg1.type);
+    case AST_IDENTIFIER_EXPRESSION: case AST_INDEX_EXPRESSION: {
+        IrOperand target = ir_target(ctx, expression);
+        if (expression->kind == AST_IDENTIFIER_EXPRESSION && target.type.address) return target;
+        instruction.op = target.type.address ? IR_OP_LOAD : IR_OP_COPY;
+        instruction.arg1 = target;
+        return ir_emit_value(ctx, instruction, (IrType){.piper = target.type.piper});
+    }
     case AST_UNARY_EXPRESSION: {
         AstOperator op = expression->data.unary_expression.operator;
         const AstNode *operand = expression->data.unary_expression.operand;
@@ -226,6 +296,10 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
             return (IrOperand){0};
         }
         if (update) {
+            if (operand->kind != AST_IDENTIFIER_EXPRESSION || operand->inferred_type == TYPE_ARRAY) {
+                ir_fail(ctx, IR_UNSUPPORTED, expression->location, "++/-- solo admiten identificadores escalares.");
+                return (IrOperand){0};
+            }
             target = ir_target(ctx, operand);
             if (ctx->error.status != IR_OK) return (IrOperand){0};
         }
@@ -261,7 +335,7 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
             instruction.flags = IR_CHECKED | IR_MAY_TRAP;
         return ir_emit_value(ctx, instruction, type);
     default:
-        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Expresión pendiente de una etapa posterior a I4.");
+        ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Expresión sin traducción IR soportada en este contexto.");
         return (IrOperand){0};
     }
 }

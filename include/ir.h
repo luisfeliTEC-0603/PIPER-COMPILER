@@ -7,7 +7,8 @@
  *
  * I1 implementa almacenamiento/liberación; I3–I5 traducen escalares, rutinas,
  * llamadas, retornos y control. I6 completa efectos y revisión estructural antes
- * de entregar el modelo. Impresión e integración con main siguen pendientes.
+ * de entregar el modelo. I7 añade arreglos e intrínsecas. Impresión e integración
+ * con main siguen pendientes.
  * Flujo: ir_generate(AST, símbolos) -> IrProgram -> ir_write/consumidores
  * -> ir_program_free. ir_generate debe validar antes de publicar su resultado.
  * La tabla semántica final se presta y debe sobrevivir a todos los consumidores.
@@ -102,7 +103,8 @@ typedef enum {
 /**
  * Una instrucción para todas las formas de TAC:
  * - Normal: result = arg1 op arg2; copia/unaria no usa arg2.
- * - Memoria: ADDR(symbol)->result; LOAD(address)->result;
+ * - Memoria: ADDR(symbol)->result (base recibida si es parámetro de arreglo);
+ *   LOAD(address)->result;
  *   STORE(arg1=address, arg2=value); CHECK_BOUNDS(arg1=index, arg2=length).
  * - Control: JUMP usa targets[0]; BRANCH usa arg1=bool y targets[0/1]
  *   verdadero/falso; RETURN usa arg1=valor opcional.

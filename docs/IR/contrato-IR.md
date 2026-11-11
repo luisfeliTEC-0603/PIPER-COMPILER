@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3–I5 la traducción TAC escalar con rutinas, llamadas, retornos y control. I6 completa efectos, revisión estructural y entrega pública del modelo; arreglos/intrínsecas desde AST y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3–I5 la traducción TAC escalar con rutinas, llamadas, retornos y control. I6 completa efectos, revisión estructural y entrega pública del modelo; I7 incorpora arreglos e intrínsecas desde AST. Exportación e integración con main siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -217,3 +217,11 @@ En loop, evaluar fin antes de leer el control en cada prueba, igual que el backe
 `ir_validate` usa un índice de definiciones temporal por rutina, con dos pasadas independientes del orden físico de bloques. Ese índice se libera al finalizar, no se incorpora a IrProgram. Revisa únicamente el alcance estructural de la sección 6, sin volver a exigir compatibilidad de firmas, promociones o resolución de símbolos.
 
 `ir_generate` construye, revisa y entrega propiedad solo en éxito. Un fallo deja salida NULL y descarta recursos propios; un parámetro de salida ya ocupado se rechaza sin sobrescribir ni liberar el programa anterior. El diagnóstico es opcional, se copia por valor y conserva la primera posición de error. La integración con main y la exportación siguen pendientes.
+
+### Arreglos e intrínsecas de I7 disponibles
+
+`ir_target` devuelve símbolos escalares o direcciones de arreglos/elementos. Cada índice se captura y comprueba antes del siguiente, conservando dimensiones y ancho del símbolo final. Se calcula la dirección por filas, sin asignar memoria física ni añadir comprobaciones aritméticas Piper a cálculos de dirección ya acotados. `ADDR` de un parámetro de arreglo obtiene su referencia recibida. `ir_expr` devuelve esa base para argumentos de arreglo y emite LOAD para valores indexados.
+
+`ir_stmt` calcula el destino indexado antes del origen y emite STORE. Literales/copia completa se bajan por elementos en orden por filas, sin adelantar las lecturas ni crear buffers que cambien alias. Si el valor temporal requiere conversión al tipo del elemento, una copia CHECKED produce el valor convertido antes de STORE; los cálculos previos conservan su tipo.
+
+Las cuatro intrínsecas reservadas se emiten como IR_OP_INTRINSIC sin resultado. Feistel recibe la base del arreglo modificable. Los algoritmos/ISA corresponden al futuro backend y las firmas ya fueron aprobadas por semántica. Se conserva el soporte actual: elementos enteros, argumentos de arreglo por identificador y ++/-- escalares. No se agregan arreglos bool, vistas parciales ni sintaxis nueva de índices. La sintaxis vigente usa `&` entre dimensiones/índices; los índices del parser son literales o identificadores.

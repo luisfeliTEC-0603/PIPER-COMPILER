@@ -1,6 +1,6 @@
 # Ejemplo completo: fuente → análisis → IR → CFG
 
-El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. I6 ya completa efectos, revisión estructural y entrega del modelo mediante ir_generate; la exportación sigue pendiente. No se aplican optimizaciones.
+El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. I6 completa efectos, revisión estructural y entrega del modelo mediante ir_generate. I7 incorpora arreglos e intrínsecas; la exportación sigue pendiente. No se aplican optimizaciones.
 
 Los comentarios `comprueba rango del resultado B32, puede fallar` verifican que el resultado de esa operación quepa en B32 (−2147483648 a 2147483647). Desbordar ese rango es una posibilidad del tipo de dato, no un defecto del compilador; la comprobación conserva la política de error de Piper. En estos ejemplos los valores sí caben y no se espera ningún fallo. El tipo comprobado es el resultado de la operación, no necesariamente el de una variable que lo reciba después.
 
@@ -416,3 +416,21 @@ Al entrar al ciclo se apila B3. El `when` no apila otra salida de ciclo: `break`
 En ciclos anidados, cada ciclo apila su propia salida. El `break` usa el último destino; al terminar de traducir ese ciclo, se retira su entrada y vuelve a quedar visible la salida del ciclo exterior.
 
 Estos ejemplos describen el TAC de I5 comprobado de forma aislada; no añaden pruebas permanentes ni habilitan todavía archivos .ir. La salida CFG sigue pendiente de su módulo.
+
+
+## 11. Accesos e intrínsecas de I7
+
+Ejemplo fuente con la sintaxis vigente de matrices:
+
+```piper
+routine B32 main[] {
+    create B16|2&2| m.
+    m store [[1,2],[3,4]].
+    m|1&0| store 5.
+    output m|1&0|.
+}
+```
+
+Para cada acceso, comprobar fila contra 2 y columna contra 2; calcular `(fila * 2 + columna) * 2` bytes. La escritura conserva la dirección antes de evaluar 5 y emite STORE; el retorno vuelve a calcular el acceso y emite LOAD B16. El resultado esperado es 5. La inicialización se escribe por elementos en orden 1, 2, 3, 4.
+
+`crypto_feistel[bloque,0,1]` se representa mediante ADDR del arreglo B32 de dos elementos y una instrucción INTRINSIC con esa dirección y los índices. No se generan cálculos del algoritmo criptográfico. Estos son modelos internos comprobados; no habilitan todavía archivos .ir ni CFG.

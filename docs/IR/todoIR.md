@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: I1–I6 implementados y comprobados de forma aislada; I7–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: I1–I7 implementados y comprobados de forma aislada; I8–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -26,7 +26,7 @@ Estado: I1–I6 implementados y comprobados de forma aislada; I7–I9 pendientes
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos y control de I3–I5. `ir_build_program` organiza rutinas y arranque. `ir_generate` construye y revisa la estructura antes de entregar el programa. La impresión sigue declarada, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Hay once auxiliares compartidos: los de recorrido/emisión, los tres de ciclo de vida de I1 y `ir_emit_value`, compartido por expresiones y control para definir temporales.
+La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos, control, arreglos e intrínsecas de I3–I7. `ir_build_program` organiza rutinas y arranque. `ir_generate` construye y revisa la estructura antes de entregar el programa. La impresión sigue declarada, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Hay once auxiliares compartidos: los de recorrido/emisión, los tres de ciclo de vida de I1 y `ir_emit_value`, compartido por expresiones y control para definir temporales.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
@@ -51,7 +51,7 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 | I4 — completado | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
 | I5 — completado | Alta | Construir bloques y saltos para condicionales/ciclos; apilar la salida de cada ciclo para `break` y cerrar cada camino una sola vez. | `when`, `alwhen`, `loop` y `break` siguen las restricciones y esquemas del [ejemplo de control](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). |
 | I6 — completado | Alta | Completar flags por operación y comprobar estructura del IR: destinos, temporales, terminadores y coherencia básica de operandos. No repetir tipos ni firmas del semántico. | Efectos conservados y estructura revisada antes de publicar; sin un segundo análisis semántico. |
-| I7 | Media | Calcular direcciones y accesos por elemento para arreglos/matrices; emitir las cuatro intrínsecas con efectos de memoria/criptografía. | Índices evaluados una vez, límites conservados, parámetros por referencia y orden por filas. |
+| I7 — completado | Media | Calcular direcciones y accesos por elemento para arreglos/matrices; emitir las cuatro intrínsecas con efectos de memoria/criptografía. | Índices evaluados una vez, límites conservados, parámetros por referencia y orden por filas. |
 | I8 | Alta | Implementar `ir_write` con cabeceras y TAC; preparar reglas de construcción y opciones de CLI cuando el módulo esté completo. | Exportación solo IR o adicional con rutas comprobadas, sin publicar archivo parcial ni cambiar el codegen actual. No conectar a `main` antes de completar el módulo. |
 | I9 | Alta | Ejecutar los tres casos IR-T1–IR-T3 y la construcción habitual al completar el módulo. | Coinciden las instrucciones/tipos/bloques esperados y se conservan los comandos existentes. |
 
@@ -158,7 +158,7 @@ I3 prepara esa regla, que I4 mantiene al incorporar llamadas. No aplica propagac
 | Asignación | Resolver destino, evaluar origen y emitir `COPY`; una constante adopta el tipo del destino aprobado. Un temporal conserva su tipo previo. |
 | Bloque / declaración | Recorrer sentencias en orden; una declaración no emite inicialización. También se admiten expresiones como sentencias. |
 | Atributos | Aritmética solicita `IR_CHECKED` y `IR_MAY_TRAP`; copia entre tipos distintos también conserva comprobación del destino. I6 ya completa el cálculo común de efectos y la revisión estructural. |
-| Extensiones posteriores a I3 | I4 agrega llamadas ordinarias y retornos; I5, control estructurado. Índices e intrínsecas siguen pendientes; devuelven `IR_UNSUPPORTED`. |
+| Extensiones posteriores a I3 | I4 agrega llamadas ordinarias y retornos; I5, control; I7, índices e intrínsecas. Se conservan las restricciones del backend actual. |
 
 Los tres auxiliares privados de expresiones y el emisor compartido tienen una responsabilidad cada uno:
 
@@ -198,7 +198,7 @@ Cada rutina tiene sus temporales y bloque de entrada. La firma se consulta en el
 | Retorno | `output` evalúa el valor y emite `RETURN`; no traducir instrucciones posteriores del camino cerrado. Un camino abierto con retorno de valor es error; no inventar `return 0`. |
 | Arranque | Solo si hay sentencias globales: crear rutina sintética, traducirlas en orden, emitir llamada a main y retorno sin valor. Declaraciones globales solas no requieren arranque. |
 | Recursión | Conservar llamadas al símbolo de la propia función; no expandir cuerpos ni volver a analizarlos. |
-| Fuera de alcance | Rutinas anidadas, argumentos de arreglo e intrínsecas se rechazan mientras no exista su soporte correspondiente. I5 ya incorpora control. |
+| Fuera de alcance | Rutinas anidadas siguen sin soporte. I5 incorpora control e I7 argumentos de arreglo e intrínsecas. |
 | Publicación | `ir_generate` ya construye, revisa estructura y entrega propiedad solo en éxito desde I6. Sin integración con main, opciones CLI ni archivo `.ir` todavía. |
 
 El modelo admite retorno none explícito o implícito al final de una rutina none. El parser y registro semántico actuales no admiten declarar esas rutinas desde el fuente; se comprobó este caso mediante AST/símbolos preparados internamente, sin modificar el frontend.
@@ -252,7 +252,7 @@ Estas comprobaciones buscan fallos de construcción del IR, cuyos bloques y temp
 | --- | --- |
 | `instruction_flags` en ir.c | Opcode, atributos y operandos → flags completos. Preserva `IR_CHECKED`; este implica posible fallo, pero no se añade a sumas sin comprobación como el avance de loop. |
 | Globales | Comparar la referencia del símbolo con declaraciones globales: leer valor marca lectura de memoria; escribir marca escritura. Obtener dirección con ADDR no lee el valor. |
-| Memoria y criptografía | LOAD/STORE marcan lectura/escritura; límites y división/residuo/potencia conservan posible fallo. Intrínsecas marcan estado criptográfico; Feistel también memoria. Su generación desde AST sigue pendiente de I7. |
+| Memoria y criptografía | LOAD/STORE marcan lectura/escritura; límites y división/residuo/potencia conservan posible fallo. Intrínsecas marcan estado criptográfico; Feistel también memoria. I7 ya genera estas operaciones desde el AST. |
 | Llamadas | Sin análisis interprocedimental, conservar lectura/escritura de memoria y estado criptográfico, más posible fallo; una función llamada puede ejecutar otras llamadas o intrínsecas. |
 | `ir_validate` | Dos pasadas por rutina: registrar definiciones y después comprobar usos. Reserva un índice temporal de inspección, que libera antes de retornar; no agrega una tabla persistente al modelo. |
 | Diagnóstico | Retornar el primer error con rutina, bloque, instrucción y ubicación disponibles. No imprimir mensajes desde IR. |
@@ -260,6 +260,33 @@ Estas comprobaciones buscan fallos de construcción del IR, cuyos bloques y temp
 
 Comprobación aislada: fuentes pequeñas con control/llamadas generadas mediante la API pública, ejecución del TAC en intérprete temporal, alteraciones deliberadas de destinos/IDs/terminadores/operandos y flags de globales/memoria/criptografía. También se verificó que la revisión no vuelve a exigir compatibilidad de firmas. Sin pruebas permanentes, cambios al Makefile ni integración con main. La exportación .ir sigue pendiente.
 
+
+### I7. Arreglos e intrínsecas — implementado
+
+| Método / entrada | Salida y regla |
+| --- | --- |
+| `ir_target` con identificador de arreglo | Temporal de dirección con ADDR, tipo del elemento y `address=true`. En parámetro de arreglo representa la base recibida, no la dirección de la ranura del parámetro. |
+| `ir_target` con acceso indexado | Evaluar cada índice una vez y emitir CHECK_BOUNDS antes del siguiente. Vector: índice × ancho. Matriz: (fila × columnas + columna) × ancho. Sumar a la base; cálculos de dirección B32 sin CHECKED, tras límites válidos. |
+| `ir_expr` | Identificador de arreglo devuelve su base; acceso indexado emite LOAD del elemento. No cargar el arreglo completo como un escalar. |
+| Asignación indexada | Calcular y comprobar dirección antes del origen; reutilizarla al emitir STORE. |
+| `element_address` | Obtener dirección de un elemento con desplazamiento constante en copias/inicializaciones. Ancho obtenido con `piper_type_storage_size`; sin nuevos límites porque el recorrido está dentro de las dimensiones aprobadas. |
+| `store_element` | Retipar constantes al tipo de elemento. Si un temporal necesita conversión, emitir COPY tipado con CHECKED antes de STORE; no estrechar su cálculo previo ni poner CHECKED en un STORE sin resultado. |
+| `array_assignment` | Literal o copia de identificador: evaluar/cargar y escribir un elemento antes de pasar al siguiente, en orden por filas. Sin buffer de copia ni lectura anticipada de todos los elementos; conservar alias/autocopia. |
+| `call_expression`, llamada ordinaria | Argumento de arreglo identificador → base por referencia. No copiar datos ni asignar direcciones físicas. |
+| `call_expression`, intrínseca | Reconocer los cuatro nombres reservados sin Symbol de función y emitir IR_OP_INTRINSIC con argumentos evaluados en orden, sin resultado temporal. `ir_emit` completa sus efectos. |
+
+| Intrínseca | Argumentos IR |
+| --- | --- |
+| `crypto_auth` | Cuatro valores escalares. |
+| `crypto_write_key` | Valor, índice de bóveda e índice de clave aprobados por semántica. |
+| `crypto_feistel` | Dirección del arreglo modificable B32 de dos elementos y dos índices de clave. |
+| `crypto_revoke` | Lista vacía. |
+
+No se implementan algoritmos criptográficos ni instrucciones PORYGON aquí. Se conservan el módulo y sus once auxiliares compartidos; los tres auxiliares nuevos de asignación son privados de ir_stmt.c. El validador estructural de I6 ya admite ADDR/LOAD/STORE/CHECK_BOUNDS e intrínsecas, sin ampliarlo a otra validación semántica.
+
+Restricciones actuales: arreglos de una/dos dimensiones de elementos enteros; no arreglos bool, argumentos de arreglo literales, vistas parciales ni ++/-- sobre elementos. La sintaxis existente separa dimensiones/índices con `&`: `B16|2&3| m`, `m|fila&columna|`; el parser admite índices literales o identificadores. No se cambia el frontend para aceptar expresiones generales como índices.
+
+Comprobación aislada con sanitizadores e intérprete temporal del TAC: B8/B16/uB32, matrices, parámetros, copia/autocopia, orden de inicialización con alias, dirección capturada antes del origen, fallo de límite antes del origen, cuatro intrínsecas y construcciones no soportadas. Feistel se simuló únicamente para comprobar la dirección y el efecto de memoria, sin implementar su algoritmo. Sin pruebas permanentes, cambios al Makefile ni integración con main. La exportación sigue pendiente de I8.
 
 ## 5. Reglas para generar expresiones y bloques
 

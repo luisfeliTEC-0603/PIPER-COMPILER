@@ -1,6 +1,6 @@
 /** @file ir_stmt.c
  * I3: bloques léxicos, declaraciones sin inicialización y asignaciones escalares.
- * I4 añade llamadas y retornos. I5 añade control estructurado; arreglos pendientes de I7.
+ * I4 añade llamadas y retornos. I5 añade control e I7 accesos y copias de arreglos.
  */
 #include "ir_internal.h"
 #include <stdlib.h>
@@ -163,6 +163,76 @@ static void loop_statement(IrContext *ctx, const AstNode *node)
 }
 
 
+/* Elemento de una copia/inicialización: índice plano constante y ancho exacto.
+ * No lleva bounds check: el recorrido usa las dimensiones ya aprobadas. */
+static IrOperand element_address(IrContext *ctx, IrOperand base, size_t index, SourceLocation location)
+{
+    if (index == 0) return base;
+    IrOperand offset = {.kind = IR_OPERAND_CONSTANT, .type = {.piper = PIPER_TYPE_B32},
+        .value.constant = (int64_t)(index * (size_t)piper_type_storage_size(base.type.piper))};
+    return ir_emit_value(ctx, (IrInstruction){.op = IR_OP_ADD,
+        .arg1 = base, .arg2 = offset, .location = location}, base.type);
+}
+
+/* STORE no tiene resultado donde anotar CHECKED: si hay conversión de ancho,
+ * hacerla primero en una copia tipada, sin estrechar el cálculo de origen. */
+static void store_element(IrContext *ctx, IrOperand address, IrOperand value, SourceLocation location)
+{
+    if (ctx->error.status != IR_OK) return;
+    if (value.kind == IR_OPERAND_NONE || value.type.address) {
+        ir_fail(ctx, IR_INVALID_INPUT, location, "Un elemento requiere un valor escalar.");
+        return;
+    }
+    IrType type = {.piper = address.type.piper};
+    if (value.kind == IR_OPERAND_CONSTANT) value.type = type;
+    else if (value.type.piper != type.piper)
+        value = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_COPY, .arg1 = value,
+            .flags = IR_CHECKED, .location = location}, type);
+    ir_emit(ctx, (IrInstruction){.op = IR_OP_STORE, .arg1 = address,
+        .arg2 = value, .location = location});
+}
+
+/* Literal o copia completa en orden por filas. Leer/evaluar un elemento y
+ * escribirlo antes del siguiente conserva efectos y alias, incluso autocopia.
+ * No crear buffers, memcpy ni una copia masiva opaca para el optimizador. */
+static void array_assignment(IrContext *ctx, const AstNode *statement)
+{
+    const AstNode *target = statement->data.assignment.target;
+    const AstNode *source = statement->data.assignment.value;
+    const Symbol *symbol = target->resolved_symbol;
+    IrOperand destination = ir_target(ctx, target), origin = {0};
+    bool literal = source->kind == AST_ARRAY_LITERAL;
+    if (!literal) {
+        if (source->kind != AST_IDENTIFIER_EXPRESSION) {
+            ir_fail(ctx, IR_UNSUPPORTED, source->location, "Copia de arreglo requiere una variable o literal.");
+            return;
+        }
+        origin = ir_expr(ctx, source); /* Base del arreglo, incluidos parámetros. */
+    }
+    if (ctx->error.status != IR_OK) return;
+    size_t count = (size_t)symbol->array_rows * (size_t)symbol->array_cols;
+    for (size_t i = 0; i < count && ctx->error.status == IR_OK; i++) {
+        IrOperand value;
+        SourceLocation location = statement->location;
+        if (literal) {
+            const AstNodeList *items = source->data.array_literal.elements;
+            const AstNode *element;
+            if (target->array_rank == 2) {
+                const AstNode *row = items->items[i / (size_t)symbol->array_cols];
+                element = row->data.array_literal.elements->items[i % (size_t)symbol->array_cols];
+            } else element = items->items[i];
+            location = element->location;
+            value = ir_expr(ctx, element);
+        } else {
+            IrOperand address = element_address(ctx, origin, i, location);
+            value = ir_emit_value(ctx, (IrInstruction){.op = IR_OP_LOAD,
+                .arg1 = address, .location = location}, (IrType){.piper = symbol->declared_type});
+        }
+        IrOperand address = element_address(ctx, destination, i, location);
+        store_element(ctx, address, value, location);
+    }
+}
+
 /** Añade las instrucciones al bloque activo, sin modificar AST ni símbolos.
  * No inventa inicializaciones. Un camino cerrado no recibe más instrucciones. */
 void ir_stmt(IrContext *ctx, const AstNode *statement)
@@ -221,13 +291,22 @@ void ir_stmt(IrContext *ctx, const AstNode *statement)
         return;
     }
     case AST_ASSIGNMENT: {
-        /* El destino se resuelve antes del origen; I7 añadirá sus índices. */
+        const AstNode *node = statement->data.assignment.target;
+        if (node->kind == AST_IDENTIFIER_EXPRESSION && node->resolved_symbol && node->resolved_symbol->is_array) {
+            array_assignment(ctx, statement);
+            return;
+        }
+        /* Capturar y comprobar todos los índices antes de evaluar el origen. */
         IrOperand target = ir_target(ctx, statement->data.assignment.target);
         if (ctx->error.status != IR_OK) return;
         IrOperand value = ir_expr(ctx, statement->data.assignment.value);
         if (ctx->error.status != IR_OK) return;
         if (value.kind == IR_OPERAND_NONE) {
             ir_fail(ctx, IR_INVALID_INPUT, statement->location, "No se puede asignar un valor none.");
+            return;
+        }
+        if (target.type.address) {
+            store_element(ctx, target, value, statement->location);
             return;
         }
         /* Un literal adopta el tipo de su uso aprobado. Un temporal conserva
@@ -240,11 +319,11 @@ void ir_stmt(IrContext *ctx, const AstNode *statement)
     }
     case AST_INTEGER_LITERAL: case AST_BOOLEAN_LITERAL: case AST_NONE_LITERAL:
     case AST_IDENTIFIER_EXPRESSION: case AST_UNARY_EXPRESSION: case AST_BINARY_EXPRESSION:
-    case AST_CALL_EXPRESSION:
+    case AST_CALL_EXPRESSION: case AST_INDEX_EXPRESSION:
         (void)ir_expr(ctx, statement); /* Expresión usada como sentencia, incluido ++/--. */
         return;
     default:
-        ir_fail(ctx, IR_UNSUPPORTED, statement->location, "Sentencia pendiente de una etapa posterior a I5.");
+        ir_fail(ctx, IR_UNSUPPORTED, statement->location, "Sentencia sin traducción IR soportada.");
         return;
     }
 }

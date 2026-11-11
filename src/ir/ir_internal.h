@@ -5,6 +5,7 @@
  * Estado compartido del generador. I1 implementa su ciclo de vida y almacenamiento;
  * I3–I5 recorren escalares, rutinas, llamadas, retornos y control. I6 completa
  * efectos y revisa estructura antes de entregar el modelo al llamador.
+ * I7 agrega direcciones/accesos de arreglos e intrínsecas, sin otra interfaz.
  * Un primer error queda en error.status: las funciones siguientes no emiten más.
  * Así el resultado de una expresión no necesita otro parámetro de salida.
  * Mantener IR_OK con operando NONE para none; un fallo cambia error.status.
@@ -45,7 +46,7 @@ void ir_build_program(IrContext *ctx);
 IrOperand ir_expr(IrContext *ctx, const AstNode *expression);
 
 /* ir_expr.c: target es un destino aprobado, no una lectura de su contenido.
- * Devuelve símbolo escalar o dirección tipada; índices evaluados/comprobados
+ * Devuelve símbolo escalar o dirección de arreglo/elemento; índices comprobados
  * antes de evaluar el origen de la asignación. No reubica variables. */
 IrOperand ir_target(IrContext *ctx, const AstNode *target);
 
