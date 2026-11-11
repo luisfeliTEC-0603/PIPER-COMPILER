@@ -1,0 +1,17 @@
+function main() -> B32
+    variables: local p:bool, local x:B32
+    temporales: t0:bool, t1:B32
+    constantes: 1:bool, 1:B32, 2:B32
+B0:
+    p = 1:bool
+    t0 = p
+    if t0 jump B1 else B2
+B1:
+    x = 1:B32
+    jump B3
+B2:
+    x = 2
+    jump B3
+B3:
+    t1 = x
+    return t1

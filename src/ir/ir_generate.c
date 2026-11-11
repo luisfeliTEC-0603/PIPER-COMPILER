@@ -1,11 +1,11 @@
 /** @file ir_generate.c
- * I4: organizar rutinas y arranque. No integrar con main hasta completar IR.
+ * I4/I6: organizar rutinas, construir y revisar antes de entregar propiedad.
  */
 #include "ir_internal.h"
 #include <string.h>
 
 /* Construir, revisar estructura y transferir propiedad solo en éxito.
- * No ejecuta frontend, abre archivos ni conecta esta etapa con main. */
+ * No ejecuta frontend ni abre archivos; main decide cuándo invocarlo. */
 IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
                      IrProgram **out, IrDiagnostic *diagnostic)
 {

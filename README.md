@@ -60,7 +60,7 @@ La creación del entorno y la instalación se hacen una vez; el comando 51 abre 
 (comandos 49–51 en la tabla).
 Ejecutar `make all` antes de compilar desde el IDE.
 
-Las salidas disponibles y las opciones futuras de IR, CFG y optimización están
+Las salidas disponibles, incluida IR, y las opciones futuras de CFG y optimización están
 numeradas en [comandos.md](docs/comandos.md), con su estado de implementación.
 
 ## Ejecución integrada en PORYGON
@@ -98,5 +98,10 @@ máquina y el [scheduler](src/scheduler/) reordena y empaqueta instrucciones en
 bundles con NOPs. Se emiten `.bin` y, al solicitarlo, `.mem` para ejecutar en
 PORYGON y recuperar resultados de registros y memoria.
 
-La etapa AST → IR con bloques → CFG → optimización → codegen está
-planificada en las guías de [IR](docs/todoIR.md) y [CFG](docs/todoCFG.md), pendiente de implementación.
+La IR tipada con bloques se exporta con `bin/pipoc ir programa.rwt` o
+`bin/pipoc programa.rwt --emit-ir programa.ir` (comandos 32–33). El backend
+actual sigue usando AST y símbolos; CFG y optimización siguen pendientes.
+
+Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
+Fuentes, resultados esperados e instrucciones: [tests/ir/README.md](tests/ir/README.md).
+Guías: [IR](docs/IR/todoIR.md) y [CFG](docs/IR/todoCFG.md).

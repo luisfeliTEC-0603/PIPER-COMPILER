@@ -1,0 +1,11 @@
+routine B32 main[] {
+    create bool p.
+    create B32 x.
+    p store true.
+    when [p] {
+        x store 1.
+    } fallback {
+        x store 2.
+    }
+    output x.
+}

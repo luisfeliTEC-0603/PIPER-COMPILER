@@ -17,6 +17,7 @@ CODEGEN_SRC     = $(wildcard src/codegen/*.c)
 ASSEMBLER_SRC   = $(wildcard src/assembler/*.c)
 SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
 EMIT_SRC        = $(wildcard src/emit/*.c)
+IR_SRC          = $(wildcard src/ir/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -24,6 +25,7 @@ CODEGEN_OBJ     = $(patsubst src/codegen/%.c,build/codegen/%.o,$(CODEGEN_SRC))
 ASSEMBLER_OBJ   = $(patsubst src/assembler/%.c,build/assembler/%.o,$(ASSEMBLER_SRC))
 SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
 EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
+IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
@@ -45,7 +47,8 @@ OBJ = build/parser.o \
       $(CODEGEN_OBJ) \
       $(ASSEMBLER_OBJ) \
       $(SCHEDULER_LIB_OBJ) \
-      $(EMIT_OBJ)
+      $(EMIT_OBJ) \
+      $(IR_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate clean
@@ -89,7 +92,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
-              include/codegen.h include/ast_to_json.h include/diagnostic.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
@@ -99,6 +102,10 @@ build/main.o: src/main.c \
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
 # --- Reglas de patrón por etapa ---------------------------------------------
+build/ir/%.o: src/ir/%.c include/ir.h src/ir/ir_internal.h include/ast.h include/symbol_table.h
+	@mkdir -p build/ir
+	$(CC) $(CFLAGS) -c $< -o $@
+
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \
                          $(wildcard src/analysis/ll1/*.h) \
                          $(LL1_GENERATED_SYMBOLS) build/parser.h

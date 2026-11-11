@@ -7,8 +7,8 @@
  *
  * I1 implementa almacenamiento/liberación; I3–I5 traducen escalares, rutinas,
  * llamadas, retornos y control. I6 completa efectos y revisión estructural antes
- * de entregar el modelo. I7 añade arreglos e intrínsecas. Impresión e integración
- * con main siguen pendientes.
+ * de entregar el modelo. I7 añade arreglos e intrínsecas; I8 imprime el modelo
+ * e integra la exportación opcional en main.
  * Flujo: ir_generate(AST, símbolos) -> IrProgram -> ir_write/consumidores
  * -> ir_program_free. ir_generate debe validar antes de publicar su resultado.
  * La tabla semántica final se presta y debe sobrevivir a todos los consumidores.
@@ -172,7 +172,7 @@ typedef struct {
  * @param diagnostic Receptor opcional del estado y primer error localizado.
  * @return Estado explícito. Un fallo libera la construcción parcial y deja
  * *out=NULL; ni AST ni tabla se modifican o liberan. No imprime ni abre archivos.
- * @note La integración con main espera al módulo completo.
+ * @note main lo invoca únicamente cuando se solicita una salida IR.
  */
 IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
                      IrProgram **out, IrDiagnostic *diagnostic);
@@ -189,7 +189,7 @@ IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
 IrStatus ir_validate(const IrProgram *program, IrDiagnostic *diagnostic);
 
 /**
- * @brief Exportará el modelo con cabeceras tipadas, TAC sencillo y flags visibles.
+ * @brief Exporta el modelo con cabeceras tipadas, TAC sencillo y flags visibles.
  * @param output Stream prestado, abierto y escribible; no se cierra aquí.
  * @param program IR validada y tabla final aún viva, ambas consultadas sin cambios.
  * @return Estado de entrada/E/S. El llamador comprueba fclose y publica el archivo.

@@ -14,7 +14,7 @@ Resumen de comandos ejecutables para PIPER-COMPILER
 | 9 | `bin/pipoc sch programa.rwt -o salida.bundles` | Exporta los bundles calendarizados, con instrucciones y NOPs por slot. | Implementado |
 | 10 | `bin/pipoc mem programa.rwt -o salida.mem` | Exporta únicamente la imagen hexadecimal compatible con `$readmemh`. | Implementado |
 | 11 | `bin/pipoc ins programa.rwt` | Exporta `programa.ast.json` y `programa.symbols.txt`. | Implementado |
-| 12 | `bin/pipoc all programa.rwt` | Exporta `.bin`, `.asm`, `.bundles`, `.mem`, `.ast.json` y `.symbols.txt`; actualmente no incluye IR ni CFG. | Implementado |
+| 12 | `bin/pipoc all programa.rwt` | Exporta `.bin`, `.asm`, `.bundles`, `.mem`, `.ast.json` y `.symbols.txt`; añade IR solo al solicitar `--emit-ir`; CFG sigue pendiente. | Implementado |
 | 13 | `bin/pipoc programa.rwt -s` | Conserva el ASM en `programa.asm`, además del binario. | Implementado |
 | 14 | `bin/pipoc programa.rwt -v` | Muestra las fases de compilación en la salida de diagnóstico. | Implementado |
 | 15 | `bin/pipoc programa.rwt -t` | Imprime el AST legible, además de generar el binario. | Implementado |
@@ -34,8 +34,8 @@ Resumen de comandos ejecutables para PIPER-COMPILER
 | 29 | `bin/pipoc --bin-to-mem programa.bin -o salida.mem` | Convierte un ejecutable binario validado a imagen hexadecimal. | Implementado |
 | 30 | `bin/pipoc --disasm-bin programa.bin -o salida.mem` | Alias de `--bin-to-mem`; produce `.mem`, no ASM con mnemónicos. | Implementado |
 | 31 | `bin/porygon-schedule entrada.asm salida.bundles salida.mem` | Calendariza ASM y exporta bundles e imagen hexadecimal; el argumento `salida.mem` es opcional. | Implementado |
-| 32 | `bin/pipoc ir programa.rwt -o salida.ir` | Propuesto: genera únicamente IR de tres direcciones sin optimizar, ya dividida en bloques básicos. | Pendiente |
-| 33 | `bin/pipoc programa.rwt --emit-ir salida.ir` | Propuesto: exporta la IR con bloques antes de optimizar, además de la salida principal. | Pendiente |
+| 32 | `bin/pipoc ir programa.rwt -o salida.ir` | Genera únicamente IR tipada de tres direcciones y bloques básicos; sin `-o`, guarda `programa.ir` junto al fuente. | Implementado |
+| 33 | `bin/pipoc programa.rwt --emit-ir salida.ir` | Exporta IR sin optimizar con tipos, bloques y efectos, además de la salida principal; el backend actual sigue recibiendo AST y símbolos. | Implementado |
 | 34 | `bin/pipoc programa.rwt --emit-cfg salida.dot` | Propuesto: exporta el CFG anterior a optimizaciones, con bloques, aristas y ramas por rutina. | Pendiente |
 | 35 | `bin/pipoc programa.rwt -O0` | Convención opcional propuesta, no exigida por el enunciado: desactiva optimizaciones opcionales para obtener una referencia; conserva la asignación de registros, el spilling necesario y la calendarización correcta. | Pendiente |
 | 36 | `bin/pipoc programa.rwt -O1` | Convención opcional propuesta, no exigida por el enunciado: agrupa DCE, unrolling con heurística y reordenamiento seguro; esta agrupación aún no está definida en la CLI. | Pendiente |
