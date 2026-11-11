@@ -4,10 +4,31 @@
 #include "ir_internal.h"
 #include <string.h>
 
-/* La publicación pública espera a ir_validate (I6). No devolver como válida
- * una construcción parcial ni implementar aquí una validación provisional. */
+/* Construir, revisar estructura y transferir propiedad solo en éxito.
+ * No ejecuta frontend, abre archivos ni conecta esta etapa con main. */
 IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
-                     IrProgram **out, IrDiagnostic *diagnostic);
+                     IrProgram **out, IrDiagnostic *diagnostic)
+{
+    IrContext ctx;
+    if (out == NULL || *out != NULL) {
+        IrDiagnostic error = {.status = IR_INVALID_INPUT,
+            .routine = IR_NO_ID, .block = IR_NO_ID, .instruction = IR_NO_ID};
+        snprintf(error.message, sizeof(error.message), "La salida IR requiere un puntero inicialmente NULL.");
+        if (diagnostic) *diagnostic = error;
+        return error.status;
+    }
+    ir_context_init(&ctx, root, symbols);
+    if (ctx.error.status == IR_OK) ir_build_program(&ctx);
+    if (ctx.error.status == IR_OK) ir_validate(ctx.program, &ctx.error);
+    IrStatus status = ctx.error.status;
+    if (status == IR_OK) {
+        *out = ctx.program;
+        ctx.program = NULL; /* El llamador pasa a ser dueño del programa. */
+    }
+    if (diagnostic) *diagnostic = ctx.error;
+    ir_context_dispose(&ctx); /* En fallo también descarta la construcción parcial. */
+    return status;
+}
 
 /* Seleccionar una rutina nueva y crear su entrada. Temporales y bloques son
  * propios de cada rutina; no se mezclan con los de la rutina anterior. */

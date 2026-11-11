@@ -1,6 +1,6 @@
 # Ejemplo completo: fuente → análisis → IR → CFG
 
-El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. Validación, publicación y exportación siguen pendientes. No se aplican optimizaciones.
+El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. I6 ya completa efectos, revisión estructural y entrega del modelo mediante ir_generate; la exportación sigue pendiente. No se aplican optimizaciones.
 
 Los comentarios `comprueba rango del resultado B32, puede fallar` verifican que el resultado de esa operación quepa en B32 (−2147483648 a 2147483647). Desbordar ese rango es una posibilidad del tipo de dato, no un defecto del compilador; la comprobación conserva la política de error de Piper. En estos ejemplos los valores sí caben y no se espera ningún fallo. El tipo comprobado es el resultado de la operación, no necesariamente el de una variable que lo reciba después.
 
@@ -142,7 +142,7 @@ Los offsets son datos del compilador actual; IR no los usa como identidad ni res
 | 7 | Seleccionar B1; `ir_stmt(b store a + 3)` | Destino `S_b`; `ir_expr` crea `t2 = a` y `t3 = t2 + 3`. Emite `b = t3` y `jump B3`. |
 | 8 | Seleccionar B2; `ir_stmt(b store a - 1)` | Mismo destino `S_b`; crea `t4 = a` y `t5 = t4 - 1`. Emite `b = t5` y `jump B3`. |
 | 9 | Seleccionar B3; `ir_stmt(output b)` | Captura `b` en `t6:B32`; emite `return t6` y deja `ctx->current_block = IR_NO_ID`. |
-| 10 | `ir_validate(program, diagnostic)` | Comprueba tipos, definición de temporales, cuatro bloques y destinos existentes; cada bloque tiene transferencia final. |
+| 10 | `ir_validate(program, diagnostic)` | Comprueba IDs/definiciones de temporales y coherencia entre sus usos, cuatro bloques, destinos existentes y transferencias finales; no repite tipos ni firmas del semántico. |
 | 11 | Fin de `ir_generate` | Libera recursos del contexto y entrega propiedad del programa al llamador con `IR_OK`. |
 | 12 | `ir_write(output, program)` | Recorre ese modelo: escribe cabeceras de tipos, instrucciones y todos los flags activos. No vuelve al AST ni genera otro TAC. |
 

@@ -3,8 +3,8 @@
 
 /** @file ir_internal.h
  * Estado compartido del generador. I1 implementa su ciclo de vida y almacenamiento;
- * I3–I5 recorren escalares, rutinas, llamadas, retornos y control. Validación
- * completa y publicación siguen pendientes.
+ * I3–I5 recorren escalares, rutinas, llamadas, retornos y control. I6 completa
+ * efectos y revisa estructura antes de entregar el modelo al llamador.
  * Un primer error queda en error.status: las funciones siguientes no emiten más.
  * Así el resultado de una expresión no necesita otro parámetro de salida.
  * Mantener IR_OK con operando NONE para none; un fallo cambia error.status.
@@ -59,8 +59,8 @@ void ir_stmt(IrContext *ctx, const AstNode *statement);
  * Su almacenamiento es del compilador; no asigna direcciones de datos Piper. */
 IrId ir_new_block(IrContext *ctx);
 
-/* ir.c: única entrada de emisión, también para terminadores. I1 almacena los
- * flags recibidos; el cálculo de efectos se añadirá en I6. Cerrar un bloque
+/* ir.c: única entrada de emisión, también para terminadores. Conserva atributos
+ * recibidos y completa efectos del opcode/globales. Cerrar un bloque
  * deja current_block=IR_NO_ID. instruction se pasa por valor, pero
  * su lista dinámica se transfiere incluso al fallar: el llamador no la libera.
  * Si ya hubo error, no emite y descarta solo esa lista recibida. */

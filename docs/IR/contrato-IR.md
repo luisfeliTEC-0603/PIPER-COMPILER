@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3–I5 la traducción TAC escalar con rutinas, llamadas, retornos y control. Validación completa, publicación pública y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3–I5 la traducción TAC escalar con rutinas, llamadas, retornos y control. I6 completa efectos, revisión estructural y entrega pública del modelo; arreglos/intrínsecas desde AST y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -85,7 +85,7 @@ La instrucción tiene tres formas de almacenamiento: cuádruplo normal, destinos
 
 Los nombres C `IR_OP_*` identifican operaciones internamente: no se imprimen como sustitutos de `+`, `=`, etc. Los atributos se muestran en comentarios, por ejemplo `t = a + b  ; comprueba rango del resultado B32`. Efectos como lectura/escritura y posible error son metadatos, no nuevas instrucciones aritméticas. Cada opcode y cada bandera se definen por separado en el [glosario](glosario-IR.md).
 
-Reconocer lecturas/escrituras explícitas mediante opcode, `arg1`, `arg2`, `result` y argumentos de llamada. Guardar efectos como bits en `flags`: `IR_READ_MEMORY`, `IR_WRITE_MEMORY`, `IR_READ_CRYPTO`, `IR_WRITE_CRYPTO` e `IR_MAY_TRAP`. `IR_CHECKED` conserva la solicitud de comprobación. El emisor común calcula los efectos a partir de operación/atributos; no se expone una API separada de visitas para esta fase. Llamadas sin análisis interprocedimental se consideran conservadoramente lectoras/escritoras de memoria y potencialmente fallidas. Las operaciones sobre símbolos globales también tienen efecto de memoria. Las locales escalares se representan por símbolo; las escrituras por direcciones conservan su posible alias.
+Reconocer lecturas/escrituras explícitas mediante opcode, `arg1`, `arg2`, `result` y argumentos de llamada. Guardar efectos como bits en `flags`: `IR_READ_MEMORY`, `IR_WRITE_MEMORY`, `IR_READ_CRYPTO`, `IR_WRITE_CRYPTO` e `IR_MAY_TRAP`. `IR_CHECKED` conserva la solicitud de comprobación. El emisor común calcula los efectos a partir de operación/atributos; no se expone una API separada de visitas para esta fase. Llamadas sin análisis interprocedimental se consideran conservadoramente lectoras/escritoras de memoria y estado criptográfico, y potencialmente fallidas. Las operaciones sobre símbolos globales también tienen efecto de memoria. Las locales escalares se representan por símbolo; las escrituras por direcciones conservan su posible alias.
 
 Las comprobaciones y operaciones fallidas tienen salida de error implícita y no producen continuación normal cuando fallan. Esta fase no crea bloques de error ni elimina operaciones potencialmente fallidas. El backend futuro deberá reproducir el comportamiento de error actual, no sustituirlo por un retorno normal.
 
@@ -144,8 +144,8 @@ En el listado de los apuntes, el paso de la última rama a la continuación pued
 1. Construir bloques dentro de `ir_generate`; las etiquetas/destinos se resuelven antes de devolver el programa.
 2. Convención interna elegida: cada bloque pertenece a una sola rutina y su última instrucción es `IR_OP_JUMP`, `IR_OP_BRANCH` o `IR_OP_RETURN`. Se imprimen con la notación de la tabla anterior. No hay caída implícita ni otro campo que duplique el terminador.
 3. Un destino inicia bloque; después de una transferencia no se agrega otra instrucción al mismo bloque. Omitir sentencias sin continuación alcanzable durante el recorrido, sin aplicar DCE general.
-4. Validar operandos, tipos, IDs, firma/retorno de llamadas, definición única de temporales, referencias existentes y destinos dentro de la misma rutina.
-5. Verificar disponibilidad de temporales mediante el orden estructurado de emisión y su contexto de control: un valor creado solo en una rama no puede escapar a la unión; allí se consulta el símbolo reasignado. No exigir resultados de análisis de flujo futuros.
+4. Limitar `ir_validate` a estructura: IDs de bloques únicos, entrada/destinos existentes dentro de la misma rutina, temporales con IDs válidos y definición única/existente, tipo coherente entre definición y usos, y terminadores finales. Comprobar formas básicas como branch con operando bool y listas presentes para llamadas con argumentos. No repetir compatibilidad de tipos Piper, promociones, resolución de símbolos ni revisión completa de firmas/retornos.
+5. El generador conserva el contexto estructurado: un valor creado solo en una rama no debe escapar a la unión; allí se consulta el símbolo reasignado. La revisión reducida de I6 no agrega dominancia, CFG ni análisis de disponibilidad entre caminos; comprobar que existe una definición no demuestra que se ejecute antes de todo uso.
 6. No calcular variables vivas, registros físicos, posiciones de spill ni dependencias de calendarización.
 
 ## 7. Propiedad y exportación
@@ -200,7 +200,7 @@ Mantener las cuatro funciones públicas. El contexto privado agrupa entrada, pro
 
 `ir_build_program` recibe un contexto nuevo y construye funciones globales y, si hay sentencias globales, un arranque que las ejecuta antes de llamar a main. Cada rutina tiene entrada y contador de temporales propios. Las llamadas usan la firma final prestada, argumentos evaluados en orden y efectos conservadores de memoria/fallo; los retornos cierran el camino.
 
-El programa permanece dentro del contexto: `ir_generate` no publicará resultados hasta incorporar la validación de I6. Los casos none del modelo se comprueban con entradas internas preparadas porque el frontend actual no permite declarar rutinas none. No se amplía aquí el lenguaje fuente.
+Desde I6, `ir_generate` entrega el programa solo si `ir_validate` aprueba su estructura; en fallo libera la construcción parcial. Los casos none del modelo se comprueban con entradas internas preparadas porque el frontend actual no permite declarar rutinas none. No se amplía aquí el lenguaje fuente.
 
 ### Control de I5 disponible
 
@@ -208,4 +208,12 @@ El programa permanece dentro del contexto: `ir_generate` no publicará resultado
 
 En loop, evaluar fin antes de leer el control en cada prueba, igual que el backend actual. La inicialización y el avance conservan su almacenamiento sin comprobaciones de rango añadidas; el paso se mantiene como literal entero positivo y los operandos conservan sus tipos. Esto se distingue de ++/--, que sí solicitan comprobación. La salida se reserva antes del avance; el orden físico de bloques no determina el flujo.
 
-`ir_emit_value` se comparte desde ir.c entre expresiones y control para reservar IDs temporales y emitir sus definiciones. Las cuatro interfaces públicas se conservan. No se construye CFG ni se publica IR sin la futura validación de I6.
+`ir_emit_value` se comparte desde ir.c entre expresiones y control para reservar IDs temporales y emitir sus definiciones. Las cuatro interfaces públicas se conservan. No se construye CFG; I6 ya revisa la estructura antes de entregar IR.
+
+### Efectos, revisión y entrega de I6 disponibles
+
+`ir_emit` completa flags conservando los atributos solicitados. CHECKED implica MAY_TRAP; las sumas sin CHECKED del avance de loop no adquieren comprobación de rango. Las llamadas se consideran conservadoras también respecto al estado criptográfico. ADDR obtiene una dirección sin leer el contenido; LOAD/STORE y accesos a valores globales conservan sus efectos de memoria.
+
+`ir_validate` usa un índice de definiciones temporal por rutina, con dos pasadas independientes del orden físico de bloques. Ese índice se libera al finalizar, no se incorpora a IrProgram. Revisa únicamente el alcance estructural de la sección 6, sin volver a exigir compatibilidad de firmas, promociones o resolución de símbolos.
+
+`ir_generate` construye, revisa y entrega propiedad solo en éxito. Un fallo deja salida NULL y descarta recursos propios; un parámetro de salida ya ocupado se rechaza sin sobrescribir ni liberar el programa anterior. El diagnóstico es opcional, se copia por valor y conserva la primera posición de error. La integración con main y la exportación siguen pendientes.

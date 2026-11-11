@@ -1,6 +1,6 @@
 # Implementación del generador de IR
 
-Estado: I1–I5 implementados y comprobados de forma aislada; I6–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
+Estado: I1–I6 implementados y comprobados de forma aislada; I7–I9 pendientes. Contrato normativo: [contrato-IR.md](contrato-IR.md). Esta guía cubre AST validado → TAC tipado organizado en bloques básicos.
 
 ## 1. Alcance
 
@@ -26,13 +26,13 @@ Estado: I1–I5 implementados y comprobados de forma aislada; I6–I9 pendientes
 
 ## 3. Módulos y métodos
 
-La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos y control de I3–I5. `ir_build_program` organiza rutinas y arranque. La publicación pública, validación completa e impresión siguen declaradas, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Hay once auxiliares compartidos: los de recorrido/emisión, los tres de ciclo de vida de I1 y `ir_emit_value`, compartido por expresiones y control para definir temporales.
+La estructura mantiene seis archivos C y dos encabezados. `ir.c` implementa el almacenamiento de I1; `ir_expr.c` y `ir_stmt.c`, la traducción escalar, llamadas, retornos y control de I3–I5. `ir_build_program` organiza rutinas y arranque. `ir_generate` construye y revisa la estructura antes de entregar el programa. La impresión sigue declarada, sin conexión con `main`. Los campos de cantidad/capacidad indican qué contienen (`instruction_count`, `block_count`, `routine_count` y sus capacidades); el contexto selecciona `current_routine` y `current_block`. Las firmas mantienen cuatro funciones públicas. Hay once auxiliares compartidos: los de recorrido/emisión, los tres de ciclo de vida de I1 y `ir_emit_value`, compartido por expresiones y control para definir temporales.
 
 | Módulo | Prioridad | Métodos y responsabilidad |
 | --- | --- | --- |
 | `include/ir.h` | Alta | Modelo compacto y cuatro entradas públicas: `ir_generate`, `ir_validate`, `ir_write`, `ir_program_free`. |
 | `src/ir/ir_internal.h` | Alta | Contexto de generación y once auxiliares compartidos; sin mapas ni metadatos semánticos duplicados. |
-| `src/ir/ir.c` | Alta | `ir_context_init`, `ir_context_dispose`, `ir_new_routine`, `ir_new_block`, `ir_emit`, `ir_fail` y liberación implementados. Los flags se almacenan; se calcularán en I6. |
+| `src/ir/ir.c` | Alta | `ir_context_init`, `ir_context_dispose`, `ir_new_routine`, `ir_new_block`, `ir_emit`, `ir_fail` y liberación implementados. I6 completa efectos al emitir, conservando los atributos solicitados. |
 | `src/ir/ir_generate.c` | Alta | `ir_generate` e `ir_build_program`: registro/recorrido de rutinas y arranque, validación y publicación. |
 | `src/ir/ir_expr.c` | Alta | `ir_expr` e `ir_target`: valores/destinos, incluyendo llamadas, intrínsecas e índices. Helpers específicos serán `static`. |
 | `src/ir/ir_stmt.c` | Alta | `ir_stmt`: bloques léxicos, asignaciones, ramas, ciclos y retornos. Inicialización/copia de arreglos se resuelve aquí. |
@@ -50,7 +50,7 @@ Las expresiones devuelven `IrOperand` directamente; los otros auxiliares modific
 | I3 — completado | Alta | Traducir literales, lecturas, operadores escalares y asignaciones a operandos e instrucciones TAC; capturar cada valor antes de evaluar el siguiente operando. | `b store a + 3` produce lectura de `a`, suma y escritura de `b`, con tipos correctos y orden preservado. |
 | I4 — completado | Alta | Crear una rutina IR por función, conservar su firma, emitir `call` con argumentos ordenados y `return` para `output`; separar sentencias globales en arranque si existen. | Las instrucciones de I3 quedan dentro de su función y las llamadas/retornos son explícitos, sin registros ni prólogos PORYGON. |
 | I5 — completado | Alta | Construir bloques y saltos para condicionales/ciclos; apilar la salida de cada ciclo para `break` y cerrar cada camino una sola vez. | `when`, `alwhen`, `loop` y `break` siguen las restricciones y esquemas del [ejemplo de control](ejemplo-flujo-IR.md#10-estructuras-de-control-para-i5). |
-| I6 | Alta | Asignar flags por operación y validar tipos, temporales, firmas, destinos y transferencias finales. | Los errores y efectos actuales están representados; no se publica IR malformada ni se eliminan llamadas con resultado sin uso. |
+| I6 — completado | Alta | Completar flags por operación y comprobar estructura del IR: destinos, temporales, terminadores y coherencia básica de operandos. No repetir tipos ni firmas del semántico. | Efectos conservados y estructura revisada antes de publicar; sin un segundo análisis semántico. |
 | I7 | Media | Calcular direcciones y accesos por elemento para arreglos/matrices; emitir las cuatro intrínsecas con efectos de memoria/criptografía. | Índices evaluados una vez, límites conservados, parámetros por referencia y orden por filas. |
 | I8 | Alta | Implementar `ir_write` con cabeceras y TAC; preparar reglas de construcción y opciones de CLI cuando el módulo esté completo. | Exportación solo IR o adicional con rutas comprobadas, sin publicar archivo parcial ni cambiar el codegen actual. No conectar a `main` antes de completar el módulo. |
 | I9 | Alta | Ejecutar los tres casos IR-T1–IR-T3 y la construcción habitual al completar el módulo. | Coinciden las instrucciones/tipos/bloques esperados y se conservan los comandos existentes. |
@@ -89,7 +89,7 @@ Un **operando tipado** contiene la clase de valor, el valor/referencia y su tipo
 1. `ir_context_init(&ctx, root, symbols)` crea un programa vacío y reserva la pila de salidas; no ejecuta análisis ni publica IR.
 2. `ir_new_routine(&ctx, symbol)` reserva una rutina vacía, devuelve su índice y no la selecciona. Un símbolo NULL crea el único arranque sintético.
 3. Seleccionar `ctx.current_routine`; crear bloques con `ir_new_block` y seleccionar `ctx.current_block` antes de emitir.
-4. `ir_emit` almacena el descriptor y sus flags recibidos. Los saltos/condiciones/retornos cierran el camino; el cálculo de efectos y la validación completa siguen en I6.
+4. `ir_emit` almacena el descriptor y sus flags recibidos. Los saltos/condiciones/retornos cierran el camino; I6 ya completa los efectos y revisa la estructura.
 5. `ir_context_dispose(&ctx)` libera pila y programa propios. Para transferir un programa al llamador, extraer `ctx.program` y poner ese campo en NULL antes de descartar el contexto. El diagnóstico se conserva.
 
 Cada contexto se inicia una sola vez mientras tenga recursos; para reutilizarlo, descartarlo primero. Descartar uno ya inicializado o fallido más de una vez es seguro.
@@ -157,7 +157,7 @@ I3 prepara esa regla, que I4 mantiene al incorporar llamadas. No aplica propagac
 | `++` / `--` | Capturar identificador escalar, sumar/restar 1 con comprobación, escribir y devolver el temporal nuevo. |
 | Asignación | Resolver destino, evaluar origen y emitir `COPY`; una constante adopta el tipo del destino aprobado. Un temporal conserva su tipo previo. |
 | Bloque / declaración | Recorrer sentencias en orden; una declaración no emite inicialización. También se admiten expresiones como sentencias. |
-| Atributos | Aritmética solicita `IR_CHECKED` y `IR_MAY_TRAP`; copia entre tipos distintos también conserva comprobación del destino. I6 completará el cálculo común de efectos y la validación. |
+| Atributos | Aritmética solicita `IR_CHECKED` y `IR_MAY_TRAP`; copia entre tipos distintos también conserva comprobación del destino. I6 ya completa el cálculo común de efectos y la revisión estructural. |
 | Extensiones posteriores a I3 | I4 agrega llamadas ordinarias y retornos; I5, control estructurado. Índices e intrínsecas siguen pendientes; devuelven `IR_UNSUPPORTED`. |
 
 Los tres auxiliares privados de expresiones y el emisor compartido tienen una responsabilidad cada uno:
@@ -199,7 +199,7 @@ Cada rutina tiene sus temporales y bloque de entrada. La firma se consulta en el
 | Arranque | Solo si hay sentencias globales: crear rutina sintética, traducirlas en orden, emitir llamada a main y retorno sin valor. Declaraciones globales solas no requieren arranque. |
 | Recursión | Conservar llamadas al símbolo de la propia función; no expandir cuerpos ni volver a analizarlos. |
 | Fuera de alcance | Rutinas anidadas, argumentos de arreglo e intrínsecas se rechazan mientras no exista su soporte correspondiente. I5 ya incorpora control. |
-| Publicación | `ir_generate` sigue declarado hasta disponer de `ir_validate` en I6. Sin integración con main, opciones CLI ni archivo `.ir` todavía. |
+| Publicación | `ir_generate` ya construye, revisa estructura y entrega propiedad solo en éxito desde I6. Sin integración con main, opciones CLI ni archivo `.ir` todavía. |
 
 El modelo admite retorno none explícito o implícito al final de una rutina none. El parser y registro semántico actuales no admiten declarar esas rutinas desde el fuente; se comprobó este caso mediante AST/símbolos preparados internamente, sin modificar el frontend.
 
@@ -229,9 +229,37 @@ Las reglas, fuentes pequeñas y TAC esperado se describen en [estructuras de con
 
 La salida del ciclo se reserva antes del avance; sus etiquetas pueden aparecer antes en el listado sin que se ejecuten en ese orden. Cada bloque se cierra con su transferencia explícita. No crear avance cuando todos los caminos del cuerpo retornan o hacen break. Un ciclo todavía conserva su salida por condición falsa, aunque su cuerpo siempre termine.
 
-Comprobaciones aisladas con fuentes pequeñas e intérprete temporal del TAC: when con/sin fallback, ambas ramas con return, condiciones enteras, alwhen, loop con fin cambiante o llamada, break, seis ciclos anidados, destinos/terminadores y pasos no admitidos. Sin pruebas permanentes ni cambios al Makefile. Validación completa, publicación y exportación siguen pendientes de I6/I8.
+Comprobaciones aisladas con fuentes pequeñas e intérprete temporal del TAC: when con/sin fallback, ambas ramas con return, condiciones enteras, alwhen, loop con fin cambiante o llamada, break, seis ciclos anidados, destinos/terminadores y pasos no admitidos. Sin pruebas permanentes ni cambios al Makefile. I6 ya revisa estructura y entrega el modelo; la exportación sigue pendiente de I8.
 
 No agregar inicializaciones implícitas ni asignar almacenamiento a temporales. `piper_type_storage_size` determina el ancho de los elementos, no un tamaño fijo de cuatro bytes para todos los tipos.
+
+### I6. Alcance reducido: efectos y estructura — implementado
+
+Se reemplaza la validación amplia de tipos y firmas por una revisión pequeña del modelo generado. El AST y la tabla ya fueron aprobados: no volver a resolver nombres, calcular promociones ni comprobar compatibilidad de asignaciones, parámetros o retornos.
+
+| Comprobación / trabajo | Alcance concreto |
+| --- | --- |
+| Flags por operación | Completar los efectos de memoria/criptografía y conservar las comprobaciones de rango/fallo solicitadas. Son metadatos para optimizador y codegen, no otra validación del fuente. |
+| Destinos | IDs de bloques únicos dentro de la rutina; entrada y destinos de salto existentes en esa misma rutina. |
+| Temporales | IDs dentro del contador de su rutina, definición única y definición existente para cada uso; conservar el mismo tipo en definición y usos. No añadir análisis de dominancia, CFG ni liveness. |
+| Transferencias | Cada bloque contiene instrucciones y termina en jump, branch o return; no hay instrucciones posteriores a un terminador. `ir_emit` ya previene emisiones tras cerrar un bloque, pero no garantiza que todos los bloques creados hayan recibido un cierre. |
+| Coherencia básica | Revisar la forma de la instrucción: por ejemplo, branch recibe un valor bool y una llamada con argumentos tiene su lista. No recalcular el tipo que semántica asignó a una expresión. |
+| Fuera de esta validación | Compatibilidad de tipos Piper, promociones, resolución de símbolos y revisión completa de firmas de llamadas/retornos. Se reutilizan los resultados semánticos. |
+
+Estas comprobaciones buscan fallos de construcción del IR, cuyos bloques y temporales no existían durante semántica. No demuestran por sí solas que la traducción conserve todo el comportamiento del fuente. I6 implementa este alcance reducido, sin agregar otra etapa al flujo.
+
+| Implementación | Entrada → salida / regla |
+| --- | --- |
+| `instruction_flags` en ir.c | Opcode, atributos y operandos → flags completos. Preserva `IR_CHECKED`; este implica posible fallo, pero no se añade a sumas sin comprobación como el avance de loop. |
+| Globales | Comparar la referencia del símbolo con declaraciones globales: leer valor marca lectura de memoria; escribir marca escritura. Obtener dirección con ADDR no lee el valor. |
+| Memoria y criptografía | LOAD/STORE marcan lectura/escritura; límites y división/residuo/potencia conservan posible fallo. Intrínsecas marcan estado criptográfico; Feistel también memoria. Su generación desde AST sigue pendiente de I7. |
+| Llamadas | Sin análisis interprocedimental, conservar lectura/escritura de memoria y estado criptográfico, más posible fallo; una función llamada puede ejecutar otras llamadas o intrínsecas. |
+| `ir_validate` | Dos pasadas por rutina: registrar definiciones y después comprobar usos. Reserva un índice temporal de inspección, que libera antes de retornar; no agrega una tabla persistente al modelo. |
+| Diagnóstico | Retornar el primer error con rutina, bloque, instrucción y ubicación disponibles. No imprimir mensajes desde IR. |
+| `ir_generate` | Validar entrada de API, construir, llamar a `ir_validate` y transferir programa solo en éxito. Ante fallo, descartar construcción y dejar salida NULL. El parámetro de salida debe empezar en NULL; si ya contiene un programa, rechazar la llamada sin sobrescribirlo ni liberarlo. |
+
+Comprobación aislada: fuentes pequeñas con control/llamadas generadas mediante la API pública, ejecución del TAC en intérprete temporal, alteraciones deliberadas de destinos/IDs/terminadores/operandos y flags de globales/memoria/criptografía. También se verificó que la revisión no vuelve a exigir compatibilidad de firmas. Sin pruebas permanentes, cambios al Makefile ni integración con main. La exportación .ir sigue pendiente.
+
 
 ## 5. Reglas para generar expresiones y bloques
 

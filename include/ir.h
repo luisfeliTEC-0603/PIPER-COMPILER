@@ -6,7 +6,8 @@
  * @brief Modelo mínimo de TAC tipado y bloques básicos de Piper.
  *
  * I1 implementa almacenamiento/liberación; I3–I5 traducen escalares, rutinas,
- * llamadas, retornos y control. Validación, publicación e impresión pendientes.
+ * llamadas, retornos y control. I6 completa efectos y revisión estructural antes
+ * de entregar el modelo. Impresión e integración con main siguen pendientes.
  * Flujo: ir_generate(AST, símbolos) -> IrProgram -> ir_write/consumidores
  * -> ir_program_free. ir_generate debe validar antes de publicar su resultado.
  * La tabla semántica final se presta y debe sobrevivir a todos los consumidores.
@@ -162,23 +163,25 @@ typedef struct {
 } IrProgram;
 
 /**
- * @brief Construirá y validará todo el programa antes de entregarlo al llamador.
+ * @brief Construye y revisa la estructura antes de entregar propiedad al llamador.
  * @param root AST_PROGRAM aprobado, con referencias semánticas finales por uso.
  * @param symbols Tabla final prestada; debe vivir hasta liberar IR y consumidores.
  * @param out Puntero inicialmente NULL; recibe propiedad solo al retornar IR_OK.
  * @param diagnostic Receptor opcional del estado y primer error localizado.
  * @return Estado explícito. Un fallo libera la construcción parcial y deja
  * *out=NULL; ni AST ni tabla se modifican o liberan. No imprime ni abre archivos.
- * @note Solo declaración. La integración con main espera al módulo completo.
+ * @note La integración con main espera al módulo completo.
  */
 IrStatus ir_generate(const AstNode *root, const SymbolTable *symbols,
                      IrProgram **out, IrDiagnostic *diagnostic);
 
 /**
- * @brief Revisará la traducción, sin volver a analizar el lenguaje fuente.
+ * @brief Revisa estructura y coherencia básica del IR, sin repetir semántica.
  * @param program IR completa prestada: tipos, firmas, destinos y temporales.
  * @param diagnostic Receptor opcional del primer incumplimiento del contrato.
  * @return IR_OK si es consistente; error de entrada/modelo en otro caso.
+ * Comprueba destinos, temporales, terminadores y formas básicas de operandos.
+ * No recalcula tipos/promociones ni revisa firmas completas del fuente.
  * No modifica datos ni depende de CFG, registros o análisis de variables vivas.
  */
 IrStatus ir_validate(const IrProgram *program, IrDiagnostic *diagnostic);

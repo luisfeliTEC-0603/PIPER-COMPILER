@@ -1,6 +1,6 @@
 /** @file ir.c
  * @brief I1: memoria del modelo, IDs de bloques y almacenamiento de instrucciones.
- * No traduce AST, calcula efectos ni reubica variables de Piper.
+ * I6 completa efectos al emitir. No traduce AST ni reubica variables de Piper.
  */
 #include "ir_internal.h"
 
@@ -33,6 +33,49 @@ static void free_call_arguments(IrInstruction *instruction)
 {
     if (instruction->op == IR_OP_CALL || instruction->op == IR_OP_INTRINSIC)
         free(instruction->extra.call.arguments);
+}
+
+/* Identidad del símbolo global, sin repetir resolución de nombres ni semántica. */
+static bool is_global(const SymbolTable *table, IrOperand operand)
+{
+    if (operand.kind != IR_OPERAND_SYMBOL || table->global_scope == NULL) return false;
+    for (const Symbol *s = table->global_scope->symbols_head; s; s = s->next)
+        if (s == operand.value.symbol) return true;
+    return false;
+}
+
+/* Conservar atributos solicitados y añadir efectos implícitos. CHECKED no se
+ * deduce de toda suma: el avance de loop conserva su aritmética sin comprobación.
+ * Una llamada puede acceder también a criptografía mediante otra función. */
+static unsigned instruction_flags(const IrProgram *program, const IrInstruction *in)
+{
+    unsigned flags = in->flags;
+    if (flags & IR_CHECKED) flags |= IR_MAY_TRAP;
+    if (in->op != IR_OP_ADDR &&
+        (is_global(program->symbols, in->arg1) || is_global(program->symbols, in->arg2)))
+        flags |= IR_READ_MEMORY;
+    if (is_global(program->symbols, in->result)) flags |= IR_WRITE_MEMORY;
+    switch (in->op) {
+    case IR_OP_LOAD: flags |= IR_READ_MEMORY; break;
+    case IR_OP_STORE: flags |= IR_WRITE_MEMORY; break;
+    case IR_OP_CHECK_BOUNDS: flags |= IR_MAY_TRAP; break;
+    case IR_OP_DIV: case IR_OP_MOD: case IR_OP_POW: flags |= IR_MAY_TRAP; break;
+    case IR_OP_CALL:
+        flags |= IR_READ_MEMORY | IR_WRITE_MEMORY | IR_READ_CRYPTO | IR_WRITE_CRYPTO | IR_MAY_TRAP;
+        break;
+    case IR_OP_INTRINSIC:
+        flags |= IR_WRITE_CRYPTO;
+        if (in->extra.call.intrinsic != IR_INTRINSIC_REVOKE)
+            flags |= IR_READ_CRYPTO | IR_MAY_TRAP;
+        if (in->extra.call.intrinsic == IR_INTRINSIC_FEISTEL)
+            flags |= IR_READ_MEMORY | IR_WRITE_MEMORY;
+        break;
+    default: break;
+    }
+    if (in->op == IR_OP_CALL || in->op == IR_OP_INTRINSIC)
+        for (size_t i = 0; i < in->extra.call.argument_count; i++)
+            if (is_global(program->symbols, in->extra.call.arguments[i])) flags |= IR_READ_MEMORY;
+    return flags;
 }
 
 /** Crea programa y pila vacíos para un contexto nuevo. La tabla y el AST
@@ -153,7 +196,7 @@ IrId ir_new_block(IrContext *ctx)
 
 /** Único recorrido de emisión: comprobar contexto/bloque, reservar y guardar.
  * En error se libera solo la lista recibida; al registrar, pasa al programa.
- * Los flags se conservan hasta implementar su cálculo en I6. */
+ * I6 conserva atributos y completa efectos antes de almacenar. */
 void ir_emit(IrContext *ctx, IrInstruction instruction)
 {
     IrRoutine *routine;
@@ -201,6 +244,7 @@ void ir_emit(IrContext *ctx, IrInstruction instruction)
         free_call_arguments(&instruction);
         return;
     }
+    instruction.flags = instruction_flags(ctx->program, &instruction);
     block->instructions[block->instruction_count++] = instruction;
     if (instruction.op == IR_OP_JUMP || instruction.op == IR_OP_BRANCH ||
         instruction.op == IR_OP_RETURN)
@@ -209,7 +253,7 @@ void ir_emit(IrContext *ctx, IrInstruction instruction)
 
 /* Reserva un ID virtual y emite su definición. No reserva registros ni pila.
  * Consume argumentos de CALL incluso si falla y conserva los atributos
- * recibidos; I6 completará efectos y validación. */
+ * recibidos; ir_emit completa sus efectos. */
 IrOperand ir_emit_value(IrContext *ctx, IrInstruction instruction, IrType type)
 {
     if (ctx->error.status == IR_OK &&
