@@ -104,33 +104,6 @@ static IrOpcode operator_opcode(AstOperator op)
     return IR_OP_INVALID;
 }
 
-/* Reserva un ID virtual y emite su definición. No reserva registros ni pila.
- * Consume argumentos de CALL incluso si falla. Los atributos aritméticos se
- * solicitan aquí; I6 completará efectos y validación. */
-static IrOperand emit_value(IrContext *ctx, IrInstruction instruction, IrType type)
-{
-    if (ctx->error.status == IR_OK &&
-        (ctx->program == NULL || ctx->current_routine >= ctx->program->routine_count))
-        ir_fail(ctx, IR_INVALID_INPUT, instruction.location, "No hay rutina IR activa.");
-    if (ctx->error.status != IR_OK) {
-        ir_emit(ctx, instruction); /* Descarta también los argumentos de CALL. */
-        return (IrOperand){0};
-    }
-    IrRoutine *routine = &ctx->program->routines[ctx->current_routine];
-    if (routine->temp_count == IR_NO_ID) {
-        ir_fail(ctx, IR_OUT_OF_MEMORY, instruction.location, "Se agotaron los temporales IR.");
-        ir_emit(ctx, instruction);
-        return (IrOperand){0};
-    }
-    instruction.result = (IrOperand){
-        .kind = IR_OPERAND_TEMP, .type = type, .value.temp = routine->temp_count
-    };
-    ir_emit(ctx, instruction);
-    if (ctx->error.status != IR_OK) return (IrOperand){0};
-    routine->temp_count++;
-    return instruction.result;
-}
-
 /* Evaluar cada argumento una vez y conservar su valor antes del siguiente.
  * La firma es prestada; solo la lista de operandos pertenece a la llamada. */
 static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
@@ -182,7 +155,7 @@ static IrOperand call_expression(IrContext *ctx, const AstNode *expression)
         ir_emit(ctx, call); /* Sin temporal: NONE con IR_OK es una llamada válida. */
         return (IrOperand){0};
     }
-    return emit_value(ctx, call, (IrType){.piper = callee->declared_type});
+    return ir_emit_value(ctx, call, (IrType){.piper = callee->declared_type});
 }
 
 /** Resuelve el destino sin leerlo. Usa el enlace de I2, nunca busca por nombre.
@@ -242,7 +215,7 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
     case AST_IDENTIFIER_EXPRESSION:
         instruction.op = IR_OP_COPY;
         instruction.arg1 = ir_target(ctx, expression);
-        return emit_value(ctx, instruction, instruction.arg1.type);
+        return ir_emit_value(ctx, instruction, instruction.arg1.type);
     case AST_UNARY_EXPRESSION: {
         AstOperator op = expression->data.unary_expression.operator;
         const AstNode *operand = expression->data.unary_expression.operand;
@@ -264,7 +237,7 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
                 .type = type, .value.constant = 1};
         }
         if (op != AST_OP_LOGICAL_NOT) instruction.flags = IR_CHECKED | IR_MAY_TRAP;
-        IrOperand result = emit_value(ctx, instruction, type);
+        IrOperand result = ir_emit_value(ctx, instruction, type);
         if (update) {
             /* Primero comprobar el resultado, después escribir y devolverlo. */
             ir_emit(ctx, (IrInstruction){.op = IR_OP_COPY, .arg1 = result,
@@ -286,7 +259,7 @@ IrOperand ir_expr(IrContext *ctx, const AstNode *expression)
         instruction.arg2 = ir_expr(ctx, expression->data.binary_expression.right);
         if (instruction.op >= IR_OP_ADD && instruction.op <= IR_OP_POW)
             instruction.flags = IR_CHECKED | IR_MAY_TRAP;
-        return emit_value(ctx, instruction, type);
+        return ir_emit_value(ctx, instruction, type);
     default:
         ir_fail(ctx, IR_UNSUPPORTED, expression->location, "Expresión pendiente de una etapa posterior a I4.");
         return (IrOperand){0};

@@ -207,6 +207,33 @@ void ir_emit(IrContext *ctx, IrInstruction instruction)
         ctx->current_block = IR_NO_ID;
 }
 
+/* Reserva un ID virtual y emite su definición. No reserva registros ni pila.
+ * Consume argumentos de CALL incluso si falla y conserva los atributos
+ * recibidos; I6 completará efectos y validación. */
+IrOperand ir_emit_value(IrContext *ctx, IrInstruction instruction, IrType type)
+{
+    if (ctx->error.status == IR_OK &&
+        (ctx->program == NULL || ctx->current_routine >= ctx->program->routine_count))
+        ir_fail(ctx, IR_INVALID_INPUT, instruction.location, "No hay rutina IR activa.");
+    if (ctx->error.status != IR_OK) {
+        ir_emit(ctx, instruction); /* Descarta también los argumentos de CALL. */
+        return (IrOperand){0};
+    }
+    IrRoutine *routine = &ctx->program->routines[ctx->current_routine];
+    if (routine->temp_count == IR_NO_ID) {
+        ir_fail(ctx, IR_OUT_OF_MEMORY, instruction.location, "Se agotaron los temporales IR.");
+        ir_emit(ctx, instruction);
+        return (IrOperand){0};
+    }
+    instruction.result = (IrOperand){
+        .kind = IR_OPERAND_TEMP, .type = type, .value.temp = routine->temp_count
+    };
+    ir_emit(ctx, instruction);
+    if (ctx->error.status != IR_OK) return (IrOperand){0};
+    routine->temp_count++;
+    return instruction.result;
+}
+
 /** No sustituye errores anteriores. instruction es posición, no un ID temporal. */
 void ir_fail(IrContext *ctx, IrStatus status, SourceLocation location,
              const char *message)

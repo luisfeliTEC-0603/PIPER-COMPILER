@@ -3,7 +3,7 @@
 
 /** @file ir_internal.h
  * Estado compartido del generador. I1 implementa su ciclo de vida y almacenamiento;
- * I3/I4 recorren escalares, rutinas, llamadas y retornos. Control, validación
+ * I3–I5 recorren escalares, rutinas, llamadas, retornos y control. Validación
  * completa y publicación siguen pendientes.
  * Un primer error queda en error.status: las funciones siguientes no emiten más.
  * Así el resultado de una expresión no necesita otro parámetro de salida.
@@ -65,6 +65,10 @@ IrId ir_new_block(IrContext *ctx);
  * su lista dinámica se transfiere incluso al fallar: el llamador no la libera.
  * Si ya hubo error, no emite y descarta solo esa lista recibida. */
 void ir_emit(IrContext *ctx, IrInstruction instruction);
+
+/* ir.c: crea un temporal del tipo indicado y emite su definición. Compartido
+ * por expresiones y control; consume argumentos de CALL también al fallar. */
+IrOperand ir_emit_value(IrContext *ctx, IrInstruction instruction, IrType type);
 
 /* ir.c: conserva el primer fallo y su origen. No libera el programa parcial;
  * esa limpieza pertenece a ir_generate. No imprime ni consulta stdout/stderr. */

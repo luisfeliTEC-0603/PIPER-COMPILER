@@ -1,6 +1,6 @@
 # Ejemplo completo: fuente → análisis → IR → CFG
 
-El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I4 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas y retornos de forma interna. El control de este ejemplo requiere I5; validación, publicación y exportación siguen pendientes. No se aplican optimizaciones.
+El fuente de este documento se comprobó con el frontend actual: `--check` aprobó y `ins -t` produjo AST y símbolos. Las salidas `.ir` y `.dot` son **resultados esperados del contrato**, no archivos producidos por los módulos actuales. I1–I5 ya cubren almacenamiento, enlaces semánticos, TAC escalar, rutinas, llamadas, retornos y control de forma interna. Validación, publicación y exportación siguen pendientes. No se aplican optimizaciones.
 
 Los comentarios `comprueba rango del resultado B32, puede fallar` verifican que el resultado de esa operación quepa en B32 (−2147483648 a 2147483647). Desbordar ese rango es una posibilidad del tipo de dato, no un defecto del compilador; la comprobación conserva la política de error de Piper. En estos ejemplos los valores sí caben y no se espera ningún fallo. El tipo comprobado es el resultado de la operación, no necesariamente el de una variable que lo reciba después.
 
@@ -352,26 +352,26 @@ B0:
 B1:
     t0 = i
     t1 = t0 < 3
-    if t1 jump B2 else B4
+    if t1 jump B2 else B3
 B2:
     t2 = suma
     t3 = i
     t4 = t2 + t3 ; comprueba rango del resultado B32, puede fallar
     suma = t4
-    jump B3
+    jump B4
 B3:
+    t7 = suma
+    return t7
+B4:
     t5 = i
     t6 = t5 + 1
     i = t6
     jump B1
-B4:
-    t7 = suma
-    return t7
 ```
 
 El inicio solo se asigna en B0. Aquí el fin es el literal 3, por lo que su evaluación no emite instrucciones; si fuese una expresión, sus instrucciones irían dentro de B1 y se ejecutarían cada vuelta. El cuerpo usa i=0, 1 y 2; resultado esperado: 3.
 
-El avance B3 conserva el comportamiento actual del incremento del control de `loop`, sin agregar una nueva comprobación de rango. No se confunde con una expresión prefija `++i`, que tiene sus propias comprobaciones. No se realiza unrolling en esta etapa.
+La salida B3 se reserva antes del avance B4; este último solo se crea si el cuerpo continúa. El avance B4 conserva el comportamiento actual del incremento del control de `loop`, sin agregar una nueva comprobación de rango. No se confunde con una expresión prefija `++i`, que tiene sus propias comprobaciones. No se realiza unrolling en esta etapa.
 
 ### 10.4. `break`: salida del ciclo desde un `when`
 
@@ -415,4 +415,4 @@ Al entrar al ciclo se apila B3. El `when` no apila otra salida de ciclo: `break`
 
 En ciclos anidados, cada ciclo apila su propia salida. El `break` usa el último destino; al terminar de traducir ese ciclo, se retira su entrada y vuelve a quedar visible la salida del ciclo exterior.
 
-Estos ejemplos explican I5; no son nuevas pruebas automatizadas ni salidas producidas por la IR aún no implementada.
+Estos ejemplos describen el TAC de I5 comprobado de forma aislada; no añaden pruebas permanentes ni habilitan todavía archivos .ir. La salida CFG sigue pendiente de su módulo.

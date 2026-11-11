@@ -1,6 +1,6 @@
 # Contrato del generador de IR
 
-Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3/I4 la traducción TAC escalar con rutinas, llamadas y retornos. Control, validación completa, publicación pública y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
+Especificación para implementar; I1 implementa almacenamiento/liberación, I2 los enlaces semánticos del AST e I3–I5 la traducción TAC escalar con rutinas, llamadas, retornos y control. Validación completa, publicación pública y exportación siguen pendientes. Plan: [todoIR.md](todoIR.md), con tareas I1–I5 detalladas y sus entradas/salidas. Definiciones de términos, campos y operaciones: [glosario-IR.md](glosario-IR.md).
 
 ## 1. Entrada y precondiciones
 
@@ -201,3 +201,11 @@ Mantener las cuatro funciones públicas. El contexto privado agrupa entrada, pro
 `ir_build_program` recibe un contexto nuevo y construye funciones globales y, si hay sentencias globales, un arranque que las ejecuta antes de llamar a main. Cada rutina tiene entrada y contador de temporales propios. Las llamadas usan la firma final prestada, argumentos evaluados en orden y efectos conservadores de memoria/fallo; los retornos cierran el camino.
 
 El programa permanece dentro del contexto: `ir_generate` no publicará resultados hasta incorporar la validación de I6. Los casos none del modelo se comprueban con entradas internas preparadas porque el frontend actual no permite declarar rutinas none. No se amplía aquí el lenguaje fuente.
+
+### Control de I5 disponible
+
+`ir_stmt` construye bloques para when/fallback, alwhen y loop; break usa una pila de salidas de ciclos. Las condiciones enteras se convierten mediante comparación con cero. Los caminos cerrados no reciben instrucciones ni saltos adicionales. No se crea unión si ambas ramas terminan, ni avance de loop si su cuerpo no continúa.
+
+En loop, evaluar fin antes de leer el control en cada prueba, igual que el backend actual. La inicialización y el avance conservan su almacenamiento sin comprobaciones de rango añadidas; el paso se mantiene como literal entero positivo y los operandos conservan sus tipos. Esto se distingue de ++/--, que sí solicitan comprobación. La salida se reserva antes del avance; el orden físico de bloques no determina el flujo.
+
+`ir_emit_value` se comparte desde ir.c entre expresiones y control para reservar IDs temporales y emitir sus definiciones. Las cuatro interfaces públicas se conservan. No se construye CFG ni se publica IR sin la futura validación de I6.
