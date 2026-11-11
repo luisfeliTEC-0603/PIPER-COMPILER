@@ -216,7 +216,7 @@ Las reglas, fuentes pequeñas y TAC esperado se describen en [estructuras de con
 
 | Método / elemento | Regla concreta |
 | --- | --- |
-| `when_statement` | Evaluar condición una vez, crear destinos verdadero/falso y traducir ambas ramas. Sin fallback, el falso es la continuación. Crear unión solo si alguna rama continúa; usar el bloque final de cada rama, también cuando contiene control anidado. |
+| `when_statement` | Si la condición es el literal true, traducir directamente el cuerpo verdadero sin crear salida falsa. Para las demás condiciones, evaluar una vez y conservar ambas ramas. Sin fallback, el falso es la continuación. Crear unión solo si alguna rama continúa; usar el bloque final de cada rama, también con control anidado. |
 | `condition_value` | Usar bool directamente; para entero emitir temporal bool con `valor != 0`. No elegir ramas ni plegar condiciones constantes. |
 | `loop_statement` | Compartir entrada, condición, cuerpo y salida de alwhen/loop. Reevaluar condición o fin en el bloque de prueba de cada vuelta. |
 | `loop` | Usar el símbolo de I2; inicio una vez; paso literal positivo. Evaluar fin antes de leer el control, como hace el backend, por si fin lo modifica. Condición `control < fin`. |
