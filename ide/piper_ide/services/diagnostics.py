@@ -37,7 +37,6 @@ class DiagnosticResult:
     valid: bool
     diagnostics: tuple[Diagnostic, ...]
 
-
 def decode_report(stdout: str, snapshot: DiagnosticSnapshot) -> DiagnosticResult:
     """Valida el protocolo y traduce coordenadas UTF-8 a caracteres Unicode.
 
@@ -76,6 +75,9 @@ def decode_report(stdout: str, snapshot: DiagnosticSnapshot) -> DiagnosticResult
                 or entry.get("severity") != "error"
                 or not isinstance(entry.get("message"), str)):
             raise ValueError("Diagnóstico inválido en el reporte de Pipoc.")
+        code = entry.get("code", "generic")
+        if not isinstance(code, str) or not code:
+            raise ValueError("Código de diagnóstico inválido en el reporte de Pipoc.")
         start, end = position(entry.get("start")), position(entry.get("end"))
         if (start is None) != (end is None) or (start and end < start):
             raise ValueError("Rango inválido en el reporte de Pipoc.")
@@ -86,11 +88,11 @@ def decode_report(stdout: str, snapshot: DiagnosticSnapshot) -> DiagnosticResult
             phase=entry["phase"], document_id=snapshot.document_id,
             revision=snapshot.revision, source=snapshot.source,
             display_name=snapshot.display_name, has_location=start is not None,
+            code=code,
         ))
     if report["valid"] != (len(diagnostics) == 0):
         raise ValueError("Reporte inconsistente: validez y errores no coinciden.")
     return DiagnosticResult(snapshot, report["valid"], tuple(diagnostics))
-
 
 @dataclass
 class _Job:
