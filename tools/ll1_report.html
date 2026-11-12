@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tabla predictiva LL(1) de Piper</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #222; background: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; }
+    h1 { margin: 0 0 8px; font-size: 1.6rem; font-weight: 600; }
+    .source { margin: 0; color: #666; font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }
+    .stats { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 12px 0 24px; color: #666; font-size: .8rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 16px 0; }
+    label { display: grid; gap: 6px; font-size: .9rem; }
+    select, button { font: inherit; padding: 8px; border: 1px solid #ccc; border-radius: 3px; background: white; color: inherit; }
+    button { cursor: pointer; }
+    .matrix-scroll { max-height: 72vh; overflow: auto; border: 1px solid #ccc; background: white; }
+    .matrix-scroll:focus-visible { outline: 2px solid #666; outline-offset: 2px; }
+    table { border-collapse: separate; border-spacing: 0; }
+    .matrix { font-family: Georgia, 'Times New Roman', serif; font-size: 16px; }
+    .matrix th, .matrix td { padding: 10px 14px; border-bottom: 1px solid #eee; border-right: 1px solid #eee; }
+    .matrix thead th { position: sticky; top: 0; z-index: 2; background: #f7f7f7; border-bottom: 1px solid #aaa; white-space: nowrap; }
+    .matrix tbody th { position: sticky; left: 0; z-index: 1; background: #fafafa; text-align: left; white-space: nowrap; font-style: italic; border-right: 1px solid #aaa; }
+    .matrix thead th:first-child { left: 0; z-index: 3; }
+    .matrix td { min-width: 135px; max-width: 340px; line-height: 1.5; vertical-align: top; }
+    .matrix tbody tr:hover td { background: #f7f7f7; }
+    [hidden] { display: none !important; }
+    details { margin: 0; padding: 16px 0; border-bottom: 1px solid #ddd; }
+    summary { font-size: .9rem; font-weight: 500; cursor: pointer; }
+    .sets-scroll { overflow: auto; margin-top: 16px; }
+    .sets { width: 100%; font-size: .9rem; }
+    .sets th, .sets td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; line-height: 1.6; }
+    .sets thead { background: #f7f7f7; }
+    li { margin: 10px 0; line-height: 1.6; }
+    code { overflow-wrap: anywhere; }
+    @media (max-width: 600px) { body { padding: 16px; } select { max-width: 85vw; } }
+    @media print { body { padding: 0; } .controls { display: none; } .matrix-scroll { max-height: none; } }
+  </style>
+</head>
+<body>
+  <h1>Tabla predictiva LL(1) de Piper</h1>
+  <p class="source">Fuente: <code>@@SOURCE@@</code> · Símbolo inicial: <strong>@@START@@</strong></p>
+  <div class="stats">
+    <span>@@NONTERMINAL_COUNT@@ no terminales</span>
+    <span>@@TERMINAL_COUNT@@ terminales</span>
+    <span>@@PRODUCTION_COUNT@@ producciones</span>
+    <span>@@CELL_COUNT@@ celdas definidas</span>
+    <span>0 conflictos</span>
+  </div>
+  <div class="controls">
+    <label>No terminal <select id="nonterminal"><option value="">Todos</option>@@NONTERMINAL_OPTIONS@@</select></label>
+    <label>Terminal <select id="terminal"><option value="">Todos</option>@@TERMINAL_OPTIONS@@</select></label>
+    <button id="reset" type="button">Restablecer</button>
+  </div>
+  <div class="matrix-scroll" tabindex="0" role="region" aria-label="Tabla predictiva con desplazamiento">
+    <table class="matrix">
+      <thead><tr><th scope="col">No terminal</th>@@HEADERS@@</tr></thead>
+      <tbody>@@ROWS@@</tbody>
+    </table>
+  </div>
+  <details>
+    <summary>Nullable, FIRST y FOLLOW</summary>
+    <div class="sets-scroll"><table class="sets">
+      <thead><tr><th scope="col">No terminal</th><th scope="col">Nullable</th><th scope="col">FIRST</th><th scope="col">FOLLOW</th></tr></thead>
+      <tbody>@@SETS@@</tbody>
+    </table></div>
+  </details>
+  <details>
+    <summary>Producciones (@@PRODUCTION_COUNT@@)</summary>
+    <ol>@@PRODUCTIONS@@</ol>
+  </details>
+  <script>
+    const nonterminal = document.getElementById('nonterminal');
+    const terminal = document.getElementById('terminal');
+    const region = document.querySelector('.matrix-scroll');
+    function filterTable() {
+      document.querySelectorAll('.matrix tbody tr').forEach(row => {
+        row.hidden = Boolean(nonterminal.value && row.dataset.nonterminal !== nonterminal.value);
+      });
+      document.querySelectorAll('.matrix [data-terminal]').forEach(cell => {
+        cell.hidden = Boolean(terminal.value && cell.dataset.terminal !== terminal.value);
+      });
+      region.scrollTop = 0;
+      region.scrollLeft = 0;
+    }
+    nonterminal.addEventListener('change', filterTable);
+    terminal.addEventListener('change', filterTable);
+    document.getElementById('reset').addEventListener('click', () => {
+      nonterminal.value = '';
+      terminal.value = '';
+      filterTable();
+    });
+  </script>
+</body>
+</html>

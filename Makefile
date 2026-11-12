@@ -33,6 +33,7 @@ LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
 LL1_GENERATED_SYMBOLS = build/analysis/ll1/grammar_symbols.h
 LL1_GENERATED_DATA    = build/analysis/ll1/grammar_data.inc
+LL1_REPORT            = build/analysis/ll1/table.html
 
 SCHEDULER_CLI_SRC = src/scheduler/schedule_main.c
 SCHEDULER_LIB_SRC = $(filter-out $(SCHEDULER_CLI_SRC),$(SCHEDULER_SRC))
@@ -54,12 +55,17 @@ OBJ = build/parser.o \
       $(CFG_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate clean
+.PHONY: all generate ll1-table clean
 
 all: $(TARGET) bin/porygon-schedule
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
+
+ll1-table: $(LL1_REPORT)
+
+$(LL1_REPORT): $(LL1_GRAMMAR) $(LL1_GENERATOR) tools/ll1_report.html
+	$(PYTHON) $(LL1_GENERATOR) $(LL1_GRAMMAR) --kind html --output $@
 
 # La gramática legible es la fuente de verdad. FIRST, FOLLOW y la tabla se
 # calculan durante la construcción y quedan incorporados en el ejecutable.
