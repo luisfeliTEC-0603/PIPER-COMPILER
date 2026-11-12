@@ -1054,9 +1054,11 @@ expression_list:
  * Implementación mínima del manejador de errores requerido por Bison.
  * El lexer será responsable de mantener yylloc actualizado.
  */
-static void report_syntax_error_at(SourceLocation location, const char *message)
+static void report_syntax_error_at(SourceLocation location,
+                                   DiagnosticCode code,
+                                   const char *message)
 {
-    diagnostics_record(DIAGNOSTIC_SYNTAX, location, "%s", message);
+    diagnostics_record(DIAGNOSTIC_SYNTAX, code, location, "%s", message);
     fprintf(stderr, "%d:%d: error sintáctico: %s\n",
             location.first_line, location.first_column, message);
 }
@@ -1065,7 +1067,8 @@ void yyerror(AstNode **result, SymbolTable *symbols, const char *message)
 {
     (void)result;
     (void)symbols;
-    report_syntax_error_at(AST_LOCATION(yylloc), message);
+    report_syntax_error_at(AST_LOCATION(yylloc), DIAGNOSTIC_CODE_GENERIC,
+                           message);
 }
 
 /* Un token que inicia otra instrucción, cierra un bloque o termina el archivo
@@ -1107,37 +1110,106 @@ static int follows_missing_dot(yysymbol_kind_t found, int expected_count)
 static int yyreport_syntax_error(const yypcontext_t *context,
                                  AstNode **result, SymbolTable *symbols)
 {
-    /* Bison devuelve cero si el arreglo no alcanza para todos los esperados.
-     * Reservar sus terminales evita perder la explicación en expresiones. */
     yysymbol_kind_t expected[YYNTOKENS];
     int count = yypcontext_expected_tokens(context, expected, YYNTOKENS);
     char message[1024];
     size_t used;
     if (count < 0) return 2; /* Convención del callback de Bison para YYNOMEM. */
+
     yysymbol_kind_t found_token = yypcontext_token(context);
     SourceLocation previous = lexer_previous_token_location();
+
+    /* (1) Falta '.' al final de la instrucción anterior. */
     for (int index = 0; index < count; ++index) {
-        if (expected[index] == YYSYMBOL_TOK_DOT && previous.last_line > 0 &&
-            follows_missing_dot(found_token, count)) {
-            /* Un rango vacío representa inserción, sin culpar al token vecino.
-             * No se cambia yylloc ni se repara el programa automáticamente. */
-            SourceLocation insertion = source_location_make(
-                previous.last_line, previous.last_column,
-                previous.last_line, previous.last_column);
-            if (found_token == YYSYMBOL_YYEOF) {
-                (void)snprintf(message, sizeof(message),
-                               "Falta '.' al final de la instrucción.");
-            } else {
-                (void)snprintf(message, sizeof(message),
-                               "Falta '.' al final de la instrucción anterior, antes de '%s'.",
-                               yysymbol_name(found_token));
-            }
-            report_syntax_error_at(insertion, message);
+        if (expected[index] != YYSYMBOL_TOK_DOT) continue;
+        if (previous.last_line <= 0) continue;
+        if (!follows_missing_dot(found_token, count)) continue;
+
+        SourceLocation insertion = source_location_make(
+            previous.last_line, previous.last_column,
+            previous.last_line, previous.last_column);
+        if (found_token == YYSYMBOL_YYEOF) {
+            (void)snprintf(message, sizeof(message),
+                           "Falta '.' al final de la instrucción.");
+        } else {
+            (void)snprintf(message, sizeof(message),
+                           "Falta '.' al final de la instrucción anterior, antes de '%s'.",
+                           yysymbol_name(found_token));
+        }
+        report_syntax_error_at(insertion, DIAGNOSTIC_CODE_MISSING_DOT, message);
+        return 0;
+    }
+
+    /* (2) Falta '{' o '[' para abrir un bloque, lista o llamada.
+     * Sólo aplica cuando el token encontrado es un inicio plausible de
+     * declaración o instrucción, NO cuando es un delimitador o un operador
+     * de expresión. En esos casos el error es "expresión incompleta" o
+     * "token inesperado", no "apertura faltante". */
+    if (found_token != YYSYMBOL_YYEOF && previous.last_line > 0 &&
+        (found_token == YYSYMBOL_TOK_ROUTINE ||
+         found_token == YYSYMBOL_TOK_CREATE ||
+         found_token == YYSYMBOL_TOK_BRING ||
+         found_token == YYSYMBOL_TOK_WHEN ||
+         found_token == YYSYMBOL_TOK_ALWHEN ||
+         found_token == YYSYMBOL_TOK_LOOP ||
+         found_token == YYSYMBOL_TOK_OUTPUT ||
+         found_token == YYSYMBOL_TOK_BREAK ||
+         found_token == YYSYMBOL_TOK_FALLBACK ||
+         found_token == YYSYMBOL_TOK_IDENTIFIER)) {
+        int espera_lbrace = 0;
+        int espera_lbracket = 0;
+        for (int index = 0; index < count; ++index) {
+            if (expected[index] == YYSYMBOL_TOK_LBRACE)  espera_lbrace = 1;
+            if (expected[index] == YYSYMBOL_TOK_LBRACKET) espera_lbracket = 1;
+        }
+        SourceLocation insertion = source_location_make(
+            previous.last_line, previous.last_column,
+            previous.last_line, previous.last_column);
+        if (espera_lbrace) {
+            (void)snprintf(message, sizeof(message),
+                           "Se esperaba '{' antes de '%s'.",
+                           yysymbol_name(found_token));
+            report_syntax_error_at(insertion, DIAGNOSTIC_CODE_MISSING_OPEN_BRACE,
+                                   message);
+            return 0;
+        }
+        if (espera_lbracket) {
+            (void)snprintf(message, sizeof(message),
+                           "Se esperaba '[' antes de '%s'.",
+                           yysymbol_name(found_token));
+            report_syntax_error_at(insertion, DIAGNOSTIC_CODE_MISSING_OPEN_BRACKET,
+                                   message);
             return 0;
         }
     }
-    const char *found = yypcontext_token(context) == YYSYMBOL_YYEOF
-        ? "fin del archivo" : yysymbol_name(yypcontext_token(context));
+
+    /* (3) Cierre pendiente al alcanzar el fin del archivo.
+     * Se prioriza '}' sobre ']' porque un bloque sin cerrar contiene a los
+     * demás. No se emite ')' porque la gramática no usa paréntesis. */
+    if (found_token == YYSYMBOL_YYEOF) {
+        int espera_rbrace = 0;
+        int espera_rbracket = 0;
+        for (int index = 0; index < count; ++index) {
+            if (expected[index] == YYSYMBOL_TOK_RBRACE)   espera_rbrace = 1;
+            if (expected[index] == YYSYMBOL_TOK_RBRACKET) espera_rbracket = 1;
+        }
+        if (espera_rbrace) {
+            report_syntax_error_at(AST_LOCATION(yylloc),
+                                   DIAGNOSTIC_CODE_MISSING_CLOSE_BRACE,
+                                   "Se esperaba '}' y se alcanzó el fin del archivo.");
+            return 0;
+        }
+        if (espera_rbracket) {
+            report_syntax_error_at(AST_LOCATION(yylloc),
+                                   DIAGNOSTIC_CODE_MISSING_CLOSE_BRACKET,
+                                   "Se esperaba ']' y se alcanzó el fin del archivo.");
+            return 0;
+        }
+    }
+
+    /* (4) Mensaje genérico: token encontrado + lista de esperados. */
+    const char *found = found_token == YYSYMBOL_YYEOF
+        ? "fin del archivo" : yysymbol_name(found_token);
     (void)snprintf(message, sizeof(message), "Se encontró %s.", found);
     used = strlen(message);
     for (int index = 0; index < count && used < sizeof(message) - 1; ++index) {
