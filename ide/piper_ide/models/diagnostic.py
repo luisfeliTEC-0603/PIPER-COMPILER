@@ -27,6 +27,7 @@ class Diagnostic:
     source: Path | None = None
     display_name: str = ""
     has_location: bool = True
+    code: str = "generic"
 
     @property
     def location_label(self) -> str:

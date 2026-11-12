@@ -103,7 +103,7 @@ class OutputPanel(QTabWidget):
         for diagnostic in diagnostics:
             item = QListWidgetItem(
                 f"{diagnostic.display_name}  {diagnostic.location_label}  "
-                f"[{diagnostic.phase_label}] {diagnostic.message}"
+                f"[{diagnostic.phase_label}] {diagnostic.message} ({diagnostic.code})"
             )
             item.setData(Qt.ItemDataRole.UserRole, diagnostic)
             item.setToolTip(str(diagnostic.source) if diagnostic.source else diagnostic.display_name)

@@ -62,13 +62,15 @@ typedef struct {
 } Visitor;
 
 /* Acumula el diagnóstico y permite seguir revisando el resto del árbol. */
-static void error(Visitor *v, AstNode *n, const char *format, ...)
+static void error(Visitor *v, AstNode *n, DiagnosticCode code,
+                  const char *format, ...)
 {
     va_list args;
     v->errors++;
-    fprintf(stderr, "[Error Semántico] Línea %d: ", n ? n->location.first_line : 0);
+    fprintf(stderr, "[Error Semántico] Línea %d: ",
+            n ? n->location.first_line : 0);
     va_start(args, format);
-    diagnostics_recordv(DIAGNOSTIC_SEMANTIC,
+    diagnostics_recordv(DIAGNOSTIC_SEMANTIC, code,
                         n ? n->location : source_location_make(0, 0, 0, 0),
                         format, args);
     vfprintf(stderr, format, args);
@@ -191,7 +193,7 @@ static int open_scope(Visitor *v, AstNode *n, int block)
     Scope *before = v->table->current_scope;
     symbol_table_open_scope(v->table);
     if (before == v->table->current_scope) {
-        error(v, n, "No se pudo abrir el ámbito.");
+        error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo abrir el ámbito.");
         return 0;
     }
     n->semantic_scope = v->table->current_scope;
@@ -210,7 +212,9 @@ static int open_scope(Visitor *v, AstNode *n, int block)
 static Symbol *lookup(Visitor *v, AstNode *n, const char *name)
 {
     Symbol *s = symbol_table_lookup(v->table, name);
-    if (!s) error(v, n, "El identificador '%s' no ha sido declarado en este ámbito.", name);
+    if (!s)
+        error(v, n, DIAGNOSTIC_CODE_UNDECLARED_IDENTIFIER,
+              "El identificador '%s' no ha sido declarado en este ámbito.", name);
     else {
         Scope *owner = symbol_scope(v, s);
         /* Cada rutina tiene su propio r7. Sin un enlace al marco exterior,
@@ -223,7 +227,7 @@ static Symbol *lookup(Visitor *v, AstNode *n, const char *name)
                 if (scope == v->function->function_scope) break;
             }
             if (!same_frame) {
-                error(v, n, "'%s' pertenece al marco local de otra rutina; no se puede acceder desde '%s'.",
+                error(v, n, DIAGNOSTIC_CODE_GENERIC, "'%s' pertenece al marco local de otra rutina; no se puede acceder desde '%s'.",
                       name, v->function->name);
                 return NULL;
             }
@@ -272,7 +276,7 @@ static void mark_initialized(Visitor *v, AstNode *n, Symbol *symbol)
 {
     if (!symbol || is_initialized(v->initialized, symbol)) return;
     InitializedSymbol *item = malloc(sizeof(*item));
-    if (!item) { error(v, n, "No se pudo conservar el estado de inicialización."); return; }
+    if (!item) { error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo conservar el estado de inicialización."); return; }
     item->symbol = symbol;
     item->next = v->initialized;
     v->initialized = item;
@@ -286,7 +290,7 @@ static InitializedSymbol *copy_initialized(Visitor *v, AstNode *n,
         InitializedSymbol *item = malloc(sizeof(*item));
         if (!item) {
             free_initialized(copy);
-            error(v, n, "No se pudo conservar el estado de inicialización.");
+            error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo conservar el estado de inicialización.");
             return NULL;
         }
         item->symbol = values->symbol;
@@ -328,7 +332,7 @@ static KnownInteger *copy_known(Visitor *v, AstNode *n, KnownInteger *values)
         KnownInteger *next = malloc(sizeof(*next));
         if (!next) {
             free_known(copy);
-            error(v, n, "No se pudo conservar el estado de los índices.");
+            error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo conservar el estado de los índices.");
             return NULL;
         }
         *next = *item;
@@ -428,7 +432,7 @@ static void set_known(Visitor *v, AstNode *n, Symbol *symbol, const KnownValue *
     }
     if (!*item) {
         *item = calloc(1, sizeof(**item));
-        if (!*item) { error(v, n, "No se pudo conservar el valor del índice."); return; }
+        if (!*item) { error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo conservar el valor del índice."); return; }
         (*item)->symbol = symbol;
     }
     (*item)->value = *value;
@@ -528,11 +532,11 @@ static Symbol *declare(Visitor *v, AstNode *n)
     int errors_before = v->errors;
     int parameter = n->kind == AST_PARAMETER;
     const char *name = parameter ? n->data.parameter.name : n->data.variable_declaration.name;
-    if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
+    if (crypto_arity(name) >= 0) error(v, n, DIAGNOSTIC_CODE_RESERVED_INTRINSIC, "'%s' es una intrínseca reservada.", name);
     PiperType type = parameter ? n->data.parameter.type : n->data.variable_declaration.type;
     AstNodeList *dims = parameter ? n->data.parameter.dimensions : n->data.variable_declaration.dimensions;
     int sizes[2] = {1, 1};
-    if (dims->count > 2) error(v, n, "El arreglo '%s' admite una o dos dimensiones.", name);
+    if (dims->count > 2) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El arreglo '%s' admite una o dos dimensiones.", name);
     else if (dims->count) success(v, n, "'%s': cantidad de dimensiones válida (%zu).", name, dims->count);
     for (size_t i = 0; i < dims->count; i++) {
         AstNode *d = dims->items[i];
@@ -541,20 +545,20 @@ static Symbol *declare(Visitor *v, AstNode *n)
             piper_type_storage_size(type) == 0 ||
             d->data.integer_literal.value >
                 (unsigned long long)(SYMBOL_MEMORY_SIZE / piper_type_storage_size(type))) {
-            error(v, d, "La dimensión de '%s' debe ser un entero constante positivo válido.", name);
+            error(v, d, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "La dimensión de '%s' debe ser un entero constante positivo válido.", name);
         } else {
             if (i < 2) sizes[i] = (int)d->data.integer_literal.value;
             success(v, d, "Dimensión %zu de '%s' aprobada: entero constante positivo %llu.",
                     i + 1, name, d->data.integer_literal.value);
         }
     }
-    if (scalar(type) == TYPE_VOID) error(v, n, "'%s' no puede declararse con tipo none.", name);
+    if (scalar(type) == TYPE_VOID) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' no puede declararse con tipo none.", name);
     if (strlen(name) >= SYMBOL_NAME_MAX) {
-        error(v, n, "El identificador '%s' excede la longitud máxima.", name);
+        error(v, n, DIAGNOSTIC_CODE_GENERIC, "El identificador '%s' excede la longitud máxima.", name);
         return NULL;
     }
     if (symbol_table_lookup_current_scope(v->table, name)) {
-        error(v, n, "Declaración duplicada de '%s' en el mismo ámbito.", name);
+        error(v, n, DIAGNOSTIC_CODE_DUPLICATE_DECLARATION, "Declaración duplicada de '%s' en el mismo ámbito.", name);
         return NULL;
     }
     /* No reservar una forma provisional cuando las dimensiones son inválidas. */
@@ -562,7 +566,7 @@ static Symbol *declare(Visitor *v, AstNode *n)
     success(v, n, "Nombre '%s' aprobado: sin declaración duplicada en el ámbito actual.", name);
     Symbol *s = symbol_table_insert(v->table, name, parameter ? SYMBOL_PARAM : SYMBOL_VAR,
         dims->count ? TYPE_ARRAY : scalar(type), type, sizes[0], sizes[1], n->location.first_line);
-    if (!s) error(v, n, "No se pudo registrar '%s' o asignar su memoria.", name);
+    if (!s) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo registrar '%s' o asignar su memoria.", name);
     else {
         n->resolved_symbol = s;
         n->inferred_type = s->type;
@@ -576,7 +580,7 @@ static Symbol *declare(Visitor *v, AstNode *n)
         n->array_cols = sizes[1];
         if (dims->count) {
             ArrayDeclaration *a = malloc(sizeof(*a));
-            if (!a) error(v, n, "No se pudo conservar la declaración de '%s'.", name);
+            if (!a) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo conservar la declaración de '%s'.", name);
             else {
                 a->symbol = s;
                 a->node = n;
@@ -601,7 +605,7 @@ static void require(Visitor *v, AstNode *n, DataType type, const char *context)
     int errors_before = v->errors;
     DataType actual = visit(v, n);
     if (actual != type)
-        error(v, n, "%s requiere tipo %s.", context, type == TYPE_INT ? "entero" : "booleano");
+        error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "%s requiere tipo %s.", context, type == TYPE_INT ? "entero" : "booleano");
     else if (v->errors == errors_before)
         success(v, n, "%s: tipo %s aprobado (esperado %s).", context, type_name(actual), type_name(type));
 }
@@ -610,7 +614,7 @@ static void condition(Visitor *v, AstNode *n)
 {
     int errors_before = v->errors;
     DataType t = visit(v, n);
-    if (t != TYPE_BOOL && t != TYPE_INT) error(v, n, "La condición debe ser booleana o entera.");
+    if (t != TYPE_BOOL && t != TYPE_INT) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "La condición debe ser booleana o entera.");
     else if (v->errors == errors_before) success(v, n, "Condición de control aprobada: tipo %s.", type_name(t));
 }
 /* Solo identificadores y accesos indexados tienen forma de destino.
@@ -684,7 +688,7 @@ static long long peak_stack(Visitor *v, RoutineUsage *routine)
     long long known_peak = (long long)routine->symbol->total_stack_frame_size +
                            routine->symbol->call_reserve_size + child_peak;
     if (known_peak > SYMBOL_STACK_SIZE)
-        error(v, routine->declaration,
+        error(v, routine->declaration, DIAGNOSTIC_CODE_GENERIC,
               "La rutina '%s' puede ocupar %lld bytes de pila entre variables, llamadas y reserva; máximo %d.",
               routine->symbol->name, known_peak, SYMBOL_STACK_SIZE);
     routine->peak_bytes = dynamic_depth ? -1 : known_peak;
@@ -702,7 +706,7 @@ static void check_stack(Visitor *v)
         if (strcmp(routine->symbol->name, "main") == 0 &&
             routine->peak_bytes >= 0 &&
             routine->peak_bytes > SYMBOL_STACK_SIZE - SYMBOL_CALL_RECORD_SIZE) {
-            error(v, routine->declaration,
+            error(v, routine->declaration, DIAGNOSTIC_CODE_GENERIC,
                   "La ejecucion de main puede ocupar %lld bytes de pila incluido su registro de entrada; maximo %d.",
                   routine->peak_bytes + SYMBOL_CALL_RECORD_SIZE, SYMBOL_STACK_SIZE);
         }
@@ -746,7 +750,7 @@ static DataType visit(Visitor *v, AstNode *n)
     }
     v->pending_codegen_bytes += reserved;
     if (v->pending_codegen_bytes > SYMBOL_STACK_SIZE)
-        error(v, n, "La evaluación excede los %d bytes de pila.", SYMBOL_STACK_SIZE);
+        error(v, n, DIAGNOSTIC_CODE_GENERIC, "La evaluación excede los %d bytes de pila.", SYMBOL_STACK_SIZE);
     else {
         int *peak = v->function ? &v->function->call_reserve_size
                                 : &v->table->global_call_reserve_size;
@@ -779,33 +783,33 @@ static DataType visit(Visitor *v, AstNode *n)
             }
         }
         if (!entry)
-            error(v, n, "El programa debe declarar una rutina global 'main' sin parámetros.");
+            error(v, n, DIAGNOSTIC_CODE_MISSING_MAIN, "El programa debe declarar una rutina global 'main' sin parámetros.");
         else if (entry->data.routine_declaration.parameters &&
                  entry->data.routine_declaration.parameters->count != 0)
-            error(v, entry, "La rutina de entrada 'main' no puede recibir parámetros.");
+            error(v, entry, DIAGNOSTIC_CODE_MAIN_HAS_PARAMS, "La rutina de entrada 'main' no puede recibir parámetros.");
         else if (v->errors == errors_before)
             success(v, entry, "Entrada del programa aprobada: rutina global 'main' sin parámetros.");
         break;
     }
     /* Sin cargar módulos no se puede validar una firma importada. */
     case AST_IMPORT_DECLARATION:
-        error(v, n, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
+        error(v, n, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
         break;
     case AST_VARIABLE_DECLARATION: case AST_PARAMETER: declare(v, n); break;
     /* Registrar la función antes del cuerpo permite llamadas recursivas. */
     case AST_ROUTINE_DECLARATION: {
         const char *name = n->data.routine_declaration.name;
-        if (crypto_arity(name) >= 0) error(v, n, "'%s' es una intrínseca reservada.", name);
+        if (crypto_arity(name) >= 0) error(v, n, DIAGNOSTIC_CODE_RESERVED_INTRINSIC, "'%s' es una intrínseca reservada.", name);
         if (symbol_table_lookup_current_scope(v->table, name)) {
-            error(v, n, "Declaración duplicada de '%s' en el mismo ámbito.", name);
+            error(v, n, DIAGNOSTIC_CODE_DUPLICATE_DECLARATION, "Declaración duplicada de '%s' en el mismo ámbito.", name);
         }
         else success(v, n, "Nombre de función '%s' aprobado: sin duplicados en el ámbito actual.", name);
         int valid_name = strlen(name) < SYMBOL_NAME_MAX;
-        if (!valid_name) error(v, n, "El identificador '%s' excede la longitud máxima.", name);
+        if (!valid_name) error(v, n, DIAGNOSTIC_CODE_GENERIC, "El identificador '%s' excede la longitud máxima.", name);
         Symbol *f = !valid_name || symbol_table_lookup_current_scope(v->table, name) ? NULL :
             symbol_table_insert(v->table, name, SYMBOL_FUNC, scalar(n->data.routine_declaration.return_type),
                                 n->data.routine_declaration.return_type, 1, 1, n->location.first_line);
-        if (valid_name && !f && !symbol_table_lookup_current_scope(v->table, name)) error(v, n, "No se pudo registrar la función '%s'.", name);
+        if (valid_name && !f && !symbol_table_lookup_current_scope(v->table, name)) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo registrar la función '%s'.", name);
         n->resolved_symbol = f;
         if (f) success(v, n, "Función '%s' registrada en el ámbito %d, línea %d; retorno %s.",
                        name, v->table->current_scope->scope_id, f->line_number, type_name(f->return_type));
@@ -825,7 +829,7 @@ static DataType visit(Visitor *v, AstNode *n)
         v->current_routine = NULL;
         if (f) {
             RoutineUsage *usage = calloc(1, sizeof(*usage));
-            if (!usage) error(v, n, "No se pudo registrar el uso de pila de '%s'.", name);
+            if (!usage) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo registrar el uso de pila de '%s'.", name);
             else {
                 usage->symbol = f;
                 usage->declaration = n;
@@ -845,7 +849,7 @@ static DataType visit(Visitor *v, AstNode *n)
             f->function_scope = v->table->current_scope;
             f->param_count = (int)params->count;
             f->params = calloc(params->count ? params->count : 1, sizeof(*f->params));
-            if (!f->params) error(v, n, "No se pudo reservar la firma de '%s'.", name);
+            if (!f->params) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo reservar la firma de '%s'.", name);
         }
         /* Los parámetros son declaraciones locales; params conserva su orden
          * para comparar cada argumento con la posición correspondiente. */
@@ -863,7 +867,7 @@ static DataType visit(Visitor *v, AstNode *n)
         if (body->kind == AST_BLOCK) list(v, body->data.block.statements);
         else visit(v, body);
         if (!guarantees_output(body))
-            error(v, n, "La rutina '%s' puede terminar sin ejecutar output.", name);
+            error(v, n, DIAGNOSTIC_CODE_MISSING_OUTPUT, "La rutina '%s' puede terminar sin ejecutar output.", name);
         if (f) symbol_table_set_function_frame(v->table, f);
         if (v->errors == errors_before)
             success(v, n, "Análisis de la función '%s' completado sin errores.", name);
@@ -883,7 +887,7 @@ static DataType visit(Visitor *v, AstNode *n)
         if (open_scope(v, n, 1)) {
             list(v, n->data.block.statements);
             if (!v->function && v->table->current_scope->max_offset > 0)
-                error(v, n, "Un bloque global no puede reservar variables locales sin un marco de rutina.");
+                error(v, n, DIAGNOSTIC_CODE_BLOCK_SCOPE_WITHOUT_ROUTINE, "Un bloque global no puede reservar variables locales sin un marco de rutina.");
             if (v->errors == errors_before) success(v, n, "Bloque analizado sin errores.");
             forget_scope_initializations(v, v->table->current_scope);
             close_scope(v, n, 1);
@@ -892,14 +896,14 @@ static DataType visit(Visitor *v, AstNode *n)
     case AST_INTEGER_LITERAL:
         n->inferred_type = TYPE_INT;
         if (n->data.integer_literal.value > 4294967295ULL)
-            error(v, n, "El literal %llu no cabe en ningún tipo entero de Piper.",
+            error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "El literal %llu no cabe en ningún tipo entero de Piper.",
                   n->data.integer_literal.value);
         break;
     case AST_BOOLEAN_LITERAL: n->inferred_type = TYPE_BOOL; n->piper_type = PIPER_TYPE_BOOL; n->has_piper_type = true; break;
     case AST_NONE_LITERAL: n->piper_type = PIPER_TYPE_NONE; n->has_piper_type = true; break;
     case AST_IDENTIFIER_EXPRESSION: {
         Symbol *s = lookup(v, n, n->data.identifier.name);
-        if (s && s->symbol_class == SYMBOL_FUNC) error(v, n, "La función '%s' requiere una llamada.", s->name);
+        if (s && s->symbol_class == SYMBOL_FUNC) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "La función '%s' requiere una llamada.", s->name);
         else if (s) {
             n->resolved_symbol = s;
             decorate_symbol(v, n, s);
@@ -907,7 +911,7 @@ static DataType visit(Visitor *v, AstNode *n)
             if (n != v->assignment_target && s->symbol_class == SYMBOL_VAR &&
                 s->type != TYPE_ARRAY && owner && !owner->is_global &&
                 !is_initialized(v->initialized, s))
-                error(v, n, "La variable local '%s' se lee antes de recibir un valor.", s->name);
+                error(v, n, DIAGNOSTIC_CODE_UNINITIALIZED_LOCAL, "La variable local '%s' se lee antes de recibir un valor.", s->name);
         }
         break;
     }
@@ -915,11 +919,11 @@ static DataType visit(Visitor *v, AstNode *n)
     case AST_ARRAY_LITERAL: {
         AstNodeList *items = n->data.array_literal.elements;
         list(v, items);
-        if (!items->count) { error(v, n, "El arreglo literal no puede estar vacío."); break; }
+        if (!items->count) { error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El arreglo literal no puede estar vacío."); break; }
         AstNode *first = items->items[0];
         for (size_t i = 1; i < items->count; i++)
-            if (!compatible(first, items->items[i])) error(v, items->items[i], "El arreglo debe ser rectangular y tener elementos del mismo tipo.");
-        if (first->inferred_type == TYPE_VOID || first->array_rank > 1) error(v, n, "Tipo o dimensión inválida en arreglo literal.");
+            if (!compatible(first, items->items[i])) error(v, items->items[i], DIAGNOSTIC_CODE_TYPE_MISMATCH, "El arreglo debe ser rectangular y tener elementos del mismo tipo.");
+        if (first->inferred_type == TYPE_VOID || first->array_rank > 1) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "Tipo o dimensión inválida en arreglo literal.");
         n->inferred_type = TYPE_ARRAY;
         n->element_type = first->inferred_type == TYPE_ARRAY ? first->element_type : first->inferred_type;
         n->element_piper_type = first->inferred_type == TYPE_ARRAY ?
@@ -942,8 +946,8 @@ static DataType visit(Visitor *v, AstNode *n)
         AstNodeList *indices = n->data.index_expression.indices;
         for (size_t i = 0; i < indices->count; i++) require(v, indices->items[i], TYPE_INT, "El índice");
         const char *name = base->kind == AST_IDENTIFIER_EXPRESSION ? base->data.identifier.name : "expresión";
-        if (base->inferred_type != TYPE_ARRAY) error(v, n, "'%s' no es un arreglo o matriz.", name);
-        else if ((int)indices->count != base->array_rank) error(v, n, "'%s' requiere %d índices; recibió %zu.", name, base->array_rank, indices->count);
+        if (base->inferred_type != TYPE_ARRAY) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' no es un arreglo o matriz.", name);
+        else if ((int)indices->count != base->array_rank) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere %d índices; recibió %zu.", name, base->array_rank, indices->count);
         else {
             for (size_t i = 0; i < indices->count; i++) {
                 AstNode *index = indices->items[i];
@@ -951,7 +955,7 @@ static DataType visit(Visitor *v, AstNode *n)
                 KnownValue value;
                 if (dimension > 0 && known_integer(v, index, &value) &&
                     (value.negative || value.magnitude >= (unsigned long long)dimension))
-                    error(v, index, "El índice %zu de '%s' (%s%llu) está fuera de rango [0, %d].",
+                    error(v, index, DIAGNOSTIC_CODE_OUT_OF_RANGE_INDEX, "El índice %zu de '%s' (%s%llu) está fuera de rango [0, %d].",
                           i + 1, name, value.negative ? "-" : "", value.magnitude, dimension - 1);
             }
             n->inferred_type = base->element_type;
@@ -973,7 +977,7 @@ static DataType visit(Visitor *v, AstNode *n)
             AstNodeList *args = n->data.call_expression.arguments;
             int feistel = !strcmp(name, "crypto_feistel");
             if ((int)args->count != arity)
-                error(v, n, "'%s' requiere %d argumentos; recibió %zu.", name, arity, args->count);
+                error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere %d argumentos; recibió %zu.", name, arity, args->count);
             for (size_t i = 0; i < args->count; i++) {
                 AstNode *arg = args->items[i];
                 visit(v, arg);
@@ -981,12 +985,12 @@ static DataType visit(Visitor *v, AstNode *n)
                     if (arg->kind != AST_IDENTIFIER_EXPRESSION || arg->inferred_type != TYPE_ARRAY ||
                         arg->array_rank != 1 || arg->array_rows != 2 ||
                         !arg->has_element_piper_type || arg->element_piper_type != PIPER_TYPE_B32)
-                        error(v, arg, "'%s' requiere un arreglo modificable B32|2|.", name);
+                        error(v, arg, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere un arreglo modificable B32|2|.", name);
                 } else if (arg->inferred_type != TYPE_INT)
-                    error(v, arg, "El argumento %zu de '%s' debe ser entero.", i + 1, name);
+                    error(v, arg, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El argumento %zu de '%s' debe ser entero.", i + 1, name);
                 if (arity == 3 && i > 0 && (arg->kind != AST_INTEGER_LITERAL ||
                     arg->data.integer_literal.value > 3))
-                    error(v, arg, "El índice de '%s' debe ser un literal entero entre 0 y 3.", name);
+                    error(v, arg, DIAGNOSTIC_CODE_OUT_OF_RANGE_INDEX, "El índice de '%s' debe ser un literal entero entre 0 y 3.", name);
             }
             n->inferred_type = TYPE_VOID;
             n->piper_type = PIPER_TYPE_NONE;
@@ -998,12 +1002,12 @@ static DataType visit(Visitor *v, AstNode *n)
         if (!f || f->symbol_class != SYMBOL_FUNC) {
             /* Incluso sin una firma válida, analizar todos los argumentos. */
             list(v, args);
-            if (f) error(v, n, "'%s' no es una función.", f->name);
+            if (f) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' no es una función.", f->name);
             break;
         }
         n->resolved_symbol = f;
         success(v, n, "Destino de llamada '%s' aprobado: clase SYMBOL_FUNC, declarado en la línea %d.", f->name, f->line_number);
-        if ((int)args->count != f->param_count) error(v, n, "'%s' requiere %d argumentos; recibió %zu.", f->name, f->param_count, args->count);
+        if ((int)args->count != f->param_count) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere %d argumentos; recibió %zu.", f->name, f->param_count, args->count);
         else success(v, n, "Llamada a '%s': cantidad de argumentos aprobada (%zu).", f->name, args->count);
         for (size_t i = 0; i < args->count; i++) {
             int argument_errors = v->errors;
@@ -1012,7 +1016,7 @@ static DataType visit(Visitor *v, AstNode *n)
             if (i >= (size_t)f->param_count || !f->params || !f->params[i]) continue;
             decorate_symbol(v, &expected, f->params[i]);
             if (!assignable(v, &expected, args->items[i]))
-                error(v, args->items[i], "Tipo o rango incompatible para el argumento %zu de '%s' (esperado %s).",
+                error(v, args->items[i], DIAGNOSTIC_CODE_TYPE_MISMATCH, "Tipo o rango incompatible para el argumento %zu de '%s' (esperado %s).",
                       i + 1, f->name, piper_type_name(f->params[i]->declared_type));
             else if (v->errors == argument_errors)
                 success(v, args->items[i], "Argumento %zu de '%s' aprobado: compatible con el parámetro '%s' (tipo %s), declarado en la línea %d, ámbito %d.",
@@ -1024,7 +1028,7 @@ static DataType visit(Visitor *v, AstNode *n)
         n->has_piper_type = true;
         if (v->current_routine) {
             CallUsage *edge = malloc(sizeof(*edge));
-            if (!edge) error(v, n, "No se pudo registrar la llamada para calcular la pila.");
+            if (!edge) error(v, n, DIAGNOSTIC_CODE_GENERIC, "No se pudo registrar la llamada para calcular la pila.");
             else {
                 edge->caller = v->current_routine;
                 edge->callee = f;
@@ -1049,17 +1053,17 @@ static DataType visit(Visitor *v, AstNode *n)
         visit(v, b);
         KnownValue assigned_value;
         int assigned_known = known_integer(v, b, &assigned_value);
-        if (!writable(a)) error(v, a, "El destino de asignación no es modificable.");
+        if (!writable(a)) error(v, a, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El destino de asignación no es modificable.");
         else if (target_valid && a->inferred_type != TYPE_VOID) success(v, a, "Destino de asignación aprobado: identificador o elemento indexado modificable.");
         if (a->inferred_type == TYPE_VOID || b->inferred_type == TYPE_VOID || !assignable(v, a, b)) {
             if (a->inferred_type == TYPE_INT && assigned_known && !fits_type(a->piper_type, assigned_value))
-                error(v, n, "El valor %s%llu no cabe en %s.", assigned_value.negative ? "-" : "",
+                error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "El valor %s%llu no cabe en %s.", assigned_value.negative ? "-" : "",
                       assigned_value.magnitude, piper_type_name(a->piper_type));
             else if (a->inferred_type == TYPE_ARRAY && b->kind == AST_ARRAY_LITERAL)
-                error(v, n, "El arreglo literal tiene un tipo o valor incompatible con %s.",
+                error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El arreglo literal tiene un tipo o valor incompatible con %s.",
                       piper_type_name(a->element_piper_type));
             else
-                error(v, n, "Tipo o rango incompatible en asignación a '%s'.", a->kind == AST_IDENTIFIER_EXPRESSION ? a->data.identifier.name : "elemento indexado");
+                error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "Tipo o rango incompatible en asignación a '%s'.", a->kind == AST_IDENTIFIER_EXPRESSION ? a->data.identifier.name : "elemento indexado");
         }
         else if (v->errors == errors_before)
             success(v, n, "Asignación a '%s' aprobada: origen y destino compatibles, tipo %s.",
@@ -1083,14 +1087,14 @@ static DataType visit(Visitor *v, AstNode *n)
         AstNode *operand = n->data.unary_expression.operand;
         DataType type = op == AST_OP_LOGICAL_NOT ? TYPE_BOOL : TYPE_INT;
         require(v, operand, type, ast_operator_name(op));
-        if ((op == AST_OP_INCREMENT || op == AST_OP_DECREMENT) && !writable(operand)) error(v, n, "'%s' requiere un destino modificable.", ast_operator_name(op));
+        if ((op == AST_OP_INCREMENT || op == AST_OP_DECREMENT) && !writable(operand)) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere un destino modificable.", ast_operator_name(op));
         if ((op == AST_OP_INCREMENT || op == AST_OP_DECREMENT) &&
             operand->has_piper_type && integer_type(operand->piper_type)) {
             KnownValue old_value, new_value, one = {1, op == AST_OP_DECREMENT};
             if (known_integer(v, operand, &old_value) &&
                 (!add_values(old_value, one, &new_value) ||
                  !fits_type(operand->piper_type, new_value)))
-                error(v, n, "'%s' produce un valor fuera del rango de %s.",
+                error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "'%s' produce un valor fuera del rango de %s.",
                       ast_operator_name(op), piper_type_name(operand->piper_type));
         }
         if (op == AST_OP_INCREMENT || op == AST_OP_DECREMENT) clear_known(v);
@@ -1106,7 +1110,7 @@ static DataType visit(Visitor *v, AstNode *n)
         if (op == AST_OP_NEGATE) {
             KnownValue value;
             if (known_integer(v, n, &value) && !fits_any_integer(value))
-                error(v, n, "La negación produce un valor fuera de los enteros de Piper.");
+                error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "La negación produce un valor fuera de los enteros de Piper.");
         }
         if (v->errors == errors_before)
             success(v, n, "Operador unario '%s' aprobado; resultado %s%s.", ast_operator_name(op), type_name(type),
@@ -1120,7 +1124,7 @@ static DataType visit(Visitor *v, AstNode *n)
         AstNode *a = n->data.binary_expression.left, *b = n->data.binary_expression.right;
         if (op == AST_OP_EQUAL || op == AST_OP_NOT_EQUAL) {
             visit(v, a); visit(v, b);
-            if (!compatible(a, b) || (a->inferred_type != TYPE_BOOL && a->inferred_type != TYPE_INT)) error(v, n, "'%s' requiere operandos escalares compatibles.", ast_operator_name(op));
+            if (!compatible(a, b) || (a->inferred_type != TYPE_BOOL && a->inferred_type != TYPE_INT)) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "'%s' requiere operandos escalares compatibles.", ast_operator_name(op));
             n->inferred_type = TYPE_BOOL;
             n->piper_type = PIPER_TYPE_BOOL;
             n->has_piper_type = true;
@@ -1142,17 +1146,17 @@ static DataType visit(Visitor *v, AstNode *n)
             int operands_known = left_known && right_known;
             if ((op == AST_OP_DIVIDE || op == AST_OP_REMAINDER) &&
                 right_known && right_value.magnitude == 0)
-                error(v, n, "La división entre cero no está permitida.");
+                error(v, n, DIAGNOSTIC_CODE_DIVISION_BY_ZERO, "La división entre cero no está permitida.");
             else if (operands_known &&
                      (op == AST_OP_ADD || op == AST_OP_SUBTRACT ||
                       op == AST_OP_MULTIPLY ||
                       (op == AST_OP_POWER && !right_value.negative)) &&
                      !known_integer(v, n, &value))
-                error(v, n, "La expresión constante supera el rango de los enteros de Piper.");
+                error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "La expresión constante supera el rango de los enteros de Piper.");
             else if (known_integer(v, n, &value) &&
                      (n->has_piper_type ? !fits_type(n->piper_type, value) :
                                           !fits_any_integer(value)))
-                error(v, n, "La expresión produce un valor fuera del rango de %s.",
+                error(v, n, DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE, "La expresión produce un valor fuera del rango de %s.",
                       n->has_piper_type ? piper_type_name(n->piper_type) : "los enteros de Piper");
         }
         if (v->errors == errors_before)
@@ -1219,7 +1223,7 @@ static DataType visit(Visitor *v, AstNode *n)
     /* El control del loop debe estar declarado; sus límites y paso son enteros. */
     case AST_LOOP_STATEMENT: {
         Symbol *control = lookup(v, n, n->data.loop_statement.control_name);
-        if (control && (control->symbol_class == SYMBOL_FUNC || control->type != TYPE_INT)) error(v, n, "El control '%s' debe ser una variable entera.", control->name);
+        if (control && (control->symbol_class == SYMBOL_FUNC || control->type != TYPE_INT)) error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El control '%s' debe ser una variable entera.", control->name);
         else if (control) {
             n->resolved_symbol = control;
             success(v, n, "Control del loop '%s' aprobado: variable o parámetro entero.", control->name);
@@ -1240,24 +1244,24 @@ static DataType visit(Visitor *v, AstNode *n)
         break;
     }
     case AST_BREAK_STATEMENT:
-        if (!v->loops) error(v, n, "'break' solo es válido dentro de un ciclo.");
+        if (!v->loops) error(v, n, DIAGNOSTIC_CODE_BREAK_OUTSIDE_LOOP, "'break' solo es válido dentro de un ciclo.");
         else success(v, n, "'break' aprobado: dentro de un ciclo, profundidad %d.", v->loops);
         break;
     /* output se valida contra la función que contiene esta sentencia.
      * Aquí se verifica cada retorno, sin demostrar cobertura de caminos. */
     case AST_OUTPUT_STATEMENT: {
         DataType t = visit(v, n->data.output_statement.value);
-        if (!v->function) error(v, n, "'output' solo es válido dentro de una función.");
+        if (!v->function) error(v, n, DIAGNOSTIC_CODE_MISSING_OUTPUT, "'output' solo es válido dentro de una función.");
         else if (t != v->function->return_type || t == TYPE_ARRAY ||
                  (t == TYPE_VOID && n->data.output_statement.value && n->data.output_statement.value->kind != AST_NONE_LITERAL))
-            error(v, n, "Retorno incompatible en '%s'.", v->function->name);
+            error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "Retorno incompatible en '%s'.", v->function->name);
         else if (t == TYPE_INT) {
             AstNode expected = {0};
             expected.inferred_type = TYPE_INT;
             expected.piper_type = v->function->declared_type;
             expected.has_piper_type = true;
             if (!assignable(v, &expected, n->data.output_statement.value))
-                error(v, n, "El resultado de '%s' no cabe o no es compatible con %s.",
+                error(v, n, DIAGNOSTIC_CODE_TYPE_MISMATCH, "El resultado de '%s' no cabe o no es compatible con %s.",
                       v->function->name, piper_type_name(v->function->declared_type));
         }
         if (v->errors == errors_before)
@@ -1280,11 +1284,11 @@ int analyze_semantics_with_trace(AstNode *root, SymbolTable *symbol_table,
     Visitor v = {0};
     v.trace_enabled = trace_enabled;
     if (!root || !symbol_table) {
-        error(&v, root, "El AST y la tabla de símbolos son obligatorios.");
+        error(&v, root, DIAGNOSTIC_CODE_GENERIC, "El AST y la tabla de símbolos son obligatorios.");
         return 0;
     }
     v.table = symbol_table_create();
-    if (!v.table) { error(&v, root, "No se pudo crear la tabla semántica."); return 0; }
+    if (!v.table) { error(&v, root, DIAGNOSTIC_CODE_GENERIC, "No se pudo crear la tabla semántica."); return 0; }
     success(&v, root, "Inicio del análisis: tabla semántica creada en el ámbito global %d.", v.table->global_scope->scope_id);
     visit(&v, root);
     check_stack(&v);

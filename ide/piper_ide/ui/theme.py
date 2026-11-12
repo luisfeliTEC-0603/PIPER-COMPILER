@@ -165,4 +165,24 @@ def stylesheet(t: dict[str, str]) -> str:
     QSlider::sub-page:horizontal {{ background: {t['accent']}; }}
     QSlider::handle:horizontal {{ width: 14px; margin: -5px 0; background: {t['accent']}; border-radius: 7px; }}
     QToolTip {{ background: {t['raised']}; color: {t['text']}; border: 1px solid {t['border']}; padding: 6px; }}
+    QPushButton#resetAppearance {{ border: 1px solid {t['border']}; }}
+    QToolButton#fixBulb {{
+        background: {t['accent-soft']};
+        color: {t['accent-strong']};
+        border: 1px solid {t['border']};
+        border-radius: 3px;
+        padding: 1px 6px;
+        font-size: 11px;
+        font-weight: bold;
+        text-align: center;
+    }}
+    QToolButton#fixBulb:hover {{
+        background: {t['accent']};
+        color: {t['bg']};
+        border-color: {t['accent-strong']};
+    }}
+    QToolButton#fixBulb:pressed {{
+        background: {t['accent-strong']};
+        color: {t['bg']};
+    }}
     """

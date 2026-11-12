@@ -1,13 +1,16 @@
 from html import escape
 import re
 
-from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QPainter, QPen, QTextCharFormat, QTextCursor,
+    QAction, QColor, QFont, QIcon, QPainter, QPen, QTextCharFormat, QTextCursor,
     QTextDocument, QTextFormat,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QToolTip, QWidget, QMenu
+from PySide6.QtWidgets import (
+    QMenu, QPlainTextEdit, QTextEdit, QToolButton, QToolTip, QWidget,
+)
 
+from ..ui.icons import line_icon
 from ..ui.theme import monospace_font
 
 
@@ -50,6 +53,9 @@ class CodeEditor(QPlainTextEdit):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self._update_margin()
+        self._fix_buttons: list[QToolButton] = []
+        self._fix_button_data: list[tuple[QToolButton, object]] = []
+        self._fix_reposition_pending = False
 
     def set_code_font_size(self, size: int):
         """Cambia el tamaño en píxeles y recalcula tabulaciones de cuatro espacios.
@@ -68,6 +74,12 @@ class CodeEditor(QPlainTextEdit):
         self._highlight_current_line()
         self.line_numbers.update()
         self.viewport().update()
+        # Los iconos de los bombillos dependen del color del tema. Se recrean
+        # aquí sin tocar el documento ni los fixes guardados en _fix_button_data.
+        for button, _fixes in self._fix_button_data:
+            color = QColor(self._colors.get("accent-strong", self._colors["accent"]))
+            button.setIcon(line_icon("bulb", color.name()))
+        self._schedule_fix_reposition()
 
     def _margin_width(self):
         """Calcula el ancho en píxeles según la cantidad de dígitos de las líneas."""
@@ -92,11 +104,15 @@ class CodeEditor(QPlainTextEdit):
             self.line_numbers.update(0, rect.y(), self.line_numbers.width(), rect.height())
         if rect.contains(self.viewport().rect()):
             self._update_margin()
+        # El scroll mueve los bombillos con el texto; no se recrean, sólo se
+        # reposicionan. La solicitud se agrupa con un timer de 0 ms.
+        self._schedule_fix_reposition()
 
     def resizeEvent(self, event):
         """Reposiciona el margen después del cambio de tamaño manejado por Qt."""
         super().resizeEvent(event)
         self._position_numbers()
+        self._schedule_fix_reposition()
 
     def _highlight_current_line(self):
         """Dibuja el fondo de la línea activa y todas las decoraciones."""
@@ -138,6 +154,7 @@ class CodeEditor(QPlainTextEdit):
             selections.append(underline)
 
         self.setExtraSelections(selections)
+        self._schedule_fix_reposition()
 
     def setDocument(self, document):
         """Cambia de buffer y elimina decoraciones que pertenecían al anterior."""
@@ -145,6 +162,7 @@ class CodeEditor(QPlainTextEdit):
         self._diagnostic_ranges = []
         self._diagnostic_lines = set()
         self._quick_fixes = {}
+        self._clear_fix_buttons()
         QToolTip.hideText()
         super().setDocument(document)
         self._update_margin()
@@ -164,8 +182,12 @@ class CodeEditor(QPlainTextEdit):
         correcto ni desplazar la navegación al token anterior o siguiente.
 
         quick_fixes es un dict {id(diagnostic): [QuickFix, ...]}, opcional, que
-        asocia cada diagnóstico con sus correcciones rápidas disponibles.
+        asocia cada diagnóstico con sus correcciones rápidas disponibles. Para
+        cada diagnóstico con fixes se crea un QToolButton "fix" anclado al
+        fin del rango del diagnóstico; su clic aplica el fix (o abre un menú
+        si hay varios).
         """
+        self._clear_fix_buttons()
         current_clones = [
             item for item in self._diagnostic_ranges
             if len(item) > 2 and item[2]
@@ -187,9 +209,13 @@ class CodeEditor(QPlainTextEdit):
                 cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
             self._diagnostic_ranges.append((cursor, diagnostic, False))
             self._diagnostic_lines.add(diagnostic.line)
+            fixes = self._quick_fixes.get(id(diagnostic), [])
+            if fixes:
+                self._create_fix_button(cursor, fixes)
         self._highlight_current_line()
         self.line_numbers.update()
         self.viewport().update()
+        self._schedule_fix_reposition()
         QToolTip.hideText()
 
     def diagnostic_tooltip(self, position: int) -> str:
@@ -284,6 +310,114 @@ class CodeEditor(QPlainTextEdit):
         final_cursor = QTextCursor(self.document())
         final_cursor.setPosition(final_pos)
         self.setTextCursor(final_cursor)
+
+    # ------------------------------------------------------------------
+    # Bombillo de correcciones rápidas
+    # ------------------------------------------------------------------
+
+    def _clear_fix_buttons(self):
+        """Destruye los QToolButton de corrección y limpia sus datos."""
+        for button, _fixes in self._fix_button_data:
+            button.deleteLater()
+        self._fix_button_data = []
+        self._fix_buttons = []
+
+    def _create_fix_button(self, cursor: QTextCursor, fixes: list):
+        """Crea un QToolButton 'fix' anclado al final del rango del diagnóstico.
+
+        El botón es hijo del viewport para que se mueva con el scroll y el
+        zoom de la misma forma que el texto. Un solo fix se aplica con un
+        clic; varios fixes abren un QMenu con los títulos.
+        """
+        if not self._colors:
+            return
+        button = QToolButton(self.viewport())
+        button.setObjectName("fixBulb")
+        button.setText("fix")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        color = QColor(self._colors.get("accent-strong", self._colors["accent"]))
+        button.setIcon(line_icon("bulb", color.name()))
+        button.setIconSize(QSize(14, 14))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        if len(fixes) == 1:
+            title = f"Aplicar: {fixes[0].title}"
+        else:
+            title = f"{len(fixes)} correcciones disponibles"
+        button.setToolTip(title)
+        button.setAccessibleName("Aplicar corrección")
+        button.setAccessibleDescription(title)
+        button.setProperty("fixCount", len(fixes))
+        self._fix_button_data.append((button, list(fixes)))
+        self._fix_buttons.append(button)
+        if len(fixes) == 1:
+            button.clicked.connect(
+                lambda _=False, f=fixes[0]: self._apply_quick_fix(f)
+            )
+        else:
+            button.clicked.connect(
+                lambda _=False, b=button, fs=list(fixes):
+                    self._show_fix_menu_for(b, fs)
+            )
+        button.show()
+        button.adjustSize()
+
+    def _show_fix_menu_for(self, button: QToolButton, fixes: list):
+        """Abre un menú contextual con varias correcciones sobre el bombillo."""
+        menu = QMenu(self)
+        menu.setAccessibleName("Correcciones disponibles")
+        for fix in fixes:
+            action = QAction(fix.title, menu)
+            action.triggered.connect(
+                lambda _=False, f=fix: self._apply_quick_fix(f)
+            )
+            menu.addAction(action)
+        menu.exec(button.mapToGlobal(QPoint(0, button.height())))
+
+    def _reposition_fix_buttons(self):
+        """Coloca cada bombillo al final del rango del diagnóstico correspondiente.
+
+        Se llama cuando cambia el scroll, el tamaño del viewport o la
+        selección. Los botones cuyo rango quedó fuera del viewport se ocultan
+        en lugar de destruirse (se reconstruirán en la próxima revisión).
+        """
+        if not self._fix_buttons:
+            return
+        viewport_rect = self.viewport().rect()
+        for index, (button, _fixes) in enumerate(self._fix_button_data):
+            if index >= len(self._diagnostic_ranges):
+                button.hide()
+                continue
+            cursor, _diag, is_clone = self._diagnostic_ranges[index]
+            if is_clone:
+                button.hide()
+                continue
+            position = cursor.selectionEnd() if cursor.hasSelection() else cursor.position()
+            probe = QTextCursor(self.document())
+            probe.setPosition(position)
+            rect = self.cursorRect(probe)
+            if not viewport_rect.intersects(rect):
+                button.hide()
+                continue
+            size = button.sizeHint()
+            x = min(rect.left() + 4, viewport_rect.width() - size.width() - 2)
+            y = rect.top() + max(0, (rect.height() - size.height()) // 2)
+            x = max(0, x)
+            y = max(0, min(y, viewport_rect.height() - size.height()))
+            button.setGeometry(QRect(x, y, size.width(), size.height()))
+            button.show()
+            button.raise_()
+
+    def _schedule_fix_reposition(self):
+        """Agrupa varias solicitudes de reposición en una sola pasada."""
+        if self._fix_reposition_pending:
+            return
+        self._fix_reposition_pending = True
+        QTimer.singleShot(0, self._reposition_now)
+
+    def _reposition_now(self):
+        self._fix_reposition_pending = False
+        self._reposition_fix_buttons()
 
     def search_flags(self, case_sensitive=False, whole_words=False):
         """Construye las opciones nativas de búsqueda literal, sin expresiones regulares."""
@@ -533,10 +667,18 @@ class CodeEditor(QPlainTextEdit):
             for column in range(0, columns, 4):
                 x = int(origin + self.document().documentMargin() + column * space)
                 painter.drawLine(x, top, x, top + height)
-        # Los símbolos que faltan no tienen texto que colorear. Una marca fija
-        # de dos píxeles señala su posición exacta, incluso al final del archivo
-        # o antes de un comentario. Es una decoración: no inserta caracteres.
-        painter.setPen(QPen(QColor(self._colors["error"]), 2))
+
+        error_color = QColor(self._colors["error"])
+        painter.setPen(QPen(error_color))
+        marca_font = QFont(self.font())
+        marca_font.setBold(True)
+        base_size = self.font().pixelSize() if self.font().pixelSize() > 0 else 14
+        marca_font.setPixelSize(max(1, int(round(base_size * 1.2))))
+        painter.setFont(marca_font)
+        mark_metrics = painter.fontMetrics()
+        glyph_width = mark_metrics.horizontalAdvance("|")
+
+        OFFSET_X = 0
         for item in self._diagnostic_ranges:
             cursor = item[0]
             if len(item) > 2 and item[2]:
@@ -546,10 +688,10 @@ class CodeEditor(QPlainTextEdit):
             rect = self.cursorRect(cursor)
             if not rect.intersects(self.viewport().rect()):
                 continue
-            x, top, bottom = rect.left() + 1, rect.top() + 2, rect.bottom() - 2
-            painter.drawLine(x, top, x, bottom)
-            painter.drawLine(x - 2, top, x + 2, top)
-            painter.drawLine(x - 2, bottom, x + 2, bottom)
+            x = rect.left() - glyph_width / 2 + OFFSET_X
+            baseline = rect.top() + (rect.height() + mark_metrics.ascent() - mark_metrics.descent()) / 2
+            painter.drawText(int(x), int(baseline), "|")
+            painter.drawText(int(x) + 1, int(baseline), "|")
 
     def set_clone_highlights(self, groups):
         """Subraya en morado los fragmentos que pertenecen a clones.

@@ -20,6 +20,11 @@ _PATHS = {
     "refresh": '<path d="M20 11a8 8 0 0 0-14-5L3 9m0-6v6h6M4 13a8 8 0 0 0 14 5l3-3m0 6v-6h-6"/>',
     "settings": '<path d="M3 6h18M3 18h18"/><circle cx="9" cy="6" r="3"/><circle cx="15" cy="18" r="3"/>',
     "close": '<path d="m6 6 12 12M6 18 18 6"/>',
+    "bulb": (
+        '<path d="M9 18h6"/>'
+        '<path d="M10 22h4"/>'
+        '<path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2Z"/>'
+    ),
 }
 
 
