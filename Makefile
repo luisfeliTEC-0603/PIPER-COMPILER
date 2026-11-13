@@ -122,7 +122,7 @@ build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src
 	@mkdir -p build/cfg
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/regalloc/%.o: src/regalloc/%.c src/regalloc/regalloc_internal.h include/regalloc.h include/cfg.h include/ir.h
+build/regalloc/%.o: src/regalloc/%.c src/regalloc/regalloc_internal.h include/regalloc.h include/regalloc_machine.h include/cfg.h include/ir.h
 	@mkdir -p build/regalloc
 	$(CC) $(CFLAGS) -c $< -o $@
 

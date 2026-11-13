@@ -14,13 +14,14 @@
  */
 #include "cfg.h"
 
-/** Resultado del analisis. Los errores de IR/CFG se distinguen de
- * la falta de memoria para que el llamador sepa donde fallo el recorrido. */
+/** Resultado del analisis/bajada. UNSUPPORTED significa que una operacion
+ * valida aun no tiene traduccion; no equivale a IR/CFG invalido ni a OOM. */
 typedef enum {
     REGALLOC_OK = 0,
     REGALLOC_INVALID_INPUT,
     REGALLOC_INVALID_IR,
     REGALLOC_INVALID_CFG,
+    REGALLOC_UNSUPPORTED,
     REGALLOC_OUT_OF_MEMORY
 } RegallocStatus;
 
@@ -85,6 +86,21 @@ typedef struct {
     bool liveness_ready;
 } RegallocAnalysis;
 
+/** Grafo preliminar de interferencia entre temporales de IR de UNA rutina.
+ * neighbors contiene temp_count filas de word_count palabras; la fila t tiene
+ * un bit por vecino de t. degree cuenta los bits de esa fila. Es propiedad del
+ * llamador y no depende de la vida del analisis una vez construido.
+ *
+ * Este grafo sirve para estudiar el solapamiento del TAC. El grafo que se
+ * coloreara debera construirse despues de bajar a instrucciones de maquina:
+ * faltan registros implicitos, llamadas y temporales creados por el backend. */
+typedef struct {
+    size_t ir_routine;
+    size_t temp_count, word_count;
+    uint64_t *neighbors;
+    size_t *degree;
+} RegallocIrGraph;
+
 /** Prepara las identidades que usaran las siguientes fases.
  * @param ir Programa IR completo; se consulta sin modificarlo.
  * @param cfg Grafo construido sobre exactamente ir; se consulta sin modificarlo.
@@ -112,6 +128,20 @@ RegallocStatus regalloc_compute_liveness(RegallocAnalysis *analysis,
 /** Consulta segura de un ID virtual; false si set es NULL o el ID excede el
  * tamaño representado. Solo interpretar conjuntos tras liveness_ready=true. */
 bool regalloc_set_contains(const RegallocSet *set, IrId temp);
+
+/** Construye una aproximacion conservadora de interferencias desde R1.
+ * Requiere liveness_ready; routine es indice de IrProgram.routines y *out debe
+ * ser NULL. En exito el llamador libera el grafo con regalloc_ir_graph_free.
+ * Una arista une valores vivos al entrar a un bloque o un resultado definido
+ * con los valores que siguen vivos inmediatamente despues de la instruccion.
+ * No se crean aristas reflexivas ni se colorea aqui. */
+RegallocStatus regalloc_build_ir_graph(const RegallocAnalysis *analysis,
+                                      size_t routine, RegallocIrGraph **out,
+                                      RegallocDiagnostic *diagnostic);
+
+/** false si el grafo es NULL o los IDs estan fuera de rango. */
+bool regalloc_ir_graph_has_edge(const RegallocIrGraph *graph, IrId a, IrId b);
+void regalloc_ir_graph_free(RegallocIrGraph *graph);
 
 /** Libera los mapas propios y los conjuntos vivos, incluso si una reserva
  * anterior quedo a medias.
