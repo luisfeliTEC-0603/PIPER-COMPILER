@@ -9,12 +9,12 @@
  * El objeto permite localizar los bloques sin confundir un ID IR (por ejemplo,
  * B9) con la posicion de su nodo en el CFG (por ejemplo, nodes[1]).
  *
- * Esta etapa prepara la estructura. Todavia no calcula variables vivas,
- * selecciona registros fisicos ni inserta cargas/escrituras por spill.
+ * regalloc_compute_liveness añade los conjuntos vivos de temporales virtuales
+ * sobre estos bloques. No selecciona registros ni inserta accesos por spill.
  */
 #include "cfg.h"
 
-/** Resultado de preparar el analisis. Los errores de IR/CFG se distinguen de
+/** Resultado del analisis. Los errores de IR/CFG se distinguen de
  * la falta de memoria para que el llamador sepa donde fallo el recorrido. */
 typedef enum {
     REGALLOC_OK = 0,
@@ -33,31 +33,56 @@ typedef struct {
     char message[256];
 } RegallocDiagnostic;
 
+/** Conjunto de IDs de temporal. words es una vista dentro de la reserva de su
+ * RegallocRoutine; el llamador puede consultarla, pero no modificarla/liberarla.
+ * Si temp_count == 0, words es NULL y word_count vale cero. */
+typedef struct {
+    uint64_t *words;
+    size_t word_count;
+} RegallocSet;
+
+/** Valores vivos inmediatamente antes y despues de una instruccion IR. */
+typedef struct {
+    RegallocSet before, after;
+} RegallocInstructionLive;
+
 /** Correspondencia de un bloque: id identifica el bloque dentro de la IR y
  * cfg_node indexa el nodo que lo representa dentro de CfgRoutine.nodes.
  * No usar id como indice de arreglo: los IDs pueden ser dispersos o cambiar
- * de orden fisico sin perder su identidad. */
+ * de orden fisico sin perder su identidad. USE/DEF/IN/OUT se llenan al ejecutar
+ * regalloc_compute_liveness; instruction_start indexa la lista plana de la
+ * rutina y conserva el orden original de IrBlock.instructions. */
 typedef struct {
     IrId id;
     size_t cfg_node;
+    RegallocSet use, def, live_in, live_out;
+    size_t instruction_start, instruction_count;
 } RegallocBlock;
 
 /** Datos propios de una rutina. temp_count es la cantidad de IDs virtuales
- * emitidos en IR, no la cantidad de registros disponibles en PORYGON. */
+ * emitidos en IR, no la cantidad de registros disponibles en PORYGON.
+ * blocks, instructions y set_storage son reservas propias; los RegallocSet
+ * apuntan a segmentos disjuntos de set_storage. */
 typedef struct {
     size_t ir_routine;       /**< Indice en IrProgram.routines. */
     size_t temp_count;       /**< IDs de temporal validos: 0..temp_count-1. */
     RegallocBlock *blocks;  /**< Mismo orden fisico que IrRoutine.blocks. */
     size_t block_count;
+    RegallocInstructionLive *instructions;
+    size_t instruction_count;
+    size_t word_count;      /**< Palabras de 64 bits por conjunto. */
+    uint64_t *set_storage; /**< Reserva unica de bits, propia de esta rutina. */
 } RegallocRoutine;
 
 /** Posee routines y sus arreglos blocks. Los punteros ir/cfg son prestamos:
- * liberar primero este analisis, despues CFG, IR y tabla de simbolos. */
+ * liberar primero este analisis, despues CFG, IR y tabla de simbolos.
+ * liveness_ready solo es true si todas las rutinas se calcularon con exito. */
 typedef struct {
     const IrProgram *ir;
     const CfgProgram *cfg;
     RegallocRoutine *routines;
     size_t routine_count;
+    bool liveness_ready;
 } RegallocAnalysis;
 
 /** Prepara las identidades que usaran las siguientes fases.
@@ -74,7 +99,22 @@ RegallocStatus regalloc_prepare(const IrProgram *ir, const CfgProgram *cfg,
                                RegallocAnalysis **out,
                                RegallocDiagnostic *diagnostic);
 
-/** Libera los mapas propios, incluso si una reserva anterior quedo a medias.
+/** Calcula USE/DEF/IN/OUT por bloque y before/after por instruccion.
+ * @param analysis Salida de regalloc_prepare con IR/CFG aun vivos e intactos.
+ * @param diagnostic Receptor opcional del primer fallo.
+ * @return REGALLOC_OK al completar todas las rutinas. Ante fallo, descarta los
+ * conjuntos parciales y conserva los mapas preparados para poder reintentar.
+ * No invocar dos veces sobre un analisis ya completo.
+ */
+RegallocStatus regalloc_compute_liveness(RegallocAnalysis *analysis,
+                                        RegallocDiagnostic *diagnostic);
+
+/** Consulta segura de un ID virtual; false si set es NULL o el ID excede el
+ * tamaño representado. Solo interpretar conjuntos tras liveness_ready=true. */
+bool regalloc_set_contains(const RegallocSet *set, IrId temp);
+
+/** Libera los mapas propios y los conjuntos vivos, incluso si una reserva
+ * anterior quedo a medias.
  * Acepta NULL; no libera la IR, el CFG ni los simbolos prestados. */
 void regalloc_analysis_free(RegallocAnalysis *analysis);
 

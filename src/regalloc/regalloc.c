@@ -6,7 +6,7 @@
  *
  * Ninguna de estas operaciones cambia el programa Piper o emite ASM.
  */
-#include "regalloc.h"
+#include "regalloc_internal.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -26,12 +26,13 @@ static RegallocStatus report(RegallocDiagnostic *diagnostic,
     return status;
 }
 
-/** routine_count solo se establece despues de reservar routines. Cada bloque
- * aun no reservado permanece NULL gracias a calloc, de modo que esta misma
- * funcion limpia tambien los fallos ocurridos a mitad del bucle de rutinas. */
+/** Descarta primero la arena de liveness y luego los mapas R0. routine_count
+ * solo se establece despues de reservar routines. Cada bloque aun no reservado
+ * permanece NULL gracias a calloc, asi que tambien limpia fallos parciales. */
 void regalloc_analysis_free(RegallocAnalysis *analysis)
 {
     if (analysis == NULL) return;
+    regalloc_liveness_clear(analysis);
     for (size_t r = 0; r < analysis->routine_count; r++)
         free(analysis->routines[r].blocks);
     free(analysis->routines);
