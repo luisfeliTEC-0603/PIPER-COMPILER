@@ -36,3 +36,6 @@ y.output
 /ide/*.egg-info/
 __pycache__/
 *.py[cod]
+
+# Notas locales de asignacion de registros
+/docs/IR/diseno-regalloc.md

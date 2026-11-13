@@ -19,6 +19,7 @@ SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
 EMIT_SRC        = $(wildcard src/emit/*.c)
 IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
+REGALLOC_SRC    = $(wildcard src/regalloc/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -28,6 +29,7 @@ SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_S
 EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
+REGALLOC_OBJ    = $(patsubst src/regalloc/%.c,build/regalloc/%.o,$(REGALLOC_SRC))
 
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
@@ -52,7 +54,8 @@ OBJ = build/parser.o \
       $(SCHEDULER_LIB_OBJ) \
       $(EMIT_OBJ) \
       $(IR_OBJ) \
-      $(CFG_OBJ)
+      $(CFG_OBJ) \
+      $(REGALLOC_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate ll1-table clean
@@ -117,6 +120,10 @@ build/ir/%.o: src/ir/%.c include/ir.h src/ir/ir_internal.h src/ir/ir_format.h in
 
 build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src/ir/ir_format.h include/ast.h include/symbol_table.h
 	@mkdir -p build/cfg
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/regalloc/%.o: src/regalloc/%.c include/regalloc.h include/cfg.h include/ir.h
+	@mkdir -p build/regalloc
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \
