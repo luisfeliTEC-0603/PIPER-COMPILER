@@ -8,7 +8,9 @@
  * Los operandos constantes y simbolos que necesitan registro generan IDs
  * nuevos a partir de ir_temp_count. Un IMM grande se construye solo en su
  * destino y r0; los accesos locales leen r7 y el store global usa r5 reservado.
- * El control conserva los IDs de bloque.
+ * Las llamadas escalares preparan todos los argumentos antes de escribir
+ * registros fisicos; sus sitios de retorno reciben IDs globales. El control
+ * conserva los IDs de bloque.
  *
  * Esta fase no emite ASM. Rechaza opcodes y efectos cuya expansion fisica aun
  * no esta modelada; publicar un resultado incompleto seria peligroso.
@@ -26,6 +28,8 @@ typedef struct {
     size_t routine_index;
     IrId block_id;
     const SymbolTable *symbols;
+    size_t *call_site_count;
+    int call_reserve_size;
     RegallocDiagnostic *diagnostic;
 } LowerContext;
 
@@ -55,9 +59,10 @@ void regalloc_machine_program_free(RegallocMachineProgram *program)
     free(program);
 }
 
-/** La capacidad es cuatro veces las instrucciones IR del bloque: COPY ocupa
- * como maximo 2, NE 4, BRANCH 2 y RETURN 3. Se comprueba antes de reservar.
- * No se deja una instruccion a medias si la capacidad se agota. */
+/** La capacidad base es cuatro veces las instrucciones IR del bloque: COPY
+ * ocupa como maximo 2, NE 4, BRANCH 2 y RETURN 3. Por cada CALL se suman
+ * dos posiciones por argumento para materializacion y CALL_ARG. Se comprueba
+ * antes de reservar; no se deja una instruccion a medias si se agota. */
 static RegallocStatus emit(LowerContext *ctx, RegallocMachineInstruction in)
 {
     if (ctx->block->instruction_count >= ctx->capacity)
@@ -273,6 +278,87 @@ static RegallocStatus lower_not(LowerContext *ctx,
     });
 }
 
+/* La IR ya evaluo los argumentos de izquierda a derecha. Materializarlos
+ * antes de CALL_SAVE evita crear definiciones entre TO_ARG y CALL: los
+ * registros fisicos con argumentos quedan intactos hasta el salto. CALL_SAVE
+ * conserva los colores del llamador; CALL los restaura y publica def al final.
+ * Los valores que cruzan un TO_ARG reciben su restriccion en el grafo. */
+static RegallocStatus lower_call(LowerContext *ctx,
+                                 const IrInstruction *source)
+{
+    const Symbol *callee = source->extra.call.callee;
+    size_t count = source->extra.call.argument_count;
+    if (callee == NULL || callee->symbol_class != SYMBOL_FUNC ||
+        count > REGALLOC_MAX_CALL_ARGS ||
+        (count != 0 && source->extra.call.arguments == NULL) ||
+        (source->result.kind != IR_OPERAND_NONE &&
+         source->result.kind != IR_OPERAND_TEMP))
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "CALL requiere firma y resultado escalar admitidos.");
+    if (*ctx->call_site_count >= 32767)
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "Demasiados puntos de retorno para el despachador.");
+    size_t record_bytes = SYMBOL_CALL_RECORD_SIZE +
+        (count > REGALLOC_REGISTER_ARGS
+             ? (count - REGALLOC_REGISTER_ARGS) * SYMBOL_WORD_SIZE : 0);
+    if (ctx->call_reserve_size < 0 ||
+        record_bytes > (size_t)ctx->call_reserve_size)
+        return machine_report(ctx->diagnostic, REGALLOC_INVALID_INPUT,
+                              ctx->routine_index, ctx->block_id,
+                              "La reserva de llamada no cubre su registro y argumentos.");
+
+    IrId args[REGALLOC_MAX_CALL_ARGS];
+    for (size_t i = 0; i < count; i++) {
+        if (!scalar(source->extra.call.arguments[i]))
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "La llamada virtual aun no admite argumentos de arreglo.");
+        RegallocStatus status = materialize(ctx, source->extra.call.arguments[i],
+                                            IR_NO_ID, &args[i], source->location);
+        if (status != REGALLOC_OK) return status;
+    }
+
+    size_t site = ++*ctx->call_site_count;
+    RegallocStatus status = emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_CALL_SAVE, .def = IR_NO_ID, .use1 = IR_NO_ID,
+        .call_site_id = site, .call_arg_count = count,
+        .fixed_reads = REGALLOC_CANDIDATE_MASK |
+                                             REGALLOC_PHYS_R7,
+        .flags = IR_WRITE_MEMORY, .location = source->location
+    });
+    if (status != REGALLOC_OK) return status;
+    for (size_t i = 0; i < count; i++) {
+        bool register_arg = i < REGALLOC_REGISTER_ARGS;
+        status = emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CALL_ARG, .def = IR_NO_ID, .use1 = args[i],
+            .call_site_id = site, .call_arg_index = i,
+            .call_arg_count = count,
+            .fixed_reads = register_arg ? 0 : REGALLOC_PHYS_R7,
+            .fixed_writes = register_arg ? REGALLOC_PHYS_R1 << i : 0,
+            .flags = register_arg ? 0 : IR_WRITE_MEMORY,
+            .type = source->extra.call.arguments[i].type,
+            .location = source->location
+        });
+        if (status != REGALLOC_OK) return status;
+    }
+    unsigned arg_reads = REGALLOC_PHYS_R7;
+    for (size_t i = 0; i < count && i < REGALLOC_REGISTER_ARGS; i++)
+        arg_reads |= REGALLOC_PHYS_R1 << i;
+    bool has_result = source->result.kind == IR_OPERAND_TEMP;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = has_result ? REGALLOC_M_CALL_RESULT : REGALLOC_M_CALL_VOID,
+        .def = has_result ? source->result.value.temp : IR_NO_ID,
+        .use1 = IR_NO_ID, .symbol = callee,
+        .call_site_id = site, .call_arg_count = count,
+        .fixed_reads = arg_reads, .fixed_writes = REGALLOC_PHYS_R5 |
+                                                   REGALLOC_PHYS_R6,
+        .flags = source->flags | IR_READ_MEMORY | IR_WRITE_MEMORY | IR_MAY_TRAP,
+        .type = source->result.type, .location = source->location
+    });
+}
+
 static RegallocStatus lower_control(LowerContext *ctx,
                                     const IrInstruction *source)
 {
@@ -330,6 +416,7 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_EQ:  return lower_binary(ctx, source, REGALLOC_M_EQ);
     case IR_OP_NE:  return lower_not_equal(ctx, source);
     case IR_OP_NOT: return lower_not(ctx, source);
+    case IR_OP_CALL: return lower_call(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:
         return lower_control(ctx, source);
     default:
@@ -397,6 +484,17 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
                                       input->id, "Demasiadas instrucciones de maquina.");
             }
             size_t capacity = input->instruction_count * 4;
+            for (size_t i = 0; i < input->instruction_count; i++)
+                if (input->instructions[i].op == IR_OP_CALL) {
+                    size_t n = input->instructions[i].extra.call.argument_count;
+                    if (n > (SIZE_MAX / sizeof(*output->instructions) - capacity) / 2) {
+                        regalloc_machine_program_free(program);
+                        return machine_report(diagnostic, REGALLOC_OUT_OF_MEMORY,
+                                              r, input->id,
+                                              "Demasiados argumentos para la bajada de CALL.");
+                    }
+                    capacity += 2 * n;
+                }
             output->instructions = calloc(capacity, sizeof(*output->instructions));
             if (output->instructions == NULL) {
                 regalloc_machine_program_free(program);
@@ -406,6 +504,10 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
             LowerContext ctx = {.routine = target, .block = output,
                 .capacity = capacity, .routine_index = r, .block_id = input->id,
                 .symbols = source->symbols,
+                .call_site_count = &program->call_site_count,
+                .call_reserve_size = ir_routine->symbol != NULL
+                    ? ir_routine->symbol->call_reserve_size
+                    : source->symbols->global_call_reserve_size,
                 .diagnostic = diagnostic};
             for (size_t i = 0; i < input->instruction_count; i++) {
                 ctx.origin = i;

@@ -29,7 +29,14 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
     case REGALLOC_M_STORE_SYMBOL:
     case REGALLOC_M_SPILL_STORE:
     case REGALLOC_M_TO_RETURN:
+    case REGALLOC_M_CALL_ARG:
         shape->has_use = true;
+        return true;
+    case REGALLOC_M_CALL_SAVE:
+    case REGALLOC_M_CALL_VOID:
+        return true;
+    case REGALLOC_M_CALL_RESULT:
+        shape->has_def = true;
         return true;
     case REGALLOC_M_MOVE:
         shape->has_def = shape->has_use = true;

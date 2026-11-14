@@ -61,7 +61,7 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls clean
 
 all: $(TARGET) bin/porygon-schedule
 
@@ -109,6 +109,19 @@ check-regalloc-lower-symbols: build/regalloc/machine.o build/regalloc/assignment
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_lower_symbols
 	build/runs/regalloc/test_lower_symbols
+
+# R2b llamadas: argumentos fijos, valores vivos y slots de argumentos en pila.
+check-regalloc-lower-calls: build/regalloc/machine.o build/regalloc/assignment.o \
+                           build/regalloc/color_machine.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_calls.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_calls
+	build/runs/regalloc/test_lower_calls
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)

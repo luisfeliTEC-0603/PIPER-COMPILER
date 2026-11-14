@@ -12,7 +12,8 @@
  *
  * LOAD_SYMBOL/STORE_SYMBOL siguen siendo operaciones virtuales para el emisor;
  * los accesos escalares ya declaran sus direcciones y registros fijos. IMM
- * grande solo usa el destino y r0. Faltan llamadas, arreglos y comprobaciones:
+ * grande solo usa el destino y r0. CALL escalar declara argumentos, efectos
+ * y salvado del llamador. Faltan arreglos y comprobaciones:
  * no se debe emitir ASM directamente desde este subconjunto.
  */
 #include "regalloc.h"
@@ -37,6 +38,8 @@
 #define REGALLOC_COLOR_COUNT 4u
 #define REGALLOC_COLOR_MASK (REGALLOC_PHYS_R1 | REGALLOC_PHYS_R2 | \
                              REGALLOC_PHYS_R3 | REGALLOC_PHYS_R4)
+#define REGALLOC_REGISTER_ARGS 4u
+#define REGALLOC_MAX_CALL_ARGS 32u
 
 typedef enum {
     REGALLOC_M_IMM,          /**< def = constante de 32 bits; solo usa def y r0. */
@@ -50,6 +53,10 @@ typedef enum {
     REGALLOC_M_BOOL_NOT,    /**< xori def, #1; def contiene bool 0/1. */
     REGALLOC_M_SPILL_LOAD,  /**< def = palabra de slot en el frame. */
     REGALLOC_M_SPILL_STORE, /**< palabra de slot = use1. */
+    REGALLOC_M_CALL_SAVE,   /**< Guarda r1..r6 antes de colocar argumentos. */
+    REGALLOC_M_CALL_ARG,    /**< use1 = argumento; indice en call_arg_index. */
+    REGALLOC_M_CALL_VOID,   /**< Invoca y restaura sin resultado virtual. */
+    REGALLOC_M_CALL_RESULT, /**< Invoca y define def con el retorno. */
     REGALLOC_M_JUMP,         /**< Salta a targets[0]. */
     REGALLOC_M_BRANCH,       /**< Prueba use1 y salta a targets[0/1]. */
     REGALLOC_M_TO_RETURN,    /**< r1 = use1. */
@@ -63,13 +70,20 @@ typedef enum {
  * flags conserva efectos del IR; los spills llevan READ/WRITE_MEMORY.
  * LOAD/STORE_SYMBOL locales leen r7; los globales construyen la direccion
  * fisica desde r0. El store global usa y escribe r5, reservado fuera de K=4.
- * IMM, incluso grande, solo necesita su def y r0 para construirse. */
+ * IMM, incluso grande, solo necesita su def y r0 para construirse.
+ * CALL_SAVE/ARG/CALL comparten call_site_id y call_arg_count. ARG lleva
+ * call_arg_index; CALL lleva symbol=callee. El emisor guarda r1..r6 antes de
+ * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
+ * final. Los argumentos i>=4 se guardan despues del call record de 32 bytes.
+ * Ningun CALL_ARG crea un temporal nuevo entre la primera escritura fisica
+ * de argumento y el salto. */
 typedef struct {
     RegallocMachineOp op;
     IrId def, use1;
     int64_t immediate;
     const Symbol *symbol;
     size_t slot;
+    size_t call_site_id, call_arg_index, call_arg_count;
     IrId targets[2];
     IrType type;
     unsigned flags;
@@ -101,10 +115,11 @@ typedef struct RegallocMachineProgram {
     const IrProgram *source;
     RegallocMachineRoutine *routines;
     size_t routine_count;
+    size_t call_site_count; /**< IDs 1..N, unicos entre todas las rutinas. */
 } RegallocMachineProgram;
 
 /** Baja COPY escalar, ADD/SUB/AND/OR/XOR sin chequeo, EQ/NE/NOT,
- * JUMP, BRANCH y RETURN. Los operandos simbolo escalares incluyen direccion,
+ * CALL escalar, JUMP, BRANCH y RETURN. Los simbolos escalares incluyen direccion,
  * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
  * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
  * limpia el resultado parcial y deja *out=NULL. Requiere un analisis preparado
