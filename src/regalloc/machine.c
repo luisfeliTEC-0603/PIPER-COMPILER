@@ -3,7 +3,8 @@
  *
  * Las operaciones binarias de PORYGON modifican su primer registro. Por eso
  * primero copiamos/materializamos el operando izquierdo en el resultado y
- * despues emitimos ADD/SUB/AND/OR/XOR que leen y redefinen ese resultado.
+ * despues emitimos la operacion que lee y redefine ese resultado. ADD/SUB
+ * usan el inmediato de 16 bits con signo cuando el operando derecho cabe.
  * Los operandos constantes y simbolos que necesitan registro generan IDs
  * nuevos a partir de ir_temp_count. El control conserva los IDs de bloque.
  *
@@ -52,7 +53,7 @@ void regalloc_machine_program_free(RegallocMachineProgram *program)
 }
 
 /** La capacidad es cuatro veces las instrucciones IR del bloque: COPY ocupa
- * como maximo 2, binaria 3, BRANCH 2 y RETURN 3. Se comprueba antes de reservar.
+ * como maximo 2, NE 4, BRANCH 2 y RETURN 3. Se comprueba antes de reservar.
  * No se deja una instruccion a medias si la capacidad se agota. */
 static RegallocStatus emit(LowerContext *ctx, RegallocMachineInstruction in)
 {
@@ -176,15 +177,60 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "La binaria requiere un temporal de resultado fresco.");
-    IrId left, right;
-    RegallocStatus status = materialize(ctx, source->arg2, IR_NO_ID, &right,
-                                        source->location);
+    /* sumi/diffi extienden el campo inmediato con signo. La forma de registro
+     * conserva los literales fuera de ese rango y las otras operaciones. */
+    bool immediate = (op == REGALLOC_M_ADD || op == REGALLOC_M_SUB) &&
+        source->arg2.kind == IR_OPERAND_CONSTANT &&
+        source->arg2.value.constant >= -32768 &&
+        source->arg2.value.constant <= 32767;
+    IrId left, right = IR_NO_ID;
+    RegallocStatus status = REGALLOC_OK;
+    if (!immediate)
+        status = materialize(ctx, source->arg2, IR_NO_ID, &right,
+                             source->location);
     if (status != REGALLOC_OK) return status;
     status = materialize(ctx, source->arg1, target, &left, source->location);
     if (status != REGALLOC_OK) return status;
     return emit(ctx, (RegallocMachineInstruction){
-        .op = op, .def = left, .use1 = right, .type = source->result.type,
+        .op = immediate ? (op == REGALLOC_M_ADD ? REGALLOC_M_ADDI : REGALLOC_M_SUBI) : op,
+        .def = left, .use1 = right,
+        .immediate = immediate ? source->arg2.value.constant : 0,
+        .type = source->result.type,
         .location = source->location
+    });
+}
+
+/* eor compara los bits sin distinguir signo. NE invierte su bool 0/1. */
+static RegallocStatus lower_not_equal(LowerContext *ctx,
+                                      const IrInstruction *source)
+{
+    RegallocStatus status = lower_binary(ctx, source, REGALLOC_M_EQ);
+    if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_BOOL_NOT, .def = source->result.value.temp,
+        .use1 = IR_NO_ID, .type = source->result.type,
+        .location = source->location
+    });
+}
+
+static RegallocStatus lower_not(LowerContext *ctx,
+                                const IrInstruction *source)
+{
+    if (source->flags != 0 || source->result.kind != IR_OPERAND_TEMP ||
+        source->result.type.piper != PIPER_TYPE_BOOL ||
+        source->arg1.type.piper != PIPER_TYPE_BOOL ||
+        source->arg2.kind != IR_OPERAND_NONE)
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "NOT requiere un bool escalar sin efectos.");
+    IrId target = source->result.value.temp;
+    IrId value;
+    RegallocStatus status = materialize(ctx, source->arg1, target, &value,
+                                        source->location);
+    if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_BOOL_NOT, .def = value, .use1 = IR_NO_ID,
+        .type = source->result.type, .location = source->location
     });
 }
 
@@ -242,6 +288,9 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_AND: return lower_binary(ctx, source, REGALLOC_M_AND);
     case IR_OP_OR:  return lower_binary(ctx, source, REGALLOC_M_OR);
     case IR_OP_XOR: return lower_binary(ctx, source, REGALLOC_M_XOR);
+    case IR_OP_EQ:  return lower_binary(ctx, source, REGALLOC_M_EQ);
+    case IR_OP_NE:  return lower_not_equal(ctx, source);
+    case IR_OP_NOT: return lower_not(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:
         return lower_control(ctx, source);
     default:
@@ -282,6 +331,8 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
         RegallocMachineRoutine *target = &program->routines[r];
         target->ir_routine = r;
         target->ir_temp_count = target->temp_count = ir_routine->temp_count;
+        target->base_frame_bytes = ir_routine->symbol != NULL
+            ? (size_t)ir_routine->symbol->total_stack_frame_size : 0;
         if (ir_routine->block_count > SIZE_MAX / sizeof(*target->blocks)) {
             regalloc_machine_program_free(program);
             return machine_report(diagnostic, REGALLOC_OUT_OF_MEMORY, r,

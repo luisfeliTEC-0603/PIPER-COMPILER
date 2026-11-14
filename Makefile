@@ -20,6 +20,7 @@ EMIT_SRC        = $(wildcard src/emit/*.c)
 IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
 REGALLOC_SRC    = $(wildcard src/regalloc/*.c)
+LIVENESS_SRC    = $(wildcard src/liveness/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -30,6 +31,7 @@ EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 REGALLOC_OBJ    = $(patsubst src/regalloc/%.c,build/regalloc/%.o,$(REGALLOC_SRC))
+LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
 
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
@@ -55,7 +57,8 @@ OBJ = build/parser.o \
       $(EMIT_OBJ) \
       $(IR_OBJ) \
       $(CFG_OBJ) \
-      $(REGALLOC_OBJ)
+      $(REGALLOC_OBJ) \
+      $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate ll1-table clean
@@ -104,7 +107,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
-              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
@@ -122,8 +125,12 @@ build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src
 	@mkdir -p build/cfg
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/regalloc/%.o: src/regalloc/%.c src/regalloc/regalloc_internal.h include/regalloc.h include/regalloc_machine.h include/cfg.h include/ir.h
+build/regalloc/%.o: src/regalloc/%.c include/regalloc.h include/regalloc_machine.h src/liveness/liveness.h include/cfg.h include/ir.h
 	@mkdir -p build/regalloc
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/regalloc_machine.h include/cfg.h include/ir.h
+	@mkdir -p build/liveness
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \

@@ -6,7 +6,7 @@
  *
  * Ninguna de estas operaciones cambia el programa Piper o emite ASM.
  */
-#include "regalloc_internal.h"
+#include "regalloc.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -26,13 +26,12 @@ static RegallocStatus report(RegallocDiagnostic *diagnostic,
     return status;
 }
 
-/** Descarta primero la arena de liveness y luego los mapas R0. routine_count
- * solo se establece despues de reservar routines. Cada bloque aun no reservado
- * permanece NULL gracias a calloc, asi que tambien limpia fallos parciales. */
+/** El resultado compartido es la unica reserva de conjuntos vivos. Los mapas
+ * R0 permanecen separados porque identifican bloques IR y nodos CFG. */
 void regalloc_analysis_free(RegallocAnalysis *analysis)
 {
     if (analysis == NULL) return;
-    regalloc_liveness_clear(analysis);
+    liveness_result_free(analysis->liveness);
     for (size_t r = 0; r < analysis->routine_count; r++)
         free(analysis->routines[r].blocks);
     free(analysis->routines);
@@ -118,4 +117,34 @@ RegallocStatus regalloc_prepare(const IrProgram *ir, const CfgProgram *cfg,
     /* Publicacion atomica: hasta esta linea *out permanecio NULL. */
     *out = analysis;
     return report(diagnostic, REGALLOC_OK, SIZE_MAX, IR_NO_ID, "");
+}
+
+/** Compatibilidad para los consumidores de regalloc: no calcula ni copia
+ * conjuntos. El mismo solver publico sirve a DCE y al grafo de interferencia.
+ * DCE debe pedir una nueva instantanea si modifica la IR. */
+RegallocStatus regalloc_compute_liveness(RegallocAnalysis *analysis,
+                                        RegallocDiagnostic *diagnostic)
+{
+    if (analysis == NULL || analysis->ir == NULL || analysis->cfg == NULL ||
+        analysis->liveness != NULL)
+        return report(diagnostic, REGALLOC_INVALID_INPUT, SIZE_MAX, IR_NO_ID,
+                      "Se requiere un analisis preparado y sin liveness previo.");
+
+    LivenessDiagnostic live_error;
+    LivenessStatus live_status = liveness_analyze_ir(analysis->ir, analysis->cfg,
+                                                     &analysis->liveness,
+                                                     &live_error);
+    if (live_status == LIVENESS_OK)
+        return report(diagnostic, REGALLOC_OK, SIZE_MAX, IR_NO_ID, "");
+
+    RegallocStatus status = REGALLOC_INVALID_INPUT;
+    switch (live_status) {
+    case LIVENESS_INVALID_IR: status = REGALLOC_INVALID_IR; break;
+    case LIVENESS_INVALID_CFG: status = REGALLOC_INVALID_CFG; break;
+    case LIVENESS_OUT_OF_MEMORY: status = REGALLOC_OUT_OF_MEMORY; break;
+    case LIVENESS_INVALID_INPUT:
+    case LIVENESS_OK: break;
+    }
+    return report(diagnostic, status, live_error.routine, live_error.block,
+                  live_error.message);
 }

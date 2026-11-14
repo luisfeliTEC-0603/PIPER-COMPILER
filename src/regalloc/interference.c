@@ -11,7 +11,7 @@
  * ramas. Este grafo NO es aun el que se coloreara para emitir codigo: faltan
  * instrucciones virtuales de maquina y sus registros implicitos.
  */
-#include "regalloc_internal.h"
+#include "regalloc.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,12 +64,12 @@ static void add_edge(RegallocIrGraph *graph, IrId a, IrId b)
 /** Al entrar en un bloque no hay una definicion local que permita descubrir
  * todos los pares. Este clique conserva valores que llegan vivos desde
  * predecesores distintos, incluidos los que atraviesan un ciclo. */
-static void add_live_in_pairs(RegallocIrGraph *graph, const RegallocSet *live_in)
+static void add_live_in_pairs(RegallocIrGraph *graph, const LivenessSet *live_in)
 {
     for (IrId a = 0; a < graph->temp_count; a++) {
-        if (!regalloc_set_contains(live_in, a)) continue;
+        if (!liveness_set_contains(live_in, a)) continue;
         for (IrId b = a + 1; b < graph->temp_count; b++)
-            if (regalloc_set_contains(live_in, b)) add_edge(graph, a, b);
+            if (liveness_set_contains(live_in, b)) add_edge(graph, a, b);
     }
 }
 
@@ -77,13 +77,13 @@ RegallocStatus regalloc_build_ir_graph(const RegallocAnalysis *analysis,
                                       size_t routine, RegallocIrGraph **out,
                                       RegallocDiagnostic *diagnostic)
 {
-    if (analysis == NULL || !analysis->liveness_ready ||
+    if (analysis == NULL || analysis->liveness == NULL ||
         routine >= analysis->routine_count || out == NULL || *out != NULL)
         return graph_report(diagnostic, REGALLOC_INVALID_INPUT, routine,
                             IR_NO_ID, "Se requiere liveness completo y salida NULL.");
 
-    const RegallocRoutine *live = &analysis->routines[routine];
-    size_t count = live->temp_count;
+    const LivenessResult *live = analysis->liveness;
+    size_t count = liveness_value_count(live, routine);
     size_t words = count / GRAPH_BITS_PER_WORD +
                    (count % GRAPH_BITS_PER_WORD != 0);
     if (count != 0 &&
@@ -111,22 +111,22 @@ RegallocStatus regalloc_build_ir_graph(const RegallocAnalysis *analysis,
     }
 
     const IrRoutine *source = &analysis->ir->routines[routine];
-    for (size_t b = 0; b < live->block_count; b++) {
-        const RegallocBlock *block = &live->blocks[b];
+    for (size_t b = 0; b < liveness_block_count(live, routine); b++) {
         const IrBlock *ir_block = &source->blocks[b];
-        add_live_in_pairs(graph, &block->live_in);
-        for (size_t i = 0; i < block->instruction_count; i++) {
+        add_live_in_pairs(graph, liveness_block_set(live, routine, b,
+                                                   LIVENESS_IN));
+        for (size_t i = 0; i < ir_block->instruction_count; i++) {
             const IrInstruction *in = &ir_block->instructions[i];
             if (in->result.kind != IR_OPERAND_TEMP) continue;
             IrId defined = in->result.value.temp;
-            const RegallocSet *after =
-                &live->instructions[block->instruction_start + i].after;
+            const LivenessSet *after = liveness_instruction_set(
+                live, routine, b, i, LIVENESS_AFTER);
             /* Un resultado que jamas se vuelve a leer no necesita conservar
              * registro. La operacion puede seguir teniendo efectos, pero su
              * valor muerto no bloquea colores de otros temporales. */
-            if (!regalloc_set_contains(after, defined)) continue;
+            if (!liveness_set_contains(after, defined)) continue;
             for (IrId other = 0; other < count; other++)
-                if (regalloc_set_contains(after, other))
+                if (liveness_set_contains(after, other))
                     add_edge(graph, defined, other);
         }
     }
