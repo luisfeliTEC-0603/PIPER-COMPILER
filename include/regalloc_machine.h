@@ -16,10 +16,10 @@
  */
 #include "regalloc.h"
 
-/* Contrato de registros PORYGON: r0 es cero y r7 es frame pointer. El pool
- * candidato tiene seis colores, pero una instruccion puede restringirlos.
- * El coloreador futuro debera garantizar al menos tres colores generales y
- * respetar clobbers/salvados antes de usar r1..r6 a traves de llamadas. */
+/* Contrato de registros PORYGON: r0 es cero y r7 es frame pointer. Hay seis
+ * registros fisicos candidatos, pero esta implementacion colorea con r1..r4.
+ * r5/r6 quedan para auxiliares y secuencias fijas del backend. Las llamadas
+ * y demas usos fijos tambien restringen los cuatro colores asignables. */
 #define REGALLOC_PHYS_R1 (1u << 1)
 #define REGALLOC_PHYS_R2 (1u << 2)
 #define REGALLOC_PHYS_R3 (1u << 3)
@@ -32,6 +32,9 @@
 #define REGALLOC_CANDIDATE_MASK (REGALLOC_PHYS_R1 | REGALLOC_PHYS_R2 | \
                                  REGALLOC_PHYS_R3 | REGALLOC_PHYS_R4 | \
                                  REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6)
+#define REGALLOC_COLOR_COUNT 4u
+#define REGALLOC_COLOR_MASK (REGALLOC_PHYS_R1 | REGALLOC_PHYS_R2 | \
+                             REGALLOC_PHYS_R3 | REGALLOC_PHYS_R4)
 
 typedef enum {
     REGALLOC_M_IMM,          /**< def = constante de 32 bits. */
@@ -136,5 +139,36 @@ RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machin
 bool regalloc_machine_graph_has_edge(const RegallocMachineGraph *graph,
                                     IrId a, IrId b);
 void regalloc_machine_graph_free(RegallocMachineGraph *graph);
+
+/** Vista final para el emisor ASM. No posee machine, routines ni sus arreglos:
+ * el asignador conserva esos datos vivos durante la emision. Para cada rutina,
+ * register_for_temp tiene temp_count entradas indexadas por ID virtual.
+ * 0 significa temporal sin uso; 1..4 son los registros fisicos r1..r4.
+ * Todo def/use1 presente en las instrucciones finales debe tener registro.
+ * Los valores derramados aparecen mediante SPILL_LOAD/STORE y sus copias
+ * recargadas tambien tienen un registro; no se codifica memoria como color. */
+typedef struct {
+    const uint8_t *register_for_temp;
+    size_t frame_bytes;
+} RegallocAssignedRoutine;
+
+typedef struct {
+    const RegallocMachineProgram *machine;
+    const RegallocAssignedRoutine *routines;
+    size_t routine_count;
+} RegallocAssignedProgram;
+
+/** Comprueba una entrega completa antes de llamar al emisor: frame y reserva
+ * de llamadas dentro de la pila, colores de todos los operandos, interferencias
+ * y colores prohibidos por escrituras fijas. Requiere machine final e inmutable;
+ * cada arreglo register_for_temp tiene machine->routines[r].temp_count entradas.
+ * No valida aun restricciones de operaciones que R2b no ha bajado. */
+RegallocStatus regalloc_assigned_program_validate(
+    const RegallocAssignedProgram *assigned, RegallocDiagnostic *diagnostic);
+
+/** Offset de una ranura desde r7 tras el prologo. Precondiciones: assigned fue
+ * validado, routine < routine_count y slot < spill_slot_count de esa rutina. */
+size_t regalloc_assigned_spill_offset(const RegallocAssignedProgram *assigned,
+                                     size_t routine, size_t slot);
 
 #endif

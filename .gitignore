@@ -39,3 +39,4 @@ __pycache__/
 
 # Notas locales de asignacion de registros
 /docs/IR/diseno-regalloc.md
+/docs/IR/contrato-regalloc-asm.md

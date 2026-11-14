@@ -61,7 +61,7 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment clean
 
 all: $(TARGET) bin/porygon-schedule
 
@@ -74,6 +74,17 @@ check-regalloc-machine-graph: build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_machine_graph
 	build/runs/regalloc/test_machine_graph
+
+# Contrato de entrega al emisor: colores, frame y ranuras de spill.
+check-regalloc-assignment: build/regalloc/assignment.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_assignment.c \
+	      build/regalloc/assignment.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_assignment
+	build/runs/regalloc/test_assignment
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
