@@ -108,4 +108,33 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
 
 void regalloc_machine_program_free(RegallocMachineProgram *program);
 
+/** Grafo de los temporales virtuales de UNA rutina de maquina. neighbors
+ * contiene temp_count filas de word_count palabras de 64 bits. degree cuenta
+ * vecinos distintos; forbidden_colors marca los registros r1..r6 que una
+ * escritura fija impide usar para un valor vivo a traves de ella.
+ *
+ * Este grafo se recalcula despues de cada cambio de instrucciones. Mientras
+ * R2b no expanda todos los pseudos y llamadas, no sirve para emitir ASM. */
+typedef struct {
+    size_t routine, temp_count, word_count;
+    uint64_t *neighbors;
+    size_t *degree;
+    unsigned *forbidden_colors;
+} RegallocMachineGraph;
+
+/** machine y live describen exactamente la misma instantanea; live procede de
+ * liveness_analyze_machine(machine). routine es un indice, no un ID de bloque.
+ * *out comienza en NULL y recibe un grafo propio solo en REGALLOC_OK.
+ * Conecta todos los pares vivos antes o despues de cada instruccion; tambien
+ * registra colores bloqueados por escrituras fisicas a traves de una instruccion.
+ * No calcula colores, costos ni decide spills. */
+RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machine,
+                                           const LivenessResult *live,
+                                           size_t routine,
+                                           RegallocMachineGraph **out,
+                                           RegallocDiagnostic *diagnostic);
+bool regalloc_machine_graph_has_edge(const RegallocMachineGraph *graph,
+                                    IrId a, IrId b);
+void regalloc_machine_graph_free(RegallocMachineGraph *graph);
+
 #endif

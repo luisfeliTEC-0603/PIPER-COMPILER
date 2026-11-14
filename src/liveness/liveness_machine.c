@@ -3,7 +3,7 @@
  *
  * El dominio son IDs de temporales, no registros fisicos. La ISA puede leer y
  * escribir el mismo destino en una instruccion de dos direcciones: por eso
- * Las operaciones ALU aportan def a USE antes de definirlo de nuevo.
+ * las operaciones ALU aportan def a USE antes de definirlo de nuevo.
  * Los sucesores se obtienen de los terminadores de cada bloque, cuyos destinos
  * son IDs de bloque y se convierten aqui a indices de la rutina.
  */

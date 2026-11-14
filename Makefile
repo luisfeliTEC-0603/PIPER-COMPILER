@@ -61,9 +61,19 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph clean
 
 all: $(TARGET) bin/porygon-schedule
+
+# Grafo de temporales virtuales: no necesita frontend ni emisor ASM.
+check-regalloc-machine-graph: build/regalloc/interference_machine.o \
+                              build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_machine_graph.c \
+	      build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_machine_graph
+	build/runs/regalloc/test_machine_graph
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
