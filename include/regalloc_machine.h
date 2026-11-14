@@ -10,9 +10,10 @@
  * MOVE y las operaciones de dos direcciones hacen explicita la restriccion
  * de la ISA: las operaciones ALU leen def antes de escribirlo.
  *
- * LOAD_SYMBOL/STORE_SYMBOL siguen siendo operaciones virtuales: su expansion
- * tipada y las restricciones de una direccion global quedan para la emision.
- * No se debe colorear ni emitir ASM directamente desde este subconjunto.
+ * LOAD_SYMBOL/STORE_SYMBOL siguen siendo operaciones virtuales para el emisor;
+ * los accesos escalares ya declaran sus direcciones y registros fijos. IMM
+ * grande solo usa el destino y r0. Faltan llamadas, arreglos y comprobaciones:
+ * no se debe emitir ASM directamente desde este subconjunto.
  */
 #include "regalloc.h"
 
@@ -20,6 +21,7 @@
  * registros fisicos candidatos, pero esta implementacion colorea con r1..r4.
  * r5/r6 quedan para auxiliares y secuencias fijas del backend. Las llamadas
  * y demas usos fijos tambien restringen los cuatro colores asignables. */
+#define REGALLOC_PHYS_R0 (1u << 0)
 #define REGALLOC_PHYS_R1 (1u << 1)
 #define REGALLOC_PHYS_R2 (1u << 2)
 #define REGALLOC_PHYS_R3 (1u << 3)
@@ -37,9 +39,9 @@
                              REGALLOC_PHYS_R3 | REGALLOC_PHYS_R4)
 
 typedef enum {
-    REGALLOC_M_IMM,          /**< def = constante de 32 bits. */
-    REGALLOC_M_LOAD_SYMBOL,  /**< def = lectura tipada de symbol. */
-    REGALLOC_M_STORE_SYMBOL, /**< symbol = use1, escritura tipada. */
+    REGALLOC_M_IMM,          /**< def = constante de 32 bits; solo usa def y r0. */
+    REGALLOC_M_LOAD_SYMBOL,  /**< def = lectura tipada; immediate = direccion/offset. */
+    REGALLOC_M_STORE_SYMBOL, /**< symbol = use1; immediate = direccion/offset. */
     REGALLOC_M_MOVE,         /**< def = use1. */
     REGALLOC_M_ADD, REGALLOC_M_SUB,
     REGALLOC_M_ADDI, REGALLOC_M_SUBI, /**< def op= immediate; inmediato signed 16. */
@@ -58,7 +60,10 @@ typedef enum {
  * def es tambien uso: el valor anterior de def participa en el calculo.
  * fixed_reads/writes son mascaras de registros r0..r7. slot solo se interpreta
  * en SPILL_LOAD/STORE: es un ID local a la rutina, no un offset ni un Symbol.
- * flags conserva efectos del IR; los spills llevan READ/WRITE_MEMORY. */
+ * flags conserva efectos del IR; los spills llevan READ/WRITE_MEMORY.
+ * LOAD/STORE_SYMBOL locales leen r7; los globales construyen la direccion
+ * fisica desde r0. El store global usa y escribe r5, reservado fuera de K=4.
+ * IMM, incluso grande, solo necesita su def y r0 para construirse. */
 typedef struct {
     RegallocMachineOp op;
     IrId def, use1;
@@ -99,7 +104,9 @@ typedef struct RegallocMachineProgram {
 } RegallocMachineProgram;
 
 /** Baja COPY escalar, ADD/SUB/AND/OR/XOR sin chequeo, EQ/NE/NOT,
- * JUMP, BRANCH y RETURN. Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
+ * JUMP, BRANCH y RETURN. Los operandos simbolo escalares incluyen direccion,
+ * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
+ * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
  * limpia el resultado parcial y deja *out=NULL. Requiere un analisis preparado
  * sobre IR/CFG aun vivos; analysis->liveness puede ser NULL.
  *
@@ -139,6 +146,37 @@ RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machin
 bool regalloc_machine_graph_has_edge(const RegallocMachineGraph *graph,
                                     IrId a, IrId b);
 void regalloc_machine_graph_free(RegallocMachineGraph *graph);
+
+/** Una entrada por temporal, en el orden en que se retira del grafo activo.
+ * active_degree se mide justo antes de retirarlo; eligible_colors cuenta los
+ * colores del pool que no prohibe su mascara fija. potential_spill solo indica
+ * que no habia nodo simplificable en ese paso: no implica spill real. */
+typedef struct {
+    IrId temp;
+    size_t active_degree;
+    unsigned eligible_colors;
+    bool potential_spill;
+} RegallocSimplifyStep;
+
+/** Resultado exploratorio del grafo actual. steps es la pila de simplificacion
+ * (el ultimo elemento se colorea primero). colors[t] vale 1..4 o 0 si no pudo
+ * colorearse; un 0 no inserta todavia cargas/escrituras de spill. Incluye los
+ * IDs sin uso que figuran en temp_count, para conservar un indice por temporal.
+ * No entregar al emisor hasta completar R2b y reescribir spills reales. */
+typedef struct {
+    RegallocSimplifyStep *steps;
+    uint8_t *colors;
+    size_t temp_count, uncolored_count;
+} RegallocColoring;
+
+/** Simplifica con K=4, elige provisionalmente el nodo de mayor grado activo
+ * (desempate por ID menor) si no queda uno de grado < colores elegibles, y
+ * reconstruye la pila eligiendo el registro fisico libre de menor numero.
+ * graph procede de regalloc_build_machine_graph; *out comienza en NULL. */
+RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
+                                            RegallocColoring **out,
+                                            RegallocDiagnostic *diagnostic);
+void regalloc_coloring_free(RegallocColoring *coloring);
 
 /** Vista final para el emisor ASM. No posee machine, routines ni sus arreglos:
  * el asignador conserva esos datos vivos durante la emision. Para cada rutina,

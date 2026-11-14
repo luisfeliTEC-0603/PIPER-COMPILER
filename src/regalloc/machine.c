@@ -6,7 +6,9 @@
  * despues emitimos la operacion que lee y redefine ese resultado. ADD/SUB
  * usan el inmediato de 16 bits con signo cuando el operando derecho cabe.
  * Los operandos constantes y simbolos que necesitan registro generan IDs
- * nuevos a partir de ir_temp_count. El control conserva los IDs de bloque.
+ * nuevos a partir de ir_temp_count. Un IMM grande se construye solo en su
+ * destino y r0; los accesos locales leen r7 y el store global usa r5 reservado.
+ * El control conserva los IDs de bloque.
  *
  * Esta fase no emite ASM. Rechaza opcodes y efectos cuya expansion fisica aun
  * no esta modelada; publicar un resultado incompleto seria peligroso.
@@ -23,6 +25,7 @@ typedef struct {
     size_t origin;
     size_t routine_index;
     IrId block_id;
+    const SymbolTable *symbols;
     RegallocDiagnostic *diagnostic;
 } LowerContext;
 
@@ -84,10 +87,40 @@ static bool scalar(IrOperand value)
            (value.value.symbol != NULL && !value.value.symbol->is_array);
 }
 
+/* La identidad del simbolo, no su offset, determina si su direccion es global.
+ * La tabla validada conserva ese enlace durante toda la bajada. */
+static bool global_symbol(const LowerContext *ctx, const Symbol *symbol)
+{
+    if (ctx->symbols->global_scope == NULL) return false;
+    for (const Symbol *it = ctx->symbols->global_scope->symbols_head;
+         it != NULL; it = it->next)
+        if (it == symbol) return true;
+    return false;
+}
+
+/* El inmediato contiene el offset local o la direccion fisica global.
+ * El emisor usa el propio destino como direccion temporal al cargar globales;
+ * al guardar globales usa r5, que no pertenece al pool K=4. */
+static void symbol_access(const LowerContext *ctx,
+                          RegallocMachineInstruction *in,
+                          const Symbol *symbol, bool store)
+{
+    bool global = global_symbol(ctx, symbol);
+    in->symbol = symbol;
+    in->immediate = global
+        ? SYMBOL_DATA_BASE_ADDRESS + symbol->address_or_offset
+        : symbol->address_or_offset;
+    in->fixed_reads = global ? REGALLOC_PHYS_R0 : REGALLOC_PHYS_R7;
+    if (global && store) {
+        in->fixed_reads |= REGALLOC_PHYS_R5;
+        in->fixed_writes = REGALLOC_PHYS_R5;
+    }
+}
+
 /** Produce un registro virtual con el valor solicitado. Si preferred es un
  * temporal, se define alli; si no, se reutiliza un operando TEMP o se crea un
- * auxiliar nuevo. El tipo de LOAD_SYMBOL queda disponible para la emision
- * tipada futura. */
+ * auxiliar nuevo. IMM y LOAD_SYMBOL declaran ya sus registros fisicos fijos;
+ * la secuencia ASM tipada sigue a cargo del emisor. */
 static RegallocStatus materialize(LowerContext *ctx, IrOperand value,
                                  IrId preferred, IrId *out,
                                  SourceLocation location)
@@ -118,11 +151,12 @@ static RegallocStatus materialize(LowerContext *ctx, IrOperand value,
     case IR_OPERAND_CONSTANT:
         in.op = REGALLOC_M_IMM;
         in.immediate = value.value.constant;
+        in.fixed_reads = REGALLOC_PHYS_R0;
         break;
     case IR_OPERAND_SYMBOL:
         in.op = REGALLOC_M_LOAD_SYMBOL;
-        in.symbol = value.value.symbol;
         in.flags = IR_READ_MEMORY;
+        symbol_access(ctx, &in, value.value.symbol, false);
         break;
     default:
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
@@ -136,7 +170,8 @@ static RegallocStatus materialize(LowerContext *ctx, IrOperand value,
 
 static RegallocStatus lower_copy(LowerContext *ctx, const IrInstruction *source)
 {
-    if (source->flags != 0 || !scalar(source->result))
+    if ((source->flags & ~(IR_READ_MEMORY | IR_WRITE_MEMORY)) != 0 ||
+        !scalar(source->result))
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "COPY con efecto especial o destino no escalar.");
@@ -151,17 +186,20 @@ static RegallocStatus lower_copy(LowerContext *ctx, const IrInstruction *source)
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "COPY solo escribe temporales o simbolos.");
-    return emit(ctx, (RegallocMachineInstruction){
+    RegallocMachineInstruction in = {
         .op = REGALLOC_M_STORE_SYMBOL, .def = IR_NO_ID, .use1 = value,
-        .symbol = source->result.value.symbol, .type = source->result.type,
+        .type = source->result.type,
         .flags = IR_WRITE_MEMORY, .location = source->location
-    });
+    };
+    symbol_access(ctx, &in, source->result.value.symbol, true);
+    return emit(ctx, in);
 }
 
 static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *source,
                                    RegallocMachineOp op)
 {
-    if (source->flags != 0 || source->result.kind != IR_OPERAND_TEMP ||
+    if ((source->flags & ~IR_READ_MEMORY) != 0 ||
+        source->result.kind != IR_OPERAND_TEMP ||
         !scalar(source->result) || !scalar(source->arg1) ||
         !scalar(source->arg2))
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
@@ -216,7 +254,8 @@ static RegallocStatus lower_not_equal(LowerContext *ctx,
 static RegallocStatus lower_not(LowerContext *ctx,
                                 const IrInstruction *source)
 {
-    if (source->flags != 0 || source->result.kind != IR_OPERAND_TEMP ||
+    if ((source->flags & ~IR_READ_MEMORY) != 0 ||
+        source->result.kind != IR_OPERAND_TEMP ||
         source->result.type.piper != PIPER_TYPE_BOOL ||
         source->arg1.type.piper != PIPER_TYPE_BOOL ||
         source->arg2.kind != IR_OPERAND_NONE)
@@ -237,7 +276,7 @@ static RegallocStatus lower_not(LowerContext *ctx,
 static RegallocStatus lower_control(LowerContext *ctx,
                                     const IrInstruction *source)
 {
-    if (source->flags != 0)
+    if ((source->flags & ~IR_READ_MEMORY) != 0)
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "Control con efecto especial no soportado en R2.");
@@ -366,6 +405,7 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
             }
             LowerContext ctx = {.routine = target, .block = output,
                 .capacity = capacity, .routine_index = r, .block_id = input->id,
+                .symbols = source->symbols,
                 .diagnostic = diagnostic};
             for (size_t i = 0; i < input->instruction_count; i++) {
                 ctx.origin = i;
