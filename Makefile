@@ -20,6 +20,7 @@ EMIT_SRC        = $(wildcard src/emit/*.c)
 IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
 LIVENESS_SRC    = $(wildcard src/liveness/*.c)
+DCE_SRC         = $(wildcard src/dce/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -30,6 +31,7 @@ EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
+DCE_OBJ         = $(patsubst src/dce/%.c,build/dce/%.o,$(DCE_SRC))
 
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
@@ -55,7 +57,8 @@ OBJ = build/parser.o \
       $(EMIT_OBJ) \
       $(IR_OBJ) \
       $(CFG_OBJ) \
-      $(LIVENESS_OBJ)
+      $(LIVENESS_OBJ) \
+      $(DCE_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate ll1-table clean
@@ -124,6 +127,10 @@ build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src
 
 build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/cfg.h include/ir.h
 	@mkdir -p build/liveness
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/dce/%.o: src/dce/%.c src/dce/dce.h src/dce/dce_internal.h src/liveness/liveness.h include/ir.h include/cfg.h
+	@mkdir -p build/dce
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \
