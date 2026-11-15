@@ -1,0 +1,13 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B32\l    variables: local bloque:B32[2x1]\l    temporales: t0:&B32, t1:&B32, t2:&B32, t3:&B32, t4:B32, t5:&B32, t6:B32\l    constantes: 10:B32, 4:B32, 20:B32, 1:B32, 2:B32, 3:B32, 5:B32, 0:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    t0 = &bloque\l    *t0 = 10 ; escribe memoria\l    t1 = t0 + 4\l    *t1 = 20 ; escribe memoria\l    crypto_auth(1, 2, 3, 4) ; lee estado criptográfico, escribe estado criptográfico, puede fallar\l    crypto_write_key(5, 0, 1) ; lee estado criptográfico, escribe estado criptográfico, puede fallar\l    t2 = &bloque\l    crypto_feistel(t2, 0, 1) ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar\l    crypto_revoke() ; escribe estado criptográfico\l    check 0 <= 0 < 2 ; puede fallar\l    t3 = &bloque\l    t4 = 0 * 4\l    t5 = t3 + t4\l    t6 = *t5 ; lee memoria\l    return t6\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_exit [label="RETURN"];
+  }
+}

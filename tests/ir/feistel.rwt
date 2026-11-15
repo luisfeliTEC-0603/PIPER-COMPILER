@@ -1,0 +1,9 @@
+routine B32 main[] {
+    create B32|2| bloque.
+    bloque store [10,20].
+    crypto_auth[1,2,3,4].
+    crypto_write_key[5,0,1].
+    crypto_feistel[bloque,0,1].
+    crypto_revoke[].
+    output bloque|0|.
+}

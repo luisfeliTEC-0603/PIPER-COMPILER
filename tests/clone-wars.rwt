@@ -1,0 +1,57 @@
+~~ ============================================================
+~~ Pruebas de detección de clones TIPO I (exactos).
+~~ Las tres rutinas calcular la suma de un arreglo con el mismo
+~~ cuerpo y los mismos identificadores. El detector debe agrupar
+~~ los tres cuerpos en un solo grupo de Tipo I.
+~~ ============================================================
+
+create B32|10| datos.
+
+routine B32 suma_0[B32|10| valores] {
+    create B32 i.
+    create B32 total.
+    i store 0.
+    total store 0.
+    alwhen [i < 10] {
+        total store total + valores|i|.
+        i store i + 1.
+    }
+    output total.
+}
+
+~~ Primera copia: suma de un arreglo de 10 elementos.
+routine B32 suma_a[B32|10| valores] {
+    create B32 i.
+    create B32 total.
+    i store 0.
+    total store 0.
+    alwhen [i < 10] {
+        total store total + valores|i|.
+        i store i + 1.
+    }
+    output total.
+}
+
+routine B32 suma_b[B32|10| lista] {   ~~ 'valores' -> 'lista'
+    create B32 j.                     ~~ 'i' -> 'j'
+    create B32 suma.                  ~~ 'total' -> 'suma'
+    j store 0.
+    suma store 0.
+    alwhen [j < 10] {
+        suma store suma + lista|j|.   ~~ consistente
+        j store j + 1.
+    }
+    output suma.
+}
+
+routine B32 main[] {
+    create B32 a.
+    create B32 b.
+    create B32 c.
+    create B32 p.
+    datos store [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].
+    a store suma_a[datos].
+    b store suma_b[datos].
+    ~~ 55 + 55 + 55 + 30 = 195
+    output a + b.
+}

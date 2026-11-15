@@ -1,0 +1,74 @@
+~~ Ejercicio 2: busqueda en matriz de 3 filas y 4 columnas.
+~~ Indices base cero. Se devuelve la primera coincidencia por filas:
+~~ posicion = fila * 4 + columna; -1 indica elemento ausente.
+~~ coordenadas recibe [fila, columna], o [-1, -1] si no se encuentra.
+~~ Las dimensiones son constantes en la declaracion de arreglos de Piper.
+~~
+~~ Prueba integral del compilador y del procesador:
+~~ PORYGON_DIR=../PORYGON ./run.sh tests/codegen/busqueda_matriz.rwt 20000 --expect r1=5 --expect r7=0x20000 --expect errors=0
+~~ main retorna 5 si todos los casos pasan; -2 a -7 identifica el caso fallido.
+~~ resultados queda en memoria global desde 0x10000 (18 B32 = 72 bytes).
+~~ Cada fila contiene [posicion lineal, fila, columna]. Valores esperados:
+~~ [[0,0,0], [5,1,1], [11,2,3], [-1,-1,-1], [1,0,1], [4,1,0]].
+
+create B32|6&3| resultados.
+
+routine B32 buscar[B32|3&4| matriz, B32 objetivo, B32|2| coordenadas] {
+    create B32 fila.
+    create B32 columna.
+    create B32 encontrado.
+    create B32 posicion.
+
+    fila store 0.
+    encontrado store 0.
+    posicion store -1.
+    coordenadas store [-1, -1].
+
+    ~~ Ambos ciclos terminan cuando se encuentra el objetivo.
+    alwhen [fila < 3 and encontrado = 0] {
+        columna store 0.
+        alwhen [columna < 4 and encontrado = 0] {
+            when [matriz|fila&columna| = objetivo] {
+                posicion store fila * 4 + columna.
+                coordenadas|0| store fila.
+                coordenadas|1| store columna.
+                encontrado store 1.
+            }
+            columna store columna + 1.
+        }
+        fila store fila + 1.
+    }
+
+    output posicion.
+}
+
+routine B32 main[] {
+    create B32|3&4| matriz.
+    create B32|6| objetivos.
+    create B32|6&3| esperados.
+    create B32|2| coordenadas.
+    create B32 caso.
+    create B32 posicion.
+
+    ~~ El 3 aparece dos veces: debe devolverse su primera posicion.
+    matriz store [[8, 3, 12, 5], [-7, 42, 9, 1], [6, 3, 10, 2]].
+    ~~ Primero, interior, ultimo, ausente, repetido y negativo.
+    objetivos store [8, 42, 2, 99, 3, -7].
+    esperados store [[0, 0, 0], [5, 1, 1], [11, 2, 3], [-1, -1, -1], [1, 0, 1], [4, 1, 0]].
+
+    caso store 0.
+    alwhen [caso < 6] {
+        posicion store buscar[matriz, objetivos|caso|, coordenadas].
+        resultados|caso&0| store posicion.
+        resultados|caso&1| store coordenadas|0|.
+        resultados|caso&2| store coordenadas|1|.
+
+        when [posicion != esperados|caso&0| or coordenadas|0| != esperados|caso&1| or coordenadas|1| != esperados|caso&2|] {
+            output -2 - caso.
+        }
+        caso store caso + 1.
+    }
+
+    ~~ El objetivo 42 esta en (1,1): posicion lineal 5.
+    output resultados|1&0|.
+}

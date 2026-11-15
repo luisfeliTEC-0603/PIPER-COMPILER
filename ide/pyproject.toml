@@ -1,0 +1,30 @@
+# Herramienta que construye el paquete al instalarlo o generar una distribución.
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+# Identidad del proyecto, versión mínima de Python y dependencias de ejecución.
+[project]
+name = "piper-ide"
+version = "0.1.0"
+description = "IDE de escritorio para Piper y sus archivos generados."
+requires-python = ">=3.11"
+dependencies = ["PySide6>=6.8,<7"]
+
+# Crea el ejecutable piper-ide y lo conecta con la función main de app.py.
+[project.gui-scripts]
+piper-ide = "piper_ide.app:main"
+
+# Localiza los módulos Python que forman parte de la aplicación.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["piper_ide*"]
+namespaces = true
+
+# Incluye los recursos visuales cuando se instala o distribuye el paquete.
+[tool.setuptools.package-data]
+piper_ide = [
+    "resources/themes/*.json",
+    "resources/icons/*.svg",
+    "resources/images/*.png",
+]

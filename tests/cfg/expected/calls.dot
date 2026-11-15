@@ -1,0 +1,31 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function incrementar(x:B32) -> B32\l    variables: global contador:B32\l    temporales: t0:B32, t1:B32\l    constantes: 1:B32\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    t0 = x\l    t1 = t0 + 1 ; comprueba rango del resultado B32, puede fallar\l    return t1\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_exit [label="RETURN"];
+  }
+  subgraph cluster_r1 {
+    label="function main() -> B32\l    variables: global contador:B32\l    temporales: t0:B32, t1:B32\l    constantes:\l";
+    labelloc="t";
+    r1_entry [shape=oval, label="ENTRY"];
+    r1_b0 [label="B0:\l    t0 = contador ; lee memoria\l    t1 = call incrementar(t0) ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar\l    return t1\l"];
+    r1_exit [shape=oval, label="EXIT"];
+    r1_entry -> r1_b0 [label="ENTRY"];
+    r1_b0 -> r1_exit [label="RETURN"];
+  }
+  subgraph cluster_r2 {
+    label="function <startup>() -> none\l    variables: global contador:B32\l    temporales: t0:B32\l    constantes: 2:B32\l";
+    labelloc="t";
+    r2_entry [shape=oval, label="ENTRY"];
+    r2_b0 [label="B0:\l    contador = 2 ; escribe memoria\l    t0 = call main() ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar\l    return\l"];
+    r2_exit [shape=oval, label="EXIT"];
+    r2_entry -> r2_b0 [label="ENTRY"];
+    r2_b0 -> r2_exit [label="RETURN"];
+  }
+}

@@ -1,0 +1,13 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function main() -> B16\l    variables: local m:B16[2x3], local fila:B32\l    temporales: t0:&B16, t1:&B16, t2:&B16, t3:&B16, t4:&B16, t5:&B16, t6:B32, t7:B32, t8:B32, t9:&B16, t10:B32, t11:&B16, t12:B32, t13:B32, t14:&B16, t15:B32, t16:&B16, t17:B16, t18:B32, t19:B32, t20:B32, t21:&B16, t22:B32, t23:&B16, t24:B16, t25:B16\l    constantes: 1:B16, 2:B32, 2:B16, 4:B32, 3:B16, 6:B32, 4:B16, 8:B32, 5:B16, 10:B32, 6:B16, 1:B32, 0:B32, 3:B32, 7:B16\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    t0 = &m\l    *t0 = 1:B16 ; escribe memoria\l    t1 = t0 + 2:B32\l    *t1 = 2:B16 ; escribe memoria\l    t2 = t0 + 4:B32\l    *t2 = 3:B16 ; escribe memoria\l    t3 = t0 + 6:B32\l    *t3 = 4:B16 ; escribe memoria\l    t4 = t0 + 8\l    *t4 = 5 ; escribe memoria\l    t5 = t0 + 10\l    *t5 = 6:B16 ; escribe memoria\l    fila = 1:B32\l    t6 = fila\l    check 0 <= t6 < 2:B32 ; puede fallar\l    check 0 <= 0 < 3:B32 ; puede fallar\l    t7 = t6 * 3:B32\l    t8 = t7 + 0\l    t9 = &m\l    t10 = t8 * 2:B32\l    t11 = t9 + t10\l    *t11 = 7 ; escribe memoria\l    check 0 <= 0 < 2:B32 ; puede fallar\l    check 0 <= 2:B32 < 3:B32 ; puede fallar\l    t12 = 0 * 3:B32\l    t13 = t12 + 2:B32\l    t14 = &m\l    t15 = t13 * 2:B32\l    t16 = t14 + t15\l    t17 = *t16 ; lee memoria\l    t18 = fila\l    check 0 <= t18 < 2:B32 ; puede fallar\l    check 0 <= 0 < 3:B32 ; puede fallar\l    t19 = t18 * 3:B32\l    t20 = t19 + 0\l    t21 = &m\l    t22 = t20 * 2:B32\l    t23 = t21 + t22\l    t24 = *t23 ; lee memoria\l    t25 = t17 + t24 ; comprueba rango del resultado B16, puede fallar\l    return t25\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_exit [label="RETURN"];
+  }
+}
