@@ -32,10 +32,15 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
     case REGALLOC_M_SPILL_STORE:
     case REGALLOC_M_TO_RETURN:
     case REGALLOC_M_CALL_ARG:
+    case REGALLOC_M_CRYPTO_WORD:
+    case REGALLOC_M_CRYPTO_WRITE:
+    case REGALLOC_M_CRYPTO_FEISTEL:
         shape->has_use = true;
         return true;
     case REGALLOC_M_CALL_SAVE:
     case REGALLOC_M_CALL_VOID:
+    case REGALLOC_M_CRYPTO_AUTH:
+    case REGALLOC_M_CRYPTO_REVOKE:
         return true;
     case REGALLOC_M_CALL_RESULT:
         shape->has_def = true;

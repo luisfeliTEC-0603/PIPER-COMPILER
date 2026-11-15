@@ -1,5 +1,5 @@
 /** @file machine.c
- * Bajada de IR escalar y accesos a arreglos a maquina virtual.
+ * Bajada de las familias IR actuales a instrucciones virtuales de maquina.
  *
  * Las operaciones binarias de PORYGON modifican su primer registro. Por eso
  * primero copiamos/materializamos el operando izquierdo en el resultado y
@@ -61,8 +61,8 @@ void regalloc_machine_program_free(RegallocMachineProgram *program)
 
 /** La capacidad base es cuatro veces las instrucciones IR del bloque: COPY
  * ocupa como maximo 2, NE 4, ADD de direccion 3, BRANCH 2 y RETURN 3.
- * Por cada CALL se suman
- * dos posiciones por argumento para materializacion y CALL_ARG. Se comprueba
+ * Por cada CALL/INTRINSIC se suman
+ * dos posiciones por argumento para materializacion y preparacion. Se comprueba
  * antes de reservar; no se deja una instruccion a medias si se agota. */
 static RegallocStatus emit(LowerContext *ctx, RegallocMachineInstruction in)
 {
@@ -604,6 +604,111 @@ static RegallocStatus lower_call(LowerContext *ctx,
     });
 }
 
+static bool crypto_index(IrOperand value)
+{
+    return value.kind == IR_OPERAND_CONSTANT && !value.type.address &&
+           value.value.constant >= 0 && value.value.constant <= 3;
+}
+
+/* Los registros implicitos de cada instruccion crypto se declaran antes del
+ * grafo. Un valor vivo a traves de una escritura fija recibe otro color o
+ * spill; no se presupone que r1..r3 esten vacios entre sentencias IR. */
+static RegallocStatus lower_intrinsic(LowerContext *ctx,
+                                      const IrInstruction *source)
+{
+    size_t count = source->extra.call.argument_count;
+    const IrOperand *args = source->extra.call.arguments;
+    if (source->result.kind != IR_OPERAND_NONE ||
+        (count != 0 && args == NULL))
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "INTRINSIC requiere argumentos y no devuelve temporal.");
+    switch (source->extra.call.intrinsic) {
+    case IR_INTRINSIC_AUTH: {
+        if (count != 4)
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "AUTH requiere cuatro valores.");
+        IrId words[4];
+        for (size_t i = 0; i < 4; i++) {
+            RegallocStatus status = materialize(ctx, args[i], IR_NO_ID,
+                                                &words[i], source->location);
+            if (status != REGALLOC_OK) return status;
+        }
+        for (size_t i = 0; i < 4; i++) {
+            RegallocStatus status = emit(ctx, (RegallocMachineInstruction){
+                .op = REGALLOC_M_CRYPTO_WORD, .def = IR_NO_ID,
+                .use1 = words[i], .immediate = (int64_t)i,
+                .fixed_reads = REGALLOC_PHYS_R1,
+                .fixed_writes = REGALLOC_PHYS_R1,
+                .flags = IR_WRITE_CRYPTO, .location = source->location
+            });
+            if (status != REGALLOC_OK) return status;
+        }
+        return emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CRYPTO_AUTH, .def = IR_NO_ID,
+            .use1 = IR_NO_ID,
+            .flags = IR_READ_CRYPTO | IR_WRITE_CRYPTO | IR_MAY_TRAP,
+            .location = source->location
+        });
+    }
+    case IR_INTRINSIC_WRITE_KEY: {
+        if (count != 3 || !crypto_index(args[1]) ||
+            !crypto_index(args[2]))
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "WRITE_KEY requiere valor y dos indices de 0 a 3.");
+        IrId value;
+        RegallocStatus status = materialize(ctx, args[0], IR_NO_ID,
+                                            &value, source->location);
+        if (status != REGALLOC_OK) return status;
+        return emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CRYPTO_WRITE, .def = IR_NO_ID,
+            .use1 = value, .immediate = args[1].value.constant,
+            .immediate2 = args[2].value.constant,
+            .fixed_reads = REGALLOC_PHYS_R1,
+            .fixed_writes = REGALLOC_PHYS_R1,
+            .flags = IR_READ_CRYPTO | IR_WRITE_CRYPTO | IR_MAY_TRAP,
+            .location = source->location
+        });
+    }
+    case IR_INTRINSIC_FEISTEL:
+        if (count != 3 || args[0].kind != IR_OPERAND_TEMP ||
+            !args[0].type.address ||
+            args[0].type.piper != PIPER_TYPE_B32 ||
+            !crypto_index(args[1]) || !crypto_index(args[2]))
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "FEISTEL requiere direccion B32[2] y dos indices.");
+        return emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CRYPTO_FEISTEL, .def = IR_NO_ID,
+            .use1 = args[0].value.temp,
+            .immediate = args[1].value.constant,
+            .immediate2 = args[2].value.constant,
+            .fixed_reads = REGALLOC_PHYS_R1 | REGALLOC_PHYS_R2 |
+                           REGALLOC_PHYS_R3,
+            .fixed_writes = REGALLOC_PHYS_R1 | REGALLOC_PHYS_R2 |
+                            REGALLOC_PHYS_R3,
+            .flags = IR_READ_MEMORY | IR_WRITE_MEMORY |
+                     IR_READ_CRYPTO | IR_WRITE_CRYPTO | IR_MAY_TRAP,
+            .type = args[0].type, .location = source->location
+        });
+    case IR_INTRINSIC_REVOKE:
+        if (count != 0)
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "REVOKE no acepta argumentos.");
+        return emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CRYPTO_REVOKE, .def = IR_NO_ID,
+            .use1 = IR_NO_ID, .flags = IR_WRITE_CRYPTO,
+            .location = source->location
+        });
+    }
+    return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                          ctx->routine_index, ctx->block_id,
+                          "Intrinseca desconocida.");
+}
+
 static RegallocStatus lower_control(LowerContext *ctx,
                                     const IrInstruction *source)
 {
@@ -678,6 +783,7 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_LOAD: case IR_OP_STORE:
         return lower_indirect(ctx, source);
     case IR_OP_CALL: return lower_call(ctx, source);
+    case IR_OP_INTRINSIC: return lower_intrinsic(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:
         return lower_control(ctx, source);
     default:
@@ -746,7 +852,8 @@ RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
             }
             size_t capacity = input->instruction_count * 4;
             for (size_t i = 0; i < input->instruction_count; i++)
-                if (input->instructions[i].op == IR_OP_CALL) {
+                if (input->instructions[i].op == IR_OP_CALL ||
+                    input->instructions[i].op == IR_OP_INTRINSIC) {
                     size_t n = input->instructions[i].extra.call.argument_count;
                     if (n > (SIZE_MAX / sizeof(*output->instructions) - capacity) / 2) {
                         regalloc_machine_program_free(program);

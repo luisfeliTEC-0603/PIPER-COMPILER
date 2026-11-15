@@ -16,8 +16,8 @@
  * y salvado del llamador. LT/GT conservan el signo de ambos operandos para
  * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
  * La aritmetica comprobada usa r5/r6 reservados y conserva MAY_TRAP.
- * ADDR/CHECK_BOUNDS/LOAD/STORE cubren accesos indexados; faltan intrinsecas:
- * no se debe emitir ASM directamente desde este subconjunto.
+ * ADDR/CHECK_BOUNDS/LOAD/STORE cubren accesos indexados y la familia CRYPTO
+ * expone sus efectos y registros fijos. Todavia no hay emisor ASM de esta IR.
  */
 #include "regalloc.h"
 
@@ -71,6 +71,11 @@ typedef enum {
     REGALLOC_M_CALL_ARG,    /**< use1 = argumento; indice en call_arg_index. */
     REGALLOC_M_CALL_VOID,   /**< Invoca y restaura sin resultado virtual. */
     REGALLOC_M_CALL_RESULT, /**< Invoca y define def con el retorno. */
+    REGALLOC_M_CRYPTO_WORD, /**< use1 -> r1; lopw r1, immediate. */
+    REGALLOC_M_CRYPTO_AUTH, /**< auth; consume las cuatro palabras cargadas. */
+    REGALLOC_M_CRYPTO_WRITE,/**< write use1, immediate, immediate2. */
+    REGALLOC_M_CRYPTO_FEISTEL, /**< opera sobre 2 palabras en use1. */
+    REGALLOC_M_CRYPTO_REVOKE, /**< rvk, sin operandos. */
     REGALLOC_M_JUMP,         /**< Salta a targets[0]. */
     REGALLOC_M_BRANCH,       /**< Prueba use1 y salta a targets[0/1]. */
     REGALLOC_M_TO_RETURN,    /**< r1 = use1. */
@@ -105,11 +110,13 @@ typedef enum {
  * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
  * final. Los argumentos i>=4 se guardan despues del call record de 32 bytes.
  * Ningun CALL_ARG crea un temporal nuevo entre la primera escritura fisica
- * de argumento y el salto. */
+ * de argumento y el salto. Las intrinsecas usan immediate/immediate2 para
+ * indices de 2 bits; CRYPTO_WORD lleva el indice de palabra en immediate.
+ * CRYPTO_FEISTEL toma la direccion B32[2] en use1 y usa r1/r2/r3 fijos. */
 typedef struct {
     RegallocMachineOp op;
     IrId def, use1, use2;
-    int64_t immediate;
+    int64_t immediate, immediate2;
     const Symbol *symbol;
     size_t slot;
     size_t call_site_id, call_arg_index, call_arg_count;
@@ -153,7 +160,8 @@ typedef struct RegallocMachineProgram {
  * ADD/SUB/MUL con/sin chequeo, DIV/MOD/POW comprobadas, AND/OR/XOR,
  * EQ/NE/LT/LE/GT/GE/NOT, ADD de direcciones,
  * ADDR/CHECK_BOUNDS/LOAD/STORE de arreglos,
- * CALL con argumentos escalares o punteros de arreglo, JUMP, BRANCH y RETURN.
+ * CALL con argumentos escalares o punteros de arreglo, las cuatro intrinsecas
+ * crypto, JUMP, BRANCH y RETURN.
  * Los simbolos escalares incluyen direccion,
  * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
  * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
