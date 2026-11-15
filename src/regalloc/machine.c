@@ -92,6 +92,14 @@ static bool scalar(IrOperand value)
            (value.value.symbol != NULL && !value.value.symbol->is_array);
 }
 
+/* La ISA ordena unsigned; el tipo resuelto de cada operando determina si la
+ * expansion debe transformar su signo o comparar un signed con un unsigned. */
+static bool unsigned_type(PiperType type)
+{
+    return type == PIPER_TYPE_UB8 || type == PIPER_TYPE_UB16 ||
+           type == PIPER_TYPE_UB32;
+}
+
 /* La identidad del simbolo, no su offset, determina si su direccion es global.
  * La tabla validada conserva ese enlace durante toda la bajada. */
 static bool global_symbol(const LowerContext *ctx, const Symbol *symbol)
@@ -234,11 +242,21 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
     if (status != REGALLOC_OK) return status;
     status = materialize(ctx, source->arg1, target, &left, source->location);
     if (status != REGALLOC_OK) return status;
+    bool ordered = op == REGALLOC_M_LT || op == REGALLOC_M_GT;
+    bool left_unsigned = unsigned_type(source->arg1.type.piper);
+    bool right_unsigned = unsigned_type(source->arg2.type.piper);
+    /* ltn/gtn ordenan unsigned. El emisor necesitara r5 para el bit de signo
+     * o la mascara 0x80000000; r5 ya esta fuera del pool de colores. */
+    bool needs_scratch = ordered && !(left_unsigned && right_unsigned);
     return emit(ctx, (RegallocMachineInstruction){
         .op = immediate ? (op == REGALLOC_M_ADD ? REGALLOC_M_ADDI : REGALLOC_M_SUBI) : op,
         .def = left, .use1 = right,
         .immediate = immediate ? source->arg2.value.constant : 0,
         .type = source->result.type,
+        .left_unsigned = ordered && left_unsigned,
+        .right_unsigned = ordered && right_unsigned,
+        .fixed_reads = needs_scratch ? REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 : 0,
+        .fixed_writes = needs_scratch ? REGALLOC_PHYS_R5 : 0,
         .location = source->location
     });
 }
@@ -249,6 +267,21 @@ static RegallocStatus lower_not_equal(LowerContext *ctx,
 {
     RegallocStatus status = lower_binary(ctx, source, REGALLOC_M_EQ);
     if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_BOOL_NOT, .def = source->result.value.temp,
+        .use1 = IR_NO_ID, .type = source->result.type,
+        .location = source->location
+    });
+}
+
+/* <= y >= invierten la comparacion estricta opuesta; BOOL_NOT usa el propio
+ * destino y no introduce otro temporal ni registro fisico oculto. */
+static RegallocStatus lower_order(LowerContext *ctx,
+                                  const IrInstruction *source,
+                                  RegallocMachineOp strict, bool invert)
+{
+    RegallocStatus status = lower_binary(ctx, source, strict);
+    if (status != REGALLOC_OK || !invert) return status;
     return emit(ctx, (RegallocMachineInstruction){
         .op = REGALLOC_M_BOOL_NOT, .def = source->result.value.temp,
         .use1 = IR_NO_ID, .type = source->result.type,
@@ -415,6 +448,10 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_XOR: return lower_binary(ctx, source, REGALLOC_M_XOR);
     case IR_OP_EQ:  return lower_binary(ctx, source, REGALLOC_M_EQ);
     case IR_OP_NE:  return lower_not_equal(ctx, source);
+    case IR_OP_LT:  return lower_order(ctx, source, REGALLOC_M_LT, false);
+    case IR_OP_LE:  return lower_order(ctx, source, REGALLOC_M_GT, true);
+    case IR_OP_GT:  return lower_order(ctx, source, REGALLOC_M_GT, false);
+    case IR_OP_GE:  return lower_order(ctx, source, REGALLOC_M_LT, true);
     case IR_OP_NOT: return lower_not(ctx, source);
     case IR_OP_CALL: return lower_call(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:

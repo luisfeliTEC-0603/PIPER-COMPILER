@@ -13,7 +13,9 @@
  * LOAD_SYMBOL/STORE_SYMBOL siguen siendo operaciones virtuales para el emisor;
  * los accesos escalares ya declaran sus direcciones y registros fijos. IMM
  * grande solo usa el destino y r0. CALL escalar declara argumentos, efectos
- * y salvado del llamador. Faltan arreglos y comprobaciones:
+ * y salvado del llamador. LT/GT conservan el signo de ambos operandos para
+ * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
+ * Faltan arreglos y comprobaciones:
  * no se debe emitir ASM directamente desde este subconjunto.
  */
 #include "regalloc.h"
@@ -50,6 +52,7 @@ typedef enum {
     REGALLOC_M_ADDI, REGALLOC_M_SUBI, /**< def op= immediate; inmediato signed 16. */
     REGALLOC_M_AND, REGALLOC_M_OR, REGALLOC_M_XOR,
     REGALLOC_M_EQ,          /**< eor: igualdad de patrones de 32 bits. */
+    REGALLOC_M_LT, REGALLOC_M_GT, /**< Orden tipado: ltn/gtn y r5 si hay signo. */
     REGALLOC_M_BOOL_NOT,    /**< xori def, #1; def contiene bool 0/1. */
     REGALLOC_M_SPILL_LOAD,  /**< def = palabra de slot en el frame. */
     REGALLOC_M_SPILL_STORE, /**< palabra de slot = use1. */
@@ -71,6 +74,8 @@ typedef enum {
  * LOAD/STORE_SYMBOL locales leen r7; los globales construyen la direccion
  * fisica desde r0. El store global usa y escribe r5, reservado fuera de K=4.
  * IMM, incluso grande, solo necesita su def y r0 para construirse.
+ * LT/GT leen left_unsigned/right_unsigned: la ISA ordena como unsigned;
+ * si algun operando tiene signo, r5 es auxiliar fijo fuera de K=4.
  * CALL_SAVE/ARG/CALL comparten call_site_id y call_arg_count. ARG lleva
  * call_arg_index; CALL lleva symbol=callee. El emisor guarda r1..r6 antes de
  * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
@@ -86,6 +91,7 @@ typedef struct {
     size_t call_site_id, call_arg_index, call_arg_count;
     IrId targets[2];
     IrType type;
+    bool left_unsigned, right_unsigned; /**< Solo LT/GT: signo de los operandos. */
     unsigned flags;
     unsigned fixed_reads, fixed_writes;
     SourceLocation location;
@@ -118,7 +124,7 @@ typedef struct RegallocMachineProgram {
     size_t call_site_count; /**< IDs 1..N, unicos entre todas las rutinas. */
 } RegallocMachineProgram;
 
-/** Baja COPY escalar, ADD/SUB/AND/OR/XOR sin chequeo, EQ/NE/NOT,
+/** Baja COPY escalar, ADD/SUB/AND/OR/XOR sin chequeo, EQ/NE/LT/LE/GT/GE/NOT,
  * CALL escalar, JUMP, BRANCH y RETURN. Los simbolos escalares incluyen direccion,
  * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
  * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
@@ -139,7 +145,8 @@ void regalloc_machine_program_free(RegallocMachineProgram *program);
  * escritura fija impide usar para un valor vivo a traves de ella.
  *
  * Este grafo se recalcula despues de cada cambio de instrucciones. Mientras
- * R2b no expanda todos los pseudos y llamadas, no sirve para emitir ASM. */
+ * R2b no modele las operaciones restantes ni exista emision ASM, no sirve
+ * como base para generar el ejecutable final. */
 typedef struct {
     size_t routine, temp_count, word_count;
     uint64_t *neighbors;

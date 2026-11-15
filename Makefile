@@ -61,7 +61,7 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order clean
 
 all: $(TARGET) bin/porygon-schedule
 
@@ -122,6 +122,19 @@ check-regalloc-lower-calls: build/regalloc/machine.o build/regalloc/assignment.o
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_lower_calls
 	build/runs/regalloc/test_lower_calls
+
+# R2b orden tipado: signo independiente en cada operando y recorrido del grafo.
+check-regalloc-lower-order: build/regalloc/machine.o build/regalloc/assignment.o \
+                           build/regalloc/color_machine.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_order.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_order
+	build/runs/regalloc/test_lower_order
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
