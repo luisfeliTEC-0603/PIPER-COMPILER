@@ -46,6 +46,23 @@ tabla predictiva durante `make`. Los archivos quedan en `build/analysis/ll1/`.
 Para consultar la tabla: `bin/pipoc --ll1` (comando 24 de [comandos.md](docs/comandos.md)).
 El parser Bison construye el AST; LL(1) también permite consultar terminales esperados.
 
+Para verla como una matriz de no terminales por terminales, con las
+producciones en las celdas, ejecutar:
+
+```sh
+make ll1-table
+```
+
+Abrir `build/analysis/ll1/table.html` en un navegador. El reporte incluye
+desplazamiento, filtros por fila/columna y los conjuntos nullable, FIRST y
+FOLLOW. No necesita servidor ni conexión a Internet. Se genera con el mismo
+análisis que produce los datos C.
+
+La [guía de LL(1)](docs/ll1-guide.md) explica el código del generador, los
+cálculos por punto fijo, la representación de epsilon y los conflictos, con
+ejemplos para practicar y defender el diseño. También distingue esta tabla
+del parser de Bison que construye el AST durante la compilación.
+
 ## Salida del compilador
 
 Para instalar y abrir el IDE desde la raíz del repositorio (Python 3.11 o superior):

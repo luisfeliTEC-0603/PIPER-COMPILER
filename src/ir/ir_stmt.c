@@ -51,11 +51,16 @@ static void push_break(IrContext *ctx, IrId target, SourceLocation location)
     ctx->break_targets[ctx->break_count++] = target;
 }
 
-/* Traducir ambas ramas sin elegir una durante compilación. La unión se crea
- * solo si hay continuación; sin fallback, el destino falso ya es la unión. */
+/* El literal true siempre ejecuta su cuerpo, como reconoce semántica al revisar
+ * retornos. Las demás condiciones conservan ambas ramas y su continuación. */
 static void when_statement(IrContext *ctx, const AstNode *node)
 {
-    IrOperand value = condition_value(ctx, node->data.when_statement.condition);
+    const AstNode *condition = node->data.when_statement.condition;
+    if (condition->kind == AST_BOOLEAN_LITERAL && condition->data.boolean_literal.value) {
+        ir_stmt(ctx, node->data.when_statement.then_block);
+        return;
+    }
+    IrOperand value = condition_value(ctx, condition);
     if (ctx->error.status != IR_OK) return;
     IrId yes = ir_new_block(ctx), no = ir_new_block(ctx);
     if (ctx->error.status != IR_OK) return;

@@ -6,6 +6,7 @@ gramática si dos producciones intentan ocupar la misma celda predictiva.
 """
 
 import argparse
+import html
 import json
 import re
 import shlex
@@ -37,6 +38,17 @@ class Grammar:
     nonterminals: Tuple[Symbol, ...]
     start: str
     productions: Tuple[Production, ...]
+
+
+@dataclass(frozen=True)
+class GrammarAnalysis:
+    # frozen impide reasignar atributos; los conjuntos y diccionarios internos
+    # siguen siendo mutables. Los consumidores deben usarlos como solo lectura.
+    # FIRST no almacena ε: esa información se conserva en nullable.
+    nullable: Set[str]
+    first: Dict[str, Set[str]]
+    follow: Dict[str, Set[str]]
+    table: Dict[Tuple[str, str], int]
 
 
 RULE_TOKEN = re.compile(r"%empty|[A-Z][A-Z0-9_]*|[:|;]")
@@ -237,6 +249,12 @@ def sequence_first(
     nullable: Set[str],
     first: Dict[str, Set[str]],
 ) -> Tuple[Set[str], bool]:
+    """Devuelve FIRST de la secuencia, sin epsilon, y su anulabilidad.
+
+    El segundo resultado indica si toda la secuencia puede producir vacío.
+    Usa los conjuntos FIRST disponibles sin modificarlos. Para una secuencia
+    vacía devuelve (set(), True).
+    """
     result: Set[str] = set()
     for symbol in sequence:
         if symbol in terminals:
@@ -248,8 +266,8 @@ def sequence_first(
     return result, True
 
 
-def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
-    terminals = {symbol.name for symbol in grammar.terminals}
+def calculate_nullable(grammar: Grammar) -> Set[str]:
+    """Calcula por punto fijo los no terminales que pueden producir epsilon."""
     nonterminals = {symbol.name for symbol in grammar.nonterminals}
     nullable: Set[str] = set()
 
@@ -257,13 +275,25 @@ def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
     while changed:
         changed = False
         for production in grammar.productions:
+            # Para una producción vacía, all(...) es True: deriva epsilon.
             if all(
                 symbol in nonterminals and symbol in nullable
                 for symbol in production.rhs
             ) and production.lhs not in nullable:
                 nullable.add(production.lhs)
                 changed = True
+    return nullable
 
+
+def calculate_first(
+    grammar: Grammar, nullable: Set[str]
+) -> Dict[str, Set[str]]:
+    """Une FIRST de cada rhs en FIRST de su lhs hasta alcanzar un punto fijo.
+
+    Los conjuntos contienen solo terminales; epsilon se conserva en nullable.
+    """
+    terminals = {symbol.name for symbol in grammar.terminals}
+    nonterminals = {symbol.name for symbol in grammar.nonterminals}
     first: Dict[str, Set[str]] = {name: set() for name in nonterminals}
     changed = True
     while changed:
@@ -274,8 +304,21 @@ def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
             )
             before = len(first[production.lhs])
             first[production.lhs].update(additions)
-            changed = changed or len(first[production.lhs]) != before
+            if len(first[production.lhs]) != before:
+                changed = True
+    return first
 
+
+def calculate_follow(
+    grammar: Grammar, nullable: Set[str], first: Dict[str, Set[str]]
+) -> Dict[str, Set[str]]:
+    """Propaga los terminales que pueden seguir a cada no terminal.
+
+    Para A -> α B β, agrega FIRST(β) a FOLLOW(B). Si β es anulable,
+    agrega también FOLLOW(A). Repite hasta que ningún conjunto crezca.
+    """
+    terminals = {symbol.name for symbol in grammar.terminals}
+    nonterminals = {symbol.name for symbol in grammar.nonterminals}
     follow: Dict[str, Set[str]] = {name: set() for name in nonterminals}
     follow[grammar.start].add("EOF")
     changed = True
@@ -293,8 +336,23 @@ def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
                     additions.update(follow[production.lhs])
                 before = len(follow[symbol])
                 follow[symbol].update(additions)
-                changed = changed or len(follow[symbol]) != before
+                if len(follow[symbol]) != before:
+                    changed = True
+    return follow
 
+
+def build_predictive_table(
+    grammar: Grammar,
+    nullable: Set[str],
+    first: Dict[str, Set[str]],
+    follow: Dict[str, Set[str]],
+) -> Dict[Tuple[str, str], int]:
+    """Asocia cada celda (lhs, terminal) con un índice de producción.
+
+    Usa FIRST del rhs y, si es anulable, FOLLOW del lhs. Rechaza conflictos
+    LL(1) y producciones sin anticipaciones; no modifica los conjuntos.
+    """
+    terminals = {symbol.name for symbol in grammar.terminals}
     table: Dict[Tuple[str, str], int] = {}
     for production_index, production in enumerate(grammar.productions):
         lookaheads, production_nullable = sequence_first(
@@ -322,6 +380,20 @@ def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
                 )
             table[cell] = production_index
     return table
+
+
+def analyze_grammar(grammar: Grammar) -> GrammarAnalysis:
+    """Coordina los cálculos LL(1) en su orden de dependencia."""
+    nullable = calculate_nullable(grammar)
+    first = calculate_first(grammar, nullable)
+    follow = calculate_follow(grammar, nullable, first)
+    table = build_predictive_table(grammar, nullable, first, follow)
+    return GrammarAnalysis(nullable, first, follow, table)
+
+
+def calculate_table(grammar: Grammar) -> Dict[Tuple[str, str], int]:
+    """Conserva la API de consulta de la tabla sin recalcular otro algoritmo."""
+    return analyze_grammar(grammar).table
 
 
 def format_production(production: Production) -> str:
@@ -439,6 +511,80 @@ def render_data(
     return "\n".join(lines)
 
 
+def render_html(grammar: Grammar, analysis: GrammarAnalysis, source: Path) -> str:
+    """Presenta los mismos datos que se emiten a C; no vuelve a inferir reglas."""
+    displays = {symbol.name: symbol.display
+                for symbol in (*grammar.terminals, *grammar.nonterminals)}
+
+    def escape(value: str) -> str:
+        return html.escape(value, quote=True)
+
+    def rhs_text(production: Production) -> str:
+        return " ".join(displays[symbol] for symbol in production.rhs) or "ε"
+
+    def set_text(values: Set[str], nullable: bool = False) -> str:
+        # Orden declarativo estable: los sets no tienen orden de presentación.
+        names = [symbol.display for symbol in grammar.terminals
+                 if symbol.name in values]
+        if nullable:
+            names.append("ε")
+        return escape("{ " + ", ".join(names) + " }")
+
+    headers = "".join(
+        '<th scope="col" data-terminal="{}">{}</th>'.format(
+            escape(symbol.name), escape(symbol.display))
+        for symbol in grammar.terminals
+    )
+    rows = []
+    sets = []
+    for nonterminal in grammar.nonterminals:
+        cells = []
+        for terminal in grammar.terminals:
+            production_index = analysis.table.get((nonterminal.name, terminal.name))
+            coordinate = 'data-terminal="{}"'.format(escape(terminal.name))
+            if production_index is None:
+                cells.append('<td {} class="empty" title="Sin producción: error sintáctico"></td>'
+                             .format(coordinate))
+            else:
+                production = grammar.productions[production_index]
+                title = "{} → {}".format(nonterminal.display, rhs_text(production))
+                cells.append('<td {} data-production="{}" title="{}">{}</td>'.format(
+                    coordinate, production_index + 1, escape(title),
+                    escape(rhs_text(production))))
+        rows.append('<tr data-nonterminal="{}"><th scope="row">{}</th>{}</tr>'.format(
+            escape(nonterminal.name), escape(nonterminal.display), "".join(cells)))
+        sets.append('<tr><th scope="row">{}</th><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
+            escape(nonterminal.display), "Sí" if nonterminal.name in analysis.nullable else "No",
+            set_text(analysis.first[nonterminal.name], nonterminal.name in analysis.nullable),
+            set_text(analysis.follow[nonterminal.name])))
+
+    def options(symbols: Sequence[Symbol]) -> str:
+        return "".join('<option value="{}">{}</option>'.format(
+            escape(symbol.name), escape(symbol.display)) for symbol in symbols)
+
+    productions = "".join('<li id="production-{}"><code>{} → {}</code></li>'.format(
+        index + 1, escape(displays[production.lhs]), escape(rhs_text(production)))
+        for index, production in enumerate(grammar.productions))
+    template = Path(__file__).with_name("ll1_report.html").read_text(encoding="utf-8")
+    # Sustitución en una sola pasada: el texto de una gramática no se interpreta
+    # como HTML ni como nuevos marcadores de la plantilla.
+    values = {
+        "SOURCE": escape(source.as_posix()),
+        "START": escape(displays[grammar.start]),
+        "TERMINAL_COUNT": str(len(grammar.terminals)),
+        "NONTERMINAL_COUNT": str(len(grammar.nonterminals)),
+        "PRODUCTION_COUNT": str(len(grammar.productions)),
+        "CELL_COUNT": str(len(analysis.table)),
+        "HEADERS": headers,
+        "ROWS": "\n".join(rows),
+        "SETS": "\n".join(sets),
+        "PRODUCTIONS": productions,
+        "NONTERMINAL_OPTIONS": options(grammar.nonterminals),
+        "TERMINAL_OPTIONS": options(grammar.terminals),
+    }
+    return re.sub(r"@@([A-Z_]+)@@", lambda match: values[match.group(1)], template)
+
+
 def write_output(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -448,24 +594,26 @@ def write_output(path: Path, content: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Genera enums o datos C para la gramática predictiva"
+        description="Genera enums, datos C o un reporte HTML de la gramática predictiva"
     )
     parser.add_argument("grammar", type=Path, help="archivo .ll1 de entrada")
     parser.add_argument(
-        "--kind", required=True, choices=("symbols", "data"), help="salida a generar"
+        "--kind", required=True, choices=("symbols", "data", "html"), help="salida a generar"
     )
     parser.add_argument("--output", required=True, type=Path, help="archivo de salida")
     arguments = parser.parse_args()
 
     try:
         grammar = parse_grammar(arguments.grammar)
-        table = calculate_table(grammar)
+        analysis = analyze_grammar(grammar)
         if len(grammar.productions) > 65535:
             raise GrammarError("hay demasiadas producciones para la tabla de 16 bits")
         if arguments.kind == "symbols":
             content = render_symbols(grammar, arguments.grammar)
+        elif arguments.kind == "html":
+            content = render_html(grammar, analysis, arguments.grammar)
         else:
-            content = render_data(grammar, table, arguments.grammar)
+            content = render_data(grammar, analysis.table, arguments.grammar)
         write_output(arguments.output, content)
     except (GrammarError, OSError) as error:
         print("generate_ll1: error: {}".format(error), file=sys.stderr)

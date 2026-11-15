@@ -98,7 +98,7 @@ Las comprobaciones y operaciones fallidas tienen salida de error implícita y no
 | Asignación escalar | Evaluar origen y escribir el símbolo de destino. La declaración solo registra almacenamiento; no introduce inicialización inexistente. |
 | Asignación indexada | Evaluar índices y comprobar límites antes del origen; conservar la dirección calculada y emitir un solo `STORE`. |
 | `++`/`--` | Prefijos: capturar valor, comprobar límite del tipo, actualizar destino y devolver el valor nuevo. En la primera versión se conserva el soporte actual de identificadores escalares; otros destinos retornan `IR_UNSUPPORTED`. |
-| `when`/`fallback` | Condición, dos destinos, ramas y unión solo si alguna rama continúa. Cada rama que retorna termina sin salto posterior. |
+| `when`/`fallback` | Para el literal bool true, traducir directamente el cuerpo verdadero, sin rama falsa ni unión artificial; coincide con la garantía de retorno que ya reconoce semántica. Para las demás condiciones, conservar dos destinos y unión solo si alguna rama continúa. Cada rama que retorna termina sin salto posterior. No propagar valores de variables. |
 | `alwhen` | Bloques de condición, cuerpo y salida. Reevaluar condición en cada vuelta; volver desde el cuerpo solo si no terminó. |
 | `loop` | Compatibilidad inicial: paso literal entero positivo, inicio una vez, fin reevaluado por vuelta y límite superior exclusivo. Actualizar control después del cuerpo; conservar el comportamiento aritmético actual de esa actualización. Paso distinto retorna `IR_UNSUPPORTED`, sin cambiar el parser/semántico. |
 | `break` | Saltar a la salida del ciclo más interno mediante pila de destinos; no emitir el resto de ese camino. |
