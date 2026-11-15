@@ -1,5 +1,5 @@
 /** @file machine.c
- * Primera bajada escalar de IR a instrucciones virtuales de dos direcciones.
+ * Bajada de IR escalar y accesos a arreglos a maquina virtual.
  *
  * Las operaciones binarias de PORYGON modifican su primer registro. Por eso
  * primero copiamos/materializamos el operando izquierdo en el resultado y
@@ -60,7 +60,8 @@ void regalloc_machine_program_free(RegallocMachineProgram *program)
 }
 
 /** La capacidad base es cuatro veces las instrucciones IR del bloque: COPY
- * ocupa como maximo 2, NE 4, BRANCH 2 y RETURN 3. Por cada CALL se suman
+ * ocupa como maximo 2, NE 4, ADD de direccion 3, BRANCH 2 y RETURN 3.
+ * Por cada CALL se suman
  * dos posiciones por argumento para materializacion y CALL_ARG. Se comprueba
  * antes de reservar; no se deja una instruccion a medias si se agota. */
 static RegallocStatus emit(LowerContext *ctx, RegallocMachineInstruction in)
@@ -287,19 +288,30 @@ static RegallocStatus lower_neg(LowerContext *ctx,
 static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *source,
                                    RegallocMachineOp op)
 {
+    bool address_add = op == REGALLOC_M_ADD && source->result.type.address;
+    bool general = op == REGALLOC_M_DIV || op == REGALLOC_M_MOD ||
+                   op == REGALLOC_M_POW;
     bool checked = op == REGALLOC_M_CHECKED_ADD ||
                    op == REGALLOC_M_CHECKED_SUB ||
-                   op == REGALLOC_M_CHECKED_MUL;
+                   op == REGALLOC_M_CHECKED_MUL || general;
     unsigned allowed_flags = checked
         ? IR_READ_MEMORY | IR_CHECKED | IR_MAY_TRAP : IR_READ_MEMORY;
     if ((source->flags & ~allowed_flags) != 0 ||
         (checked && (source->flags & IR_CHECKED) == 0) ||
         source->result.kind != IR_OPERAND_TEMP ||
-        !scalar(source->result) || !scalar(source->arg1) ||
+        !(address_add
+            ? source->arg1.kind == IR_OPERAND_TEMP &&
+              source->arg1.type.address &&
+              source->arg1.type.piper == source->result.type.piper
+            : scalar(source->result) && scalar(source->arg1)) ||
         !scalar(source->arg2))
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "Binaria con flags o tipo no soportado en R2.");
+    if (general && ctx->call_reserve_size < SYMBOL_CALL_RECORD_SIZE)
+        return machine_report(ctx->diagnostic, REGALLOC_INVALID_INPUT,
+                              ctx->routine_index, ctx->block_id,
+                              "DIV/MOD/POW requieren 32 bytes de trabajo bajo r7.");
     IrId target = source->result.value.temp;
     /* La IR generada usa un resultado fresco. Rechazar una reasignacion aqui
      * evita destruir un operando antes de consumirlo en la forma de 2 registros. */
@@ -322,7 +334,16 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
         status = materialize(ctx, source->arg2, IR_NO_ID, &right,
                              source->location);
     if (status != REGALLOC_OK) return status;
-    status = materialize(ctx, source->arg1, target, &left, source->location);
+    if (address_add) {
+        left = target;
+        status = emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_MOVE, .def = target,
+            .use1 = source->arg1.value.temp, .type = source->result.type,
+            .location = source->location
+        });
+    } else
+        status = materialize(ctx, source->arg1, target, &left,
+                             source->location);
     if (status != REGALLOC_OK) return status;
     bool ordered = op == REGALLOC_M_LT || op == REGALLOC_M_GT;
     bool left_unsigned = unsigned_type(source->arg1.type.piper);
@@ -338,13 +359,17 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
         .def = left, .use1 = right,
         .immediate = immediate ? source->arg2.value.constant : 0,
         .type = source->result.type,
-        .left_unsigned = ordered && left_unsigned,
-        .right_unsigned = ordered && right_unsigned,
-        .fixed_reads = checked ? REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6
+        .left_unsigned = (ordered || general) && left_unsigned,
+        .right_unsigned = (ordered || general) && right_unsigned,
+        .fixed_reads = general ? REGALLOC_PHYS_R0 | REGALLOC_PHYS_R7 |
+                                 REGALLOC_CANDIDATE_MASK
+            : checked ? REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6
             : needs_scratch ? REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 : 0,
         .fixed_writes = checked ? REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6
             : needs_scratch ? REGALLOC_PHYS_R5 : 0,
-        .flags = checked ? IR_CHECKED | IR_MAY_TRAP : 0,
+        .flags = general ? IR_CHECKED | IR_MAY_TRAP |
+                           IR_READ_MEMORY | IR_WRITE_MEMORY
+            : checked ? IR_CHECKED | IR_MAY_TRAP : 0,
         .location = source->location
     });
 }
@@ -399,6 +424,100 @@ static RegallocStatus lower_not(LowerContext *ctx,
     });
 }
 
+/* ADDR conserva la identidad del arreglo para que el emisor distinga una
+ * base global/local de un parametro que ya contiene un puntero. En los dos
+ * primeros casos construye una direccion; en el tercero carga una palabra. */
+static RegallocStatus lower_address(LowerContext *ctx,
+                                    const IrInstruction *source)
+{
+    if (source->arg1.kind != IR_OPERAND_SYMBOL ||
+        source->arg1.value.symbol == NULL ||
+        !source->arg1.value.symbol->is_array ||
+        source->result.kind != IR_OPERAND_TEMP ||
+        !source->result.type.address || source->flags != 0)
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "ADDR requiere un arreglo y resultado direccion.");
+    const Symbol *symbol = source->arg1.value.symbol;
+    RegallocMachineInstruction in = {
+        .op = REGALLOC_M_ADDR, .def = source->result.value.temp,
+        .use1 = IR_NO_ID, .type = source->result.type,
+        .location = source->location
+    };
+    symbol_access(ctx, &in, symbol, false);
+    if (symbol->symbol_class == SYMBOL_PARAM) in.flags = IR_READ_MEMORY;
+    return emit(ctx, in);
+}
+
+/* La comparacion es unsigned: un indice negativo tambien falla. r5/r6
+ * materializan el limite y la comparacion sin ocupar un color adicional. */
+static RegallocStatus lower_bounds(LowerContext *ctx,
+                                   const IrInstruction *source)
+{
+    if (source->result.kind != IR_OPERAND_NONE ||
+        !scalar(source->arg1) ||
+        source->arg2.kind != IR_OPERAND_CONSTANT ||
+        source->arg2.value.constant <= 0 ||
+        (source->flags & ~IR_MAY_TRAP) != 0)
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "CHECK_BOUNDS requiere indice escalar y limite constante.");
+    IrId index;
+    RegallocStatus status = materialize(ctx, source->arg1, IR_NO_ID,
+                                        &index, source->location);
+    if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_CHECK_BOUNDS, .def = IR_NO_ID, .use1 = index,
+        .immediate = source->arg2.value.constant,
+        .fixed_reads = REGALLOC_PHYS_R0,
+        .fixed_writes = REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6,
+        .flags = IR_MAY_TRAP, .type = source->arg1.type,
+        .location = source->location
+    });
+}
+
+/* LOAD/STORE indirectos operan sobre una direccion virtual previamente
+ * calculada; STORE expone ambos usos para liveness y el grafo. */
+static RegallocStatus lower_indirect(LowerContext *ctx,
+                                     const IrInstruction *source)
+{
+    if (source->arg1.kind != IR_OPERAND_TEMP ||
+        !source->arg1.type.address ||
+        (source->flags & ~(IR_READ_MEMORY | IR_WRITE_MEMORY)) != 0)
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "Acceso indirecto requiere direccion virtual.");
+    if (source->op == IR_OP_LOAD) {
+        if (source->result.kind != IR_OPERAND_TEMP ||
+            !scalar(source->result))
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "LOAD requiere resultado escalar.");
+        return emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_LOAD_INDIRECT,
+            .def = source->result.value.temp,
+            .use1 = source->arg1.value.temp,
+            .type = source->result.type, .flags = IR_READ_MEMORY,
+            .location = source->location
+        });
+    }
+    if (source->result.kind != IR_OPERAND_NONE ||
+        !scalar(source->arg2))
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "STORE requiere valor escalar.");
+    IrId value;
+    RegallocStatus status = materialize(ctx, source->arg2, IR_NO_ID,
+                                        &value, source->location);
+    if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_STORE_INDIRECT,
+        .def = IR_NO_ID, .use1 = source->arg1.value.temp,
+        .use2 = value, .type = source->arg2.type,
+        .flags = IR_WRITE_MEMORY, .location = source->location
+    });
+}
+
 /* La IR ya evaluo los argumentos de izquierda a derecha. Materializarlos
  * antes de CALL_SAVE evita crear definiciones entre TO_ARG y CALL: los
  * registros fisicos con argumentos quedan intactos hasta el salto. CALL_SAVE
@@ -432,12 +551,17 @@ static RegallocStatus lower_call(LowerContext *ctx,
 
     IrId args[REGALLOC_MAX_CALL_ARGS];
     for (size_t i = 0; i < count; i++) {
-        if (!scalar(source->extra.call.arguments[i]))
-            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
-                                  ctx->routine_index, ctx->block_id,
-                                  "La llamada virtual aun no admite argumentos de arreglo.");
-        RegallocStatus status = materialize(ctx, source->extra.call.arguments[i],
-                                            IR_NO_ID, &args[i], source->location);
+        IrOperand arg = source->extra.call.arguments[i];
+        if (arg.type.address) {
+            if (arg.kind != IR_OPERAND_TEMP)
+                return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                      ctx->routine_index, ctx->block_id,
+                                      "El argumento arreglo requiere direccion virtual.");
+            args[i] = arg.value.temp;
+            continue;
+        }
+        RegallocStatus status = materialize(ctx, arg, IR_NO_ID,
+                                            &args[i], source->location);
         if (status != REGALLOC_OK) return status;
     }
 
@@ -535,6 +659,9 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
         (source->flags & IR_CHECKED) ? REGALLOC_M_CHECKED_SUB : REGALLOC_M_SUB);
     case IR_OP_MUL: return lower_binary(ctx, source,
         (source->flags & IR_CHECKED) ? REGALLOC_M_CHECKED_MUL : REGALLOC_M_MUL);
+    case IR_OP_DIV: return lower_binary(ctx, source, REGALLOC_M_DIV);
+    case IR_OP_MOD: return lower_binary(ctx, source, REGALLOC_M_MOD);
+    case IR_OP_POW: return lower_binary(ctx, source, REGALLOC_M_POW);
     case IR_OP_AND: return lower_binary(ctx, source, REGALLOC_M_AND);
     case IR_OP_OR:  return lower_binary(ctx, source, REGALLOC_M_OR);
     case IR_OP_XOR: return lower_binary(ctx, source, REGALLOC_M_XOR);
@@ -546,6 +673,10 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_GE:  return lower_order(ctx, source, REGALLOC_M_LT, true);
     case IR_OP_NOT: return lower_not(ctx, source);
     case IR_OP_NEG: return lower_neg(ctx, source);
+    case IR_OP_ADDR: return lower_address(ctx, source);
+    case IR_OP_CHECK_BOUNDS: return lower_bounds(ctx, source);
+    case IR_OP_LOAD: case IR_OP_STORE:
+        return lower_indirect(ctx, source);
     case IR_OP_CALL: return lower_call(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:
         return lower_control(ctx, source);

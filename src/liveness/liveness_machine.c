@@ -13,7 +13,7 @@
 #include <stdlib.h>
 
 typedef struct {
-    bool has_def, has_use, def_is_use, terminator;
+    bool has_def, has_use, has_use2, def_is_use, terminator;
     size_t target_count;
 } MachineShape;
 
@@ -23,10 +23,12 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
     switch (op) {
     case REGALLOC_M_IMM:
     case REGALLOC_M_LOAD_SYMBOL:
+    case REGALLOC_M_ADDR:
     case REGALLOC_M_SPILL_LOAD:
         shape->has_def = true;
         return true;
     case REGALLOC_M_STORE_SYMBOL:
+    case REGALLOC_M_CHECK_BOUNDS:
     case REGALLOC_M_SPILL_STORE:
     case REGALLOC_M_TO_RETURN:
     case REGALLOC_M_CALL_ARG:
@@ -39,13 +41,18 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
         shape->has_def = true;
         return true;
     case REGALLOC_M_MOVE:
+    case REGALLOC_M_LOAD_INDIRECT:
     case REGALLOC_M_CHECKED_COPY:
     case REGALLOC_M_CHECKED_NEG:
         shape->has_def = shape->has_use = true;
         return true;
+    case REGALLOC_M_STORE_INDIRECT:
+        shape->has_use = shape->has_use2 = true;
+        return true;
     case REGALLOC_M_ADD: case REGALLOC_M_SUB: case REGALLOC_M_MUL:
     case REGALLOC_M_CHECKED_ADD: case REGALLOC_M_CHECKED_SUB:
     case REGALLOC_M_CHECKED_MUL:
+    case REGALLOC_M_DIV: case REGALLOC_M_MOD: case REGALLOC_M_POW:
     case REGALLOC_M_AND: case REGALLOC_M_OR: case REGALLOC_M_XOR:
     case REGALLOC_M_EQ: case REGALLOC_M_LT: case REGALLOC_M_GT:
         shape->has_def = shape->has_use = shape->def_is_use = true;
@@ -116,6 +123,7 @@ static LivenessStatus validate_routine(const RegallocMachineRoutine *routine,
             if (!instruction_shape(in->op, &shape) ||
                 (in->def != IR_NO_ID) != shape.has_def ||
                 (in->use1 != IR_NO_ID) != shape.has_use ||
+                (shape.has_use2 && in->use2 >= routine->temp_count) ||
                 (shape.has_def && in->def >= routine->temp_count) ||
                 (shape.has_use && in->use1 >= routine->temp_count) ||
                 ((in->op == REGALLOC_M_SPILL_LOAD ||
@@ -127,7 +135,8 @@ static LivenessStatus validate_routine(const RegallocMachineRoutine *routine,
                 return machine_error(diagnostic, LIVENESS_INVALID_INPUT, r, block->id,
                                      "Forma o ID de instruccion virtual invalido.");
 
-            size_t uses = (size_t)shape.has_use + (size_t)shape.def_is_use;
+            size_t uses = (size_t)shape.has_use + (size_t)shape.has_use2 +
+                          (size_t)shape.def_is_use;
             if (uses > SIZE_MAX - *use_count)
                 return machine_error(diagnostic, LIVENESS_OUT_OF_MEMORY, r, block->id,
                                      "Demasiados usos virtuales.");
@@ -190,11 +199,14 @@ static LivenessStatus prepare_routine(LiveInputRoutine *target,
             MachineShape shape;
             instruction_shape(in->op, &shape); /* Ya validado. */
             transfer->definition = shape.has_def ? in->def : IR_NO_ID;
-            transfer->use_count = (size_t)shape.has_use + (size_t)shape.def_is_use;
+            transfer->use_count = (size_t)shape.has_use +
+                                  (size_t)shape.has_use2 +
+                                  (size_t)shape.def_is_use;
             if (transfer->use_count != 0) {
                 transfer->uses = target->use_storage + next_use;
                 if (shape.def_is_use) target->use_storage[next_use++] = in->def;
                 if (shape.has_use) target->use_storage[next_use++] = in->use1;
+                if (shape.has_use2) target->use_storage[next_use++] = in->use2;
             }
         }
     }

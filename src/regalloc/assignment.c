@@ -66,7 +66,9 @@ static RegallocStatus check_operands(const RegallocAssignedProgram *assigned,
         for (size_t i = 0; i < block->instruction_count; i++) {
             const RegallocMachineInstruction *in = &block->instructions[i];
             if ((in->def != IR_NO_ID && colors[in->def] == 0) ||
-                (in->use1 != IR_NO_ID && colors[in->use1] == 0))
+                (in->use1 != IR_NO_ID && colors[in->use1] == 0) ||
+                (in->op == REGALLOC_M_STORE_INDIRECT &&
+                 colors[in->use2] == 0))
                 return assignment_error(diagnostic, REGALLOC_INVALID_INPUT, r,
                                         block->id,
                                         "Una instruccion usa un temporal sin registro.");

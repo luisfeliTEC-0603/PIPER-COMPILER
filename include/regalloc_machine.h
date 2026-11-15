@@ -16,7 +16,7 @@
  * y salvado del llamador. LT/GT conservan el signo de ambos operandos para
  * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
  * La aritmetica comprobada usa r5/r6 reservados y conserva MAY_TRAP.
- * Faltan arreglos y otras operaciones:
+ * ADDR/CHECK_BOUNDS/LOAD/STORE cubren accesos indexados; faltan intrinsecas:
  * no se debe emitir ASM directamente desde este subconjunto.
  */
 #include "regalloc.h"
@@ -54,11 +54,17 @@ typedef enum {
     REGALLOC_M_ADD, REGALLOC_M_SUB, REGALLOC_M_MUL,
     REGALLOC_M_CHECKED_ADD, REGALLOC_M_CHECKED_SUB,
     REGALLOC_M_CHECKED_MUL, /**< Operaciones tipadas con error por overflow. */
+    REGALLOC_M_DIV, REGALLOC_M_MOD, REGALLOC_M_POW,
+    /**< Algoritmos comprobados con registro de trabajo bajo r7. */
     REGALLOC_M_ADDI, REGALLOC_M_SUBI, /**< def op= immediate; inmediato signed 16. */
     REGALLOC_M_AND, REGALLOC_M_OR, REGALLOC_M_XOR,
     REGALLOC_M_EQ,          /**< eor: igualdad de patrones de 32 bits. */
     REGALLOC_M_LT, REGALLOC_M_GT, /**< Orden tipado: ltn/gtn y r5 si hay signo. */
     REGALLOC_M_BOOL_NOT,    /**< xori def, #1; def contiene bool 0/1. */
+    REGALLOC_M_ADDR,        /**< def = base de arreglo global/local/parametro. */
+    REGALLOC_M_CHECK_BOUNDS,/**< use1 < immediate unsigned o error_indice. */
+    REGALLOC_M_LOAD_INDIRECT, /**< def = memoria tipada en use1 + 0. */
+    REGALLOC_M_STORE_INDIRECT,/**< memoria tipada en use1 + 0 = use2. */
     REGALLOC_M_SPILL_LOAD,  /**< def = palabra de slot en el frame. */
     REGALLOC_M_SPILL_STORE, /**< palabra de slot = use1. */
     REGALLOC_M_CALL_SAVE,   /**< Guarda r1..r6 antes de colocar argumentos. */
@@ -71,7 +77,9 @@ typedef enum {
     REGALLOC_M_RETURN        /**< Retorno; lee r1 si hay valor. */
 } RegallocMachineOp;
 
-/** IR_NO_ID significa que no hay def/use1. En una operacion de dos direcciones
+/** IR_NO_ID significa que no hay def/use1. use2 solo se interpreta para
+ * STORE_INDIRECT: la direccion y el valor han de estar vivos simultaneamente.
+ * En una operacion de dos direcciones
  * def es tambien uso: el valor anterior de def participa en el calculo.
  * fixed_reads/writes son mascaras de registros r0..r7. slot solo se interpreta
  * en SPILL_LOAD/STORE: es un ID local a la rutina, no un offset ni un Symbol.
@@ -83,6 +91,13 @@ typedef enum {
  * si algun operando tiene signo, r5 es auxiliar fijo fuera de K=4.
  * CHECKED_ADD/SUB/MUL leen y escriben def, leen use1, y usan r5/r6 fijos
  * para detectar desborde segun type.piper antes de publicar un valor valido.
+ * DIV/MOD/POW conservan r1..r4 internamente en 32 bytes bajo r7; sus
+ * left_unsigned/right_unsigned indican la interpretacion de los operandos.
+ * ADDR entrega la base de un arreglo: global = direccion fisica, local =
+ * r7 + immediate, parametro = puntero cargado desde immediate(r7).
+ * CHECK_BOUNDS compara use1 con immediate como unsigned y salta a error_indice
+ * si falla; r5/r6 son auxiliares fijos. LOAD_INDIRECT y STORE_INDIRECT
+ * acceden al tipo de elemento en 0(use1); STORE tambien lee use2.
  * CHECKED_COPY/NEG leen use1 sin modificarlo; source_type conserva su signo,
  * type es el destino. Comprueban rango con r5/r6 antes de definir def.
  * CALL_SAVE/ARG/CALL comparten call_site_id y call_arg_count. ARG lleva
@@ -93,7 +108,7 @@ typedef enum {
  * de argumento y el salto. */
 typedef struct {
     RegallocMachineOp op;
-    IrId def, use1;
+    IrId def, use1, use2;
     int64_t immediate;
     const Symbol *symbol;
     size_t slot;
@@ -101,7 +116,7 @@ typedef struct {
     IrId targets[2];
     IrType type;
     IrType source_type; /**< CHECKED_COPY/NEG: tipo de use1 antes del chequeo. */
-    bool left_unsigned, right_unsigned; /**< Solo LT/GT: signo de los operandos. */
+    bool left_unsigned, right_unsigned; /**< LT/GT y DIV/MOD/POW: signos. */
     unsigned flags;
     unsigned fixed_reads, fixed_writes;
     SourceLocation location;
@@ -135,16 +150,18 @@ typedef struct RegallocMachineProgram {
 } RegallocMachineProgram;
 
 /** Baja COPY escalar con/sin chequeo, NEG comprobada,
- * ADD/SUB/MUL con/sin chequeo, AND/OR/XOR,
- * EQ/NE/LT/LE/GT/GE/NOT,
- * CALL escalar, JUMP, BRANCH y RETURN. Los simbolos escalares incluyen direccion,
+ * ADD/SUB/MUL con/sin chequeo, DIV/MOD/POW comprobadas, AND/OR/XOR,
+ * EQ/NE/LT/LE/GT/GE/NOT, ADD de direcciones,
+ * ADDR/CHECK_BOUNDS/LOAD/STORE de arreglos,
+ * CALL con argumentos escalares o punteros de arreglo, JUMP, BRANCH y RETURN.
+ * Los simbolos escalares incluyen direccion,
  * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
  * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
  * limpia el resultado parcial y deja *out=NULL. Requiere un analisis preparado
  * sobre IR/CFG aun vivos; analysis->liveness puede ser NULL.
  *
- * El modelo no se integra aun con el CLI. Es la entrada para el liveness de
- * maquina y la expansion de instrucciones en el siguiente tramo de R2. */
+ * El modelo no se integra aun con el CLI. regalloc_allocate consume esta
+ * bajada y entrega colores/spills para el subconjunto admitido. */
 RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
                                     RegallocMachineProgram **out,
                                     RegallocDiagnostic *diagnostic);
@@ -192,11 +209,11 @@ typedef struct {
     bool potential_spill;
 } RegallocSimplifyStep;
 
-/** Resultado exploratorio del grafo actual. steps es la pila de simplificacion
+/** Resultado de colorear un grafo. steps es la pila de simplificacion
  * (el ultimo elemento se colorea primero). colors[t] vale 1..4 o 0 si no pudo
  * colorearse; un 0 no inserta todavia cargas/escrituras de spill. Incluye los
  * IDs sin uso que figuran en temp_count, para conservar un indice por temporal.
- * No entregar al emisor hasta completar R2b y reescribir spills reales. */
+ * regalloc_allocate reescribe esos ceros antes de entregar la vista al emisor. */
 typedef struct {
     RegallocSimplifyStep *steps;
     uint8_t *colors;
@@ -210,13 +227,19 @@ typedef struct {
 RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
                                             RegallocColoring **out,
                                             RegallocDiagnostic *diagnostic);
+/** Como el coloreo exploratorio, pero al atascarse retira el menor
+ * spill_costs[t]/max(1, grado_activo). Costos NULL usa la politica anterior.
+ * El candidato sigue siendo optimista: solo colors[t]==0 exige reescritura. */
+RegallocStatus regalloc_color_machine_graph_costed(
+    const RegallocMachineGraph *graph, const uint64_t *spill_costs,
+    RegallocColoring **out, RegallocDiagnostic *diagnostic);
 void regalloc_coloring_free(RegallocColoring *coloring);
 
 /** Vista final para el emisor ASM. No posee machine, routines ni sus arreglos:
  * el asignador conserva esos datos vivos durante la emision. Para cada rutina,
  * register_for_temp tiene temp_count entradas indexadas por ID virtual.
  * 0 significa temporal sin uso; 1..4 son los registros fisicos r1..r4.
- * Todo def/use1 presente en las instrucciones finales debe tener registro.
+ * Todo def/use1/use2 aplicable en las instrucciones finales tiene registro.
  * Los valores derramados aparecen mediante SPILL_LOAD/STORE y sus copias
  * recargadas tambien tienen un registro; no se codifica memoria como color. */
 typedef struct {
@@ -242,5 +265,20 @@ RegallocStatus regalloc_assigned_program_validate(
  * validado, routine < routine_count y slot < spill_slot_count de esa rutina. */
 size_t regalloc_assigned_spill_offset(const RegallocAssignedProgram *assigned,
                                      size_t routine, size_t slot);
+
+/** Resultado propietario de la ruta IR -> maquina virtual -> asignacion.
+ * Contiene machine, colores y la vista validada para el emisor. IR, CFG y
+ * simbolos siguen prestados desde analysis y deben permanecer vivos. */
+typedef struct RegallocAllocation RegallocAllocation;
+
+/** Baja el subconjunto IR admitido, repite liveness/grafo/coloreo y reescribe
+ * los valores sin color con SPILL_LOAD/STORE hasta entregar todos los operandos
+ * en r1..r4. Ante fallo libera el trabajo parcial y deja *out == NULL. */
+RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
+                                 RegallocAllocation **out,
+                                 RegallocDiagnostic *diagnostic);
+const RegallocAssignedProgram *regalloc_allocation_view(
+    const RegallocAllocation *allocation);
+void regalloc_allocation_free(RegallocAllocation *allocation);
 
 #endif

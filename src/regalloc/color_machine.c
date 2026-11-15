@@ -41,9 +41,9 @@ static unsigned eligible_count(unsigned forbidden)
     return count;
 }
 
-RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
-                                            RegallocColoring **out,
-                                            RegallocDiagnostic *diagnostic)
+RegallocStatus regalloc_color_machine_graph_costed(
+    const RegallocMachineGraph *graph, const uint64_t *spill_costs,
+    RegallocColoring **out, RegallocDiagnostic *diagnostic)
 {
     if (graph == NULL || out == NULL || *out != NULL)
         return color_error(diagnostic, REGALLOC_INVALID_INPUT, SIZE_MAX,
@@ -87,8 +87,13 @@ RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
         if (chosen == SIZE_MAX) {
             potential = true;
             for (size_t t = 0; t < count; t++)
-                if (active[t] &&
-                    (chosen == SIZE_MAX || degree[t] > degree[chosen]))
+                if (active[t] && (chosen == SIZE_MAX ||
+                    (spill_costs == NULL
+                        ? degree[t] > degree[chosen]
+                        : (long double)spill_costs[t] /
+                              (degree[t] == 0 ? 1 : degree[t]) <
+                          (long double)spill_costs[chosen] /
+                              (degree[chosen] == 0 ? 1 : degree[chosen]))))
                     chosen = t;
         }
         assert(chosen != SIZE_MAX);
@@ -123,4 +128,11 @@ RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
     }
     *out = result;
     return color_error(diagnostic, REGALLOC_OK, graph->routine, "");
+}
+
+RegallocStatus regalloc_color_machine_graph(const RegallocMachineGraph *graph,
+                                            RegallocColoring **out,
+                                            RegallocDiagnostic *diagnostic)
+{
+    return regalloc_color_machine_graph_costed(graph, NULL, out, diagnostic);
 }
