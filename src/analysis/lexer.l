@@ -93,6 +93,7 @@ WHITESPACE  [ \t\r\n]+
     yylloc.first_line = block_comment_start.first_line;
     yylloc.first_column = block_comment_start.first_column;
     diagnostics_record(DIAGNOSTIC_LEXICAL,
+        DIAGNOSTIC_CODE_UNCLOSED_BLOCK_COMMENT,
         source_location_make(yylloc.first_line, yylloc.first_column,
                              yylloc.last_line, yylloc.last_column),
         "Comentario de bloque sin cerrar; se esperaba ***.");
@@ -204,6 +205,7 @@ WHITESPACE  [ \t\r\n]+
      * reportar error y devolver TOK_INVALID */
     if (errno == ERANGE || endptr == yytext || *endptr != '\0') {
         diagnostics_record(DIAGNOSTIC_LEXICAL,
+            DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE,
             source_location_make(yylloc.first_line, yylloc.first_column,
                                  yylloc.last_line, yylloc.last_column),
             "Entero fuera de rango: '%s'.", yytext);
@@ -235,6 +237,7 @@ WHITESPACE  [ \t\r\n]+
     /* Cualquier otro carácter no reconocido: error léxico */ 
 . {
     diagnostics_record(DIAGNOSTIC_LEXICAL,
+        DIAGNOSTIC_CODE_UNKNOWN_CHARACTER,
         source_location_make(yylloc.first_line, yylloc.first_column,
                              yylloc.last_line, yylloc.last_column),
         "Carácter no reconocido: '%s'.", yytext);

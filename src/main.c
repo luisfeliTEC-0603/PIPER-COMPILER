@@ -977,15 +977,26 @@ int main(int argc, char **argv)
         return PIPOC_EXIT_USAGE;
     }
     if (options.check_only) {
-        /* No se resuelven rutas de artefactos en este modo. El IDE recibe un
-         * único reporte JSON por stdout y los mensajes humanos quedan en stderr. */
+        int has_diagnostics = 0;
         if (options.diagnostics_json) diagnostics_begin(options.source_path);
         exit_status = compile_piper(&options);
-        if (options.diagnostics_json &&
-            (!diagnostics_write_json(stdout, exit_status == PIPOC_EXIT_SUCCESS) ||
-             fflush(stdout) != 0)) {
-            fputs("error: no se pudo producir el reporte de diagnósticos\n", stderr);
-            exit_status = PIPOC_EXIT_IO_ERROR;
+        /* Un archivo con diagnósticos registrados NUNCA es "success", aunque
+         * compile_piper haya llegado al final sin error fatal. Los diagnósticos
+         * son la fuente de verdad del modo --check. */
+        if (options.diagnostics_json) {
+            has_diagnostics = diagnostics_count() > 0;
+            if (!diagnostics_write_json(stdout, !has_diagnostics) ||
+                fflush(stdout) != 0) {
+                fputs("error: no se pudo producir el reporte de diagnósticos\n", stderr);
+                exit_status = PIPOC_EXIT_IO_ERROR;
+            }
+            if (has_diagnostics && exit_status == PIPOC_EXIT_SUCCESS) {
+                exit_status = PIPOC_EXIT_COMPILE_ERROR;
+            }
+        } else if (exit_status == PIPOC_EXIT_SUCCESS) {
+            /* Sin JSON pero con diagnósticos pendientes también debe fallar. */
+            has_diagnostics = diagnostics_count() > 0;
+            if (has_diagnostics) exit_status = PIPOC_EXIT_COMPILE_ERROR;
         }
         diagnostics_end();
         return exit_status;

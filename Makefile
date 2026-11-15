@@ -31,6 +31,9 @@ IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
 
+IDE_APP = ide/piper_ide/app.py
+IDE_LOG = build/ide.log
+
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
 LL1_GENERATED_SYMBOLS = build/analysis/ll1/grammar_symbols.h
@@ -58,12 +61,16 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table clean
+.PHONY: all generate clean run ll1-table
 
 all: $(TARGET) bin/porygon-schedule
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
+
+run: all
+	@mkdir -p build
+	nohup $(PYTHON) $(IDE_APP) > $(CURDIR)/$(IDE_LOG) 2>&1 & echo "IDE ON (PID $$!), log: $(IDE_LOG)"
 
 ll1-table: $(LL1_REPORT)
 
