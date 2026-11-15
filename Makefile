@@ -61,7 +61,7 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary clean
 
 all: $(TARGET) bin/porygon-schedule
 
@@ -135,6 +135,32 @@ check-regalloc-lower-order: build/regalloc/machine.o build/regalloc/assignment.o
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_lower_order
 	build/runs/regalloc/test_lower_order
+
+# R2b suma/resta/multiplicacion comprobadas y efectos visibles para el grafo.
+check-regalloc-lower-checked: build/regalloc/machine.o build/regalloc/assignment.o \
+                             build/regalloc/color_machine.o \
+                             build/regalloc/interference_machine.o \
+                             build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_checked.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_checked
+	build/runs/regalloc/test_lower_checked
+
+# R2b conversiones y negacion comprobadas, incluido store despues del chequeo.
+check-regalloc-lower-checked-unary: build/regalloc/machine.o build/regalloc/assignment.o \
+                                   build/regalloc/color_machine.o \
+                                   build/regalloc/interference_machine.o \
+                                   build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_checked_unary.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_checked_unary
+	build/runs/regalloc/test_lower_checked_unary
 
 generate: build/parser.c build/parser.h build/lexer.c \
           $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)

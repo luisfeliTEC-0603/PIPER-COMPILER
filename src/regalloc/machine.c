@@ -100,6 +100,11 @@ static bool unsigned_type(PiperType type)
            type == PIPER_TYPE_UB32;
 }
 
+static bool integer_type(PiperType type)
+{
+    return type >= PIPER_TYPE_B8 && type <= PIPER_TYPE_UB32;
+}
+
 /* La identidad del simbolo, no su offset, determina si su direccion es global.
  * La tabla validada conserva ese enlace durante toda la bajada. */
 static bool global_symbol(const LowerContext *ctx, const Symbol *symbol)
@@ -183,11 +188,53 @@ static RegallocStatus materialize(LowerContext *ctx, IrOperand value,
 
 static RegallocStatus lower_copy(LowerContext *ctx, const IrInstruction *source)
 {
-    if ((source->flags & ~(IR_READ_MEMORY | IR_WRITE_MEMORY)) != 0 ||
+    bool checked = (source->flags & IR_CHECKED) != 0;
+    unsigned allowed_flags = IR_READ_MEMORY | IR_WRITE_MEMORY |
+        (checked ? IR_CHECKED | IR_MAY_TRAP : 0);
+    if ((source->flags & ~allowed_flags) != 0 ||
+        (source->result.kind != IR_OPERAND_TEMP &&
+         source->result.kind != IR_OPERAND_SYMBOL) ||
         !scalar(source->result))
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
                               "COPY con efecto especial o destino no escalar.");
+    if (checked) {
+        if (!integer_type(source->arg1.type.piper) ||
+            !integer_type(source->result.type.piper))
+            return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                                  ctx->routine_index, ctx->block_id,
+                                  "COPY comprobada requiere enteros escalares.");
+        IrId input, target;
+        RegallocStatus status = materialize(ctx, source->arg1, IR_NO_ID,
+                                            &input, source->location);
+        if (status != REGALLOC_OK) return status;
+        if (source->result.kind == IR_OPERAND_TEMP)
+            target = source->result.value.temp;
+        else {
+            status = new_temp(ctx, &target);
+            if (status != REGALLOC_OK) return status;
+        }
+        /* El chequeo precede al STORE_SYMBOL: un fallo no modifica la
+         * variable destino. r5/r6 estan reservados fuera de K=4. */
+        status = emit(ctx, (RegallocMachineInstruction){
+            .op = REGALLOC_M_CHECKED_COPY, .def = target, .use1 = input,
+            .type = source->result.type, .source_type = source->arg1.type,
+            .fixed_reads = REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 |
+                           REGALLOC_PHYS_R6,
+            .fixed_writes = REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6,
+            .flags = IR_CHECKED | IR_MAY_TRAP,
+            .location = source->location
+        });
+        if (status != REGALLOC_OK || source->result.kind == IR_OPERAND_TEMP)
+            return status;
+        RegallocMachineInstruction store = {
+            .op = REGALLOC_M_STORE_SYMBOL, .def = IR_NO_ID, .use1 = target,
+            .type = source->result.type, .flags = IR_WRITE_MEMORY,
+            .location = source->location
+        };
+        symbol_access(ctx, &store, source->result.value.symbol, true);
+        return emit(ctx, store);
+    }
     IrId target = source->result.kind == IR_OPERAND_TEMP
         ? source->result.value.temp : IR_NO_ID;
     IrId value;
@@ -208,16 +255,51 @@ static RegallocStatus lower_copy(LowerContext *ctx, const IrInstruction *source)
     return emit(ctx, in);
 }
 
+static RegallocStatus lower_neg(LowerContext *ctx,
+                                const IrInstruction *source)
+{
+    if ((source->flags & ~(IR_READ_MEMORY | IR_CHECKED | IR_MAY_TRAP)) != 0 ||
+        (source->flags & IR_CHECKED) == 0 ||
+        source->result.kind != IR_OPERAND_TEMP ||
+        source->arg2.kind != IR_OPERAND_NONE ||
+        !scalar(source->arg1) || !scalar(source->result) ||
+        !integer_type(source->arg1.type.piper) ||
+        !integer_type(source->result.type.piper))
+        return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
+                              ctx->routine_index, ctx->block_id,
+                              "NEG requiere entero escalar y chequeo de rango.");
+    IrId input;
+    RegallocStatus status = materialize(ctx, source->arg1, IR_NO_ID,
+                                        &input, source->location);
+    if (status != REGALLOC_OK) return status;
+    return emit(ctx, (RegallocMachineInstruction){
+        .op = REGALLOC_M_CHECKED_NEG,
+        .def = source->result.value.temp, .use1 = input,
+        .type = source->result.type, .source_type = source->arg1.type,
+        .fixed_reads = REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 |
+                       REGALLOC_PHYS_R6,
+        .fixed_writes = REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6,
+        .flags = IR_CHECKED | IR_MAY_TRAP,
+        .location = source->location
+    });
+}
+
 static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *source,
                                    RegallocMachineOp op)
 {
-    if ((source->flags & ~IR_READ_MEMORY) != 0 ||
+    bool checked = op == REGALLOC_M_CHECKED_ADD ||
+                   op == REGALLOC_M_CHECKED_SUB ||
+                   op == REGALLOC_M_CHECKED_MUL;
+    unsigned allowed_flags = checked
+        ? IR_READ_MEMORY | IR_CHECKED | IR_MAY_TRAP : IR_READ_MEMORY;
+    if ((source->flags & ~allowed_flags) != 0 ||
+        (checked && (source->flags & IR_CHECKED) == 0) ||
         source->result.kind != IR_OPERAND_TEMP ||
         !scalar(source->result) || !scalar(source->arg1) ||
         !scalar(source->arg2))
         return machine_report(ctx->diagnostic, REGALLOC_UNSUPPORTED,
                               ctx->routine_index, ctx->block_id,
-                              "Binaria con comprobacion/efecto o tipo no soportado en R2.");
+                              "Binaria con flags o tipo no soportado en R2.");
     IrId target = source->result.value.temp;
     /* La IR generada usa un resultado fresco. Rechazar una reasignacion aqui
      * evita destruir un operando antes de consumirlo en la forma de 2 registros. */
@@ -247,7 +329,10 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
     bool right_unsigned = unsigned_type(source->arg2.type.piper);
     /* ltn/gtn ordenan unsigned. El emisor necesitara r5 para el bit de signo
      * o la mascara 0x80000000; r5 ya esta fuera del pool de colores. */
-    bool needs_scratch = ordered && !(left_unsigned && right_unsigned);
+    /* CHECKED conserva la trampa y usa solo r5/r6: los colores r1..r4
+     * representan exclusivamente los operandos/resultado explicitos. */
+    bool needs_scratch = checked ||
+                         (ordered && !(left_unsigned && right_unsigned));
     return emit(ctx, (RegallocMachineInstruction){
         .op = immediate ? (op == REGALLOC_M_ADD ? REGALLOC_M_ADDI : REGALLOC_M_SUBI) : op,
         .def = left, .use1 = right,
@@ -255,8 +340,11 @@ static RegallocStatus lower_binary(LowerContext *ctx, const IrInstruction *sourc
         .type = source->result.type,
         .left_unsigned = ordered && left_unsigned,
         .right_unsigned = ordered && right_unsigned,
-        .fixed_reads = needs_scratch ? REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 : 0,
-        .fixed_writes = needs_scratch ? REGALLOC_PHYS_R5 : 0,
+        .fixed_reads = checked ? REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6
+            : needs_scratch ? REGALLOC_PHYS_R0 | REGALLOC_PHYS_R5 : 0,
+        .fixed_writes = checked ? REGALLOC_PHYS_R5 | REGALLOC_PHYS_R6
+            : needs_scratch ? REGALLOC_PHYS_R5 : 0,
+        .flags = checked ? IR_CHECKED | IR_MAY_TRAP : 0,
         .location = source->location
     });
 }
@@ -441,8 +529,12 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
 {
     switch (source->op) {
     case IR_OP_COPY: return lower_copy(ctx, source);
-    case IR_OP_ADD: return lower_binary(ctx, source, REGALLOC_M_ADD);
-    case IR_OP_SUB: return lower_binary(ctx, source, REGALLOC_M_SUB);
+    case IR_OP_ADD: return lower_binary(ctx, source,
+        (source->flags & IR_CHECKED) ? REGALLOC_M_CHECKED_ADD : REGALLOC_M_ADD);
+    case IR_OP_SUB: return lower_binary(ctx, source,
+        (source->flags & IR_CHECKED) ? REGALLOC_M_CHECKED_SUB : REGALLOC_M_SUB);
+    case IR_OP_MUL: return lower_binary(ctx, source,
+        (source->flags & IR_CHECKED) ? REGALLOC_M_CHECKED_MUL : REGALLOC_M_MUL);
     case IR_OP_AND: return lower_binary(ctx, source, REGALLOC_M_AND);
     case IR_OP_OR:  return lower_binary(ctx, source, REGALLOC_M_OR);
     case IR_OP_XOR: return lower_binary(ctx, source, REGALLOC_M_XOR);
@@ -453,6 +545,7 @@ static RegallocStatus lower_instruction(LowerContext *ctx,
     case IR_OP_GT:  return lower_order(ctx, source, REGALLOC_M_GT, false);
     case IR_OP_GE:  return lower_order(ctx, source, REGALLOC_M_LT, true);
     case IR_OP_NOT: return lower_not(ctx, source);
+    case IR_OP_NEG: return lower_neg(ctx, source);
     case IR_OP_CALL: return lower_call(ctx, source);
     case IR_OP_JUMP: case IR_OP_BRANCH: case IR_OP_RETURN:
         return lower_control(ctx, source);

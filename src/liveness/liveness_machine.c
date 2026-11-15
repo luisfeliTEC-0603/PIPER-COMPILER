@@ -39,9 +39,13 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
         shape->has_def = true;
         return true;
     case REGALLOC_M_MOVE:
+    case REGALLOC_M_CHECKED_COPY:
+    case REGALLOC_M_CHECKED_NEG:
         shape->has_def = shape->has_use = true;
         return true;
-    case REGALLOC_M_ADD: case REGALLOC_M_SUB:
+    case REGALLOC_M_ADD: case REGALLOC_M_SUB: case REGALLOC_M_MUL:
+    case REGALLOC_M_CHECKED_ADD: case REGALLOC_M_CHECKED_SUB:
+    case REGALLOC_M_CHECKED_MUL:
     case REGALLOC_M_AND: case REGALLOC_M_OR: case REGALLOC_M_XOR:
     case REGALLOC_M_EQ: case REGALLOC_M_LT: case REGALLOC_M_GT:
         shape->has_def = shape->has_use = shape->def_is_use = true;

@@ -15,7 +15,8 @@
  * grande solo usa el destino y r0. CALL escalar declara argumentos, efectos
  * y salvado del llamador. LT/GT conservan el signo de ambos operandos para
  * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
- * Faltan arreglos y comprobaciones:
+ * La aritmetica comprobada usa r5/r6 reservados y conserva MAY_TRAP.
+ * Faltan arreglos y otras operaciones:
  * no se debe emitir ASM directamente desde este subconjunto.
  */
 #include "regalloc.h"
@@ -48,7 +49,11 @@ typedef enum {
     REGALLOC_M_LOAD_SYMBOL,  /**< def = lectura tipada; immediate = direccion/offset. */
     REGALLOC_M_STORE_SYMBOL, /**< symbol = use1; immediate = direccion/offset. */
     REGALLOC_M_MOVE,         /**< def = use1. */
-    REGALLOC_M_ADD, REGALLOC_M_SUB,
+    REGALLOC_M_CHECKED_COPY, /**< Comprueba rango de use1 antes de definir def. */
+    REGALLOC_M_CHECKED_NEG,  /**< def = -use1 si cabe en type.piper. */
+    REGALLOC_M_ADD, REGALLOC_M_SUB, REGALLOC_M_MUL,
+    REGALLOC_M_CHECKED_ADD, REGALLOC_M_CHECKED_SUB,
+    REGALLOC_M_CHECKED_MUL, /**< Operaciones tipadas con error por overflow. */
     REGALLOC_M_ADDI, REGALLOC_M_SUBI, /**< def op= immediate; inmediato signed 16. */
     REGALLOC_M_AND, REGALLOC_M_OR, REGALLOC_M_XOR,
     REGALLOC_M_EQ,          /**< eor: igualdad de patrones de 32 bits. */
@@ -76,6 +81,10 @@ typedef enum {
  * IMM, incluso grande, solo necesita su def y r0 para construirse.
  * LT/GT leen left_unsigned/right_unsigned: la ISA ordena como unsigned;
  * si algun operando tiene signo, r5 es auxiliar fijo fuera de K=4.
+ * CHECKED_ADD/SUB/MUL leen y escriben def, leen use1, y usan r5/r6 fijos
+ * para detectar desborde segun type.piper antes de publicar un valor valido.
+ * CHECKED_COPY/NEG leen use1 sin modificarlo; source_type conserva su signo,
+ * type es el destino. Comprueban rango con r5/r6 antes de definir def.
  * CALL_SAVE/ARG/CALL comparten call_site_id y call_arg_count. ARG lleva
  * call_arg_index; CALL lleva symbol=callee. El emisor guarda r1..r6 antes de
  * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
@@ -91,6 +100,7 @@ typedef struct {
     size_t call_site_id, call_arg_index, call_arg_count;
     IrId targets[2];
     IrType type;
+    IrType source_type; /**< CHECKED_COPY/NEG: tipo de use1 antes del chequeo. */
     bool left_unsigned, right_unsigned; /**< Solo LT/GT: signo de los operandos. */
     unsigned flags;
     unsigned fixed_reads, fixed_writes;
@@ -124,7 +134,9 @@ typedef struct RegallocMachineProgram {
     size_t call_site_count; /**< IDs 1..N, unicos entre todas las rutinas. */
 } RegallocMachineProgram;
 
-/** Baja COPY escalar, ADD/SUB/AND/OR/XOR sin chequeo, EQ/NE/LT/LE/GT/GE/NOT,
+/** Baja COPY escalar con/sin chequeo, NEG comprobada,
+ * ADD/SUB/MUL con/sin chequeo, AND/OR/XOR,
+ * EQ/NE/LT/LE/GT/GE/NOT,
  * CALL escalar, JUMP, BRANCH y RETURN. Los simbolos escalares incluyen direccion,
  * memoria y registros fijos: r7 local; r0 y r5 en store global. IMM usa r0.
  * Rechaza otras operaciones con REGALLOC_UNSUPPORTED;
