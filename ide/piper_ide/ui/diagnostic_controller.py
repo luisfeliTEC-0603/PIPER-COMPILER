@@ -163,20 +163,18 @@ class DiagnosticController(QObject):
             cache = self._quick_fixes_cache[self._active_id]
             source_text = result.snapshot.text
             for diagnostic in result.diagnostics:
-                key = id(diagnostic)
+                # Cachear por (code, message): dos instancias del mismo error
+                # reutilizan la misma lista de fixes, y aplicar uno no invalida
+                # la caché del otro. La clave es estable entre revisiones.
+                key = (diagnostic.code, diagnostic.message)
                 if key not in cache:
-                    if diagnostic.has_location:
-                        cache[key] = get_quick_fixes(
-                            source_text,
-                            diagnostic.message,
-                            diagnostic.line,
-                            diagnostic.column,
-                        )
-                    else:
-                        cache[key] = get_quick_fixes(
-                            source_text, diagnostic.message, 0, 0
-                        )
-                active_fixes_map[key] = cache[key]
+                    cache[key] = get_quick_fixes(source_text, diagnostic)
+                active_fixes_map[id(diagnostic)] = cache[key]
+        else:
+            # Si no hay resultado, limpiar la caché del buffer activo para
+            # no conservar fixes de una revisión anterior.
+            if self._active_id is not None:
+                self._quick_fixes_cache.pop(self._active_id, None)
 
         self.editor.set_diagnostics(
             result.diagnostics if result else (),
