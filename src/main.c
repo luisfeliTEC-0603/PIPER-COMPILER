@@ -7,6 +7,7 @@
  */
 #include "ast.h"
 #include "ir.h"
+#include "ir_unroll.h"
 #include "cfg.h"
 #include "dce/dce.h"
 #include "codegen.h"
@@ -55,6 +56,7 @@ enum {
     OPT_CLONES,
     OPT_CLONES_EXACT,
     OPT_CLONES_RENAMED,
+    OPT_UNROLL,
     OPT_DCE,
     OPT_EMIT_IR_OPT,
     OPT_EMIT_CFG_OPT,
@@ -99,6 +101,8 @@ typedef struct {
     int diagnostics_json;
     int clones_min_nodes;      /* 0 = desactivado */
     int clones_mode;           /* 0 = exact, 1 = renamed */
+    IrUnrollMode unroll_mode;  /* --unroll */
+    size_t unroll_factor;
     int dce;
 } cli_options_t;
 
@@ -141,6 +145,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-bundles <ruta>   Emite los bundles en formato legible\n"
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
+            "  --unroll <N|auto|off>   Desenrolla loops constantes en el IR (afecta --emit-ir/--emit-cfg)\n"
             "  --dce                   Aplica DCE; disponible en el comando ir\n"
             "  --emit-ir-opt <ruta>     Exporta la IR optimizada (requiere --dce)\n"
             "  --emit-cfg-opt <ruta>    Exporta el CFG optimizado (requiere --dce)\n"
@@ -241,6 +246,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"disasm-bin", required_argument, NULL, OPT_DISASM_BIN},
         {"emit-cfg", required_argument, NULL, OPT_EMIT_CFG},
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
+        {"unroll", required_argument, NULL, OPT_UNROLL},
         {"dce", no_argument, NULL, OPT_DCE},
         {"emit-ir-opt", required_argument, NULL, OPT_EMIT_IR_OPT},
         {"emit-cfg-opt", required_argument, NULL, OPT_EMIT_CFG_OPT},
@@ -291,6 +297,19 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         case OPT_EMIT_IR:
             if (!assign_once(&options->ir_output_path, optarg, "--emit-ir")) return -1;
             break;
+        case OPT_UNROLL:
+            if (strcmp(optarg, "auto") == 0) options->unroll_mode = IR_UNROLL_AUTO;
+            else if (strcmp(optarg, "off") == 0) options->unroll_mode = IR_UNROLL_OFF;
+            else {
+                char *end = NULL;
+                unsigned long factor = strtoul(optarg, &end, 10);
+                if (*optarg == '\0' || *end != '\0' || factor < 2) {
+                    fputs("error: --unroll requiere un entero >= 2, 'auto' u 'off'\n", stderr);
+                    return -1;
+                }
+                options->unroll_mode = IR_UNROLL_FACTOR;
+                options->unroll_factor = (size_t)factor;
+            }
         case OPT_DCE: options->dce = 1; break;
         case OPT_EMIT_IR_OPT:
             if (!assign_once(&options->ir_opt_output_path, optarg, "--emit-ir-opt")) return -1;
@@ -795,7 +814,7 @@ static int compile_piper(const cli_options_t *options)
     FILE *input = NULL;
     FILE *asm_stream = NULL;
     AstNode *ast = NULL;
-    IrProgram *ir = NULL;
+    IrProgram *ir = NULL, *ir_opt = NULL;
     CfgProgram *cfg = NULL;
     SymbolTable *symbols = NULL;
     char *asm_text = NULL;
@@ -892,10 +911,24 @@ static int compile_piper(const cli_options_t *options)
                 diagnostic.location.first_column, diagnostic.message);
             goto done;
         }
+        const IrProgram *active_ir = ir;
+        if (options->unroll_mode != IR_UNROLL_OFF) {
+            IrUnrollOptions unroll = ir_unroll_default_options();
+            IrUnrollStats unroll_stats;
+            unroll.mode = options->unroll_mode;
+            unroll.factor = options->unroll_factor;
+            if (options->verbose) fprintf(stderr, "[pipoc] Unrolling de loops\n");
+            if (ir_unroll(ir, &unroll, &ir_opt, &diagnostic, &unroll_stats) != IR_OK) {
+                fprintf(stderr, "error unroll: %s\n", diagnostic.message);
+                goto done;
+            }
+            active_ir = ir_opt;
+            if (options->verbose) ir_unroll_stats_write(stderr, &unroll_stats);
+        }
         if (options->cfg_output_path != NULL) {
             CfgDiagnostic graph_error;
             if (options->verbose) fprintf(stderr, "[pipoc] Construcción de CFG\n");
-            if (cfg_build(ir, &cfg, &graph_error) != CFG_OK) {
+            if (cfg_build(active_ir, &cfg, &graph_error) != CFG_OK) {
                 fprintf(stderr, "error CFG en rutina %zu: %s\n", graph_error.routine, graph_error.message);
                 goto done;
             }
@@ -1029,6 +1062,7 @@ done:
     porygon_machine_program_free(&program);
     free(asm_text);
     cfg_program_free(cfg);
+    ir_program_free(ir_opt);
     ir_program_free(ir);
     ast_free(ast);
     symbol_table_destroy(symbols);
