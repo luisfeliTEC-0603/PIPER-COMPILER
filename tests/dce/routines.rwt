@@ -1,0 +1,34 @@
+create B32 contador.
+
+routine B32 hoja[B32 valor] {
+    contador store valor.
+    output valor.
+}
+
+routine B32 usada[] {
+    output hoja[7].
+}
+
+routine B32 sin_uso[] {
+    output hoja[99].
+}
+
+routine B32 recursiva_muerta[B32 n] {
+    when [n > 0] {
+        output recursiva_muerta[n - 1].
+    }
+    output 0.
+}
+
+routine B32 sin_efectos[] {
+    output 5.
+}
+
+routine B32 main[] {
+    create B32 ignorado.
+    ignorado store usada[].
+    ignorado store sin_efectos[].
+    output contador.
+}
+
+contador store hoja[3].

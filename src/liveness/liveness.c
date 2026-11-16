@@ -47,14 +47,77 @@ bool liveness_set_contains(const LivenessSet *set, size_t value)
          (UINT64_C(1) << (value % WORD_BITS))) != 0;
 }
 
-static void set_add(LivenessSet *set, size_t value)
+void liveness_set_add(LivenessSet *set, size_t value)
 {
     set->words[value / WORD_BITS] |= UINT64_C(1) << (value % WORD_BITS);
 }
 
-static void set_remove(LivenessSet *set, size_t value)
+void liveness_set_remove(LivenessSet *set, size_t value)
 {
     set->words[value / WORD_BITS] &= ~(UINT64_C(1) << (value % WORD_BITS));
+}
+
+static LivenessSet *allocate_set(size_t value_count, bool clear_words)
+{
+    LivenessSet *copy = calloc(1, sizeof(*copy));
+    if (copy == NULL)
+        return NULL;
+    copy->word_count = value_count / WORD_BITS + (value_count % WORD_BITS != 0);
+    copy->value_count = value_count;
+    if (copy->word_count != 0) {
+        copy->words = clear_words ? calloc(copy->word_count, sizeof(*copy->words))
+                                 : malloc(copy->word_count * sizeof(*copy->words));
+        if (copy->words == NULL) {
+            free(copy);
+            return NULL;
+        }
+    }
+    return copy;
+}
+
+LivenessSet *liveness_set_create(size_t value_count)
+{
+    return allocate_set(value_count, true);
+}
+
+LivenessSet *liveness_set_clone(const LivenessSet *source)
+{
+    LivenessSet *copy = allocate_set(source->value_count, false);
+    if (copy != NULL)
+        liveness_set_copy(copy, source);
+    return copy;
+}
+
+void liveness_set_copy(LivenessSet *target, const LivenessSet *source)
+{
+    if (target != source && source->word_count != 0)
+        memcpy(target->words, source->words, source->word_count * sizeof(*source->words));
+}
+
+void liveness_set_clear(LivenessSet *set)
+{
+    if (set->word_count != 0)
+        memset(set->words, 0, set->word_count * sizeof(*set->words));
+}
+
+void liveness_set_union(LivenessSet *target, const LivenessSet *source)
+{
+    for (size_t word = 0; word < target->word_count; word++)
+        target->words[word] |= source->words[word];
+}
+
+bool liveness_set_equal(const LivenessSet *left, const LivenessSet *right)
+{
+    return left->word_count == 0 ||
+        memcmp(left->words, right->words, left->word_count * sizeof(*left->words)) == 0;
+}
+
+void liveness_set_free(LivenessSet *set)
+{
+    if (set == NULL)
+        return;
+    free(set->words);
+    free(set);
 }
 
 static LivenessSet take_set(uint64_t **cursor, const LiveRoutine *routine)
@@ -148,10 +211,10 @@ static void collect_use_def(LiveRoutine *routine, const LiveInputRoutine *input)
             for (size_t u = 0; u < instruction->use_count; u++) {
                 size_t value = instruction->uses[u];
                 if (!liveness_set_contains(def, value))
-                    set_add(use, value);
+                    liveness_set_add(use, value);
             }
             if (instruction->definition != IR_NO_ID)
-                set_add(def, instruction->definition);
+                liveness_set_add(def, instruction->definition);
         }
     }
 }
@@ -203,9 +266,9 @@ static void solve_instructions(LiveRoutine *routine, const LiveInputRoutine *inp
             memcpy(live->after.words, next->words, set_bytes);
             memcpy(live->before.words, next->words, set_bytes);
             if (instruction->definition != IR_NO_ID)
-                set_remove(&live->before, instruction->definition);
+                liveness_set_remove(&live->before, instruction->definition);
             for (size_t u = 0; u < instruction->use_count; u++)
-                set_add(&live->before, instruction->uses[u]);
+                liveness_set_add(&live->before, instruction->uses[u]);
 
             next = &live->before;
         }

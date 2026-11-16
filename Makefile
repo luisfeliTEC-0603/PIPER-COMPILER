@@ -20,6 +20,7 @@ EMIT_SRC        = $(wildcard src/emit/*.c)
 IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
 LIVENESS_SRC    = $(wildcard src/liveness/*.c)
+DCE_SRC         = $(wildcard src/dce/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -30,6 +31,7 @@ EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
+DCE_OBJ         = $(patsubst src/dce/%.c,build/dce/%.o,$(DCE_SRC))
 
 IDE_APP = ide/piper_ide/app.py
 IDE_LOG = build/ide.log
@@ -58,7 +60,8 @@ OBJ = build/parser.o \
       $(EMIT_OBJ) \
       $(IR_OBJ) \
       $(CFG_OBJ) \
-      $(LIVENESS_OBJ)
+      $(LIVENESS_OBJ) \
+      $(DCE_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate clean run ll1-table
@@ -111,7 +114,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
-              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h src/dce/dce.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
@@ -131,6 +134,10 @@ build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src
 
 build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/cfg.h include/ir.h
 	@mkdir -p build/liveness
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/dce/%.o: src/dce/%.c $(wildcard src/dce/*.h) src/liveness/liveness.h include/ir.h include/cfg.h include/symbol_table.h
+	@mkdir -p build/dce
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \
