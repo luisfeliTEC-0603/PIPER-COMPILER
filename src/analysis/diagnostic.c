@@ -8,6 +8,7 @@
 
 typedef struct {
     DiagnosticPhase phase;
+    DiagnosticCode  code;
     SourceLocation location;
     char *message;
 } DiagnosticEntry;
@@ -16,6 +17,36 @@ static DiagnosticEntry *entries;
 static size_t count, capacity;
 static const char *source_path;
 static int active, allocation_failed;
+
+const char *diagnostic_code_name(DiagnosticCode code)
+{
+    switch (code) {
+    case DIAGNOSTIC_CODE_MISSING_DOT:             return "missing-dot";
+    case DIAGNOSTIC_CODE_MISSING_CLOSE_BRACE:     return "missing-close-brace";
+    case DIAGNOSTIC_CODE_MISSING_CLOSE_PAREN:     return "missing-close-paren";
+    case DIAGNOSTIC_CODE_MISSING_CLOSE_BRACKET:   return "missing-close-bracket";
+    case DIAGNOSTIC_CODE_UNCLOSED_BLOCK_COMMENT:  return "unclosed-block-comment";
+    case DIAGNOSTIC_CODE_MISSING_MAIN:            return "missing-main";
+    case DIAGNOSTIC_CODE_MISSING_OUTPUT:          return "missing-output";
+    case DIAGNOSTIC_CODE_MAIN_HAS_PARAMS:         return "main-has-params";
+    case DIAGNOSTIC_CODE_UNINITIALIZED_LOCAL:     return "uninitialized-local";
+    case DIAGNOSTIC_CODE_TYPE_MISMATCH:           return "type-mismatch";
+    case DIAGNOSTIC_CODE_UNKNOWN_CHARACTER:       return "unknown-character";
+    case DIAGNOSTIC_CODE_INTEGER_OUT_OF_RANGE:    return "integer-out-of-range";
+    case DIAGNOSTIC_CODE_RESERVED_INTRINSIC:      return "reserved-intrinsic";
+    case DIAGNOSTIC_CODE_DUPLICATE_DECLARATION:   return "duplicate-declaration";
+    case DIAGNOSTIC_CODE_OUT_OF_RANGE_INDEX:      return "out-of-range-index";
+    case DIAGNOSTIC_CODE_BREAK_OUTSIDE_LOOP:      return "break-outside-loop";
+    case DIAGNOSTIC_CODE_DIVISION_BY_ZERO:        return "division-by-zero";
+    case DIAGNOSTIC_CODE_IMPORT_UNRESOLVED:       return "import-unresolved";
+    case DIAGNOSTIC_CODE_BLOCK_SCOPE_WITHOUT_ROUTINE: return "block-scope-without-routine";
+    case DIAGNOSTIC_CODE_UNDECLARED_IDENTIFIER:  return "undeclared-identifier";
+    case DIAGNOSTIC_CODE_MISSING_OPEN_BRACE:     return "missing-open-brace";
+    case DIAGNOSTIC_CODE_MISSING_OPEN_BRACKET:   return "missing-open-bracket";
+    case DIAGNOSTIC_CODE_GENERIC:
+    default:                                      return "generic";
+    }
+}
 
 void diagnostics_end(void)
 {
@@ -34,8 +65,9 @@ void diagnostics_begin(const char *source)
     active = 1;
 }
 
-void diagnostics_recordv(DiagnosticPhase phase, SourceLocation location,
-                         const char *format, va_list arguments)
+void diagnostics_recordv(DiagnosticPhase phase, DiagnosticCode code,
+                         SourceLocation location, const char *format,
+                         va_list arguments)
 {
     va_list copy;
     int length;
@@ -69,15 +101,15 @@ void diagnostics_recordv(DiagnosticPhase phase, SourceLocation location,
         entries = resized;
         capacity = next_capacity;
     }
-    entries[count++] = (DiagnosticEntry){phase, location, message};
+    entries[count++] = (DiagnosticEntry){phase, code, location, message};
 }
 
-void diagnostics_record(DiagnosticPhase phase, SourceLocation location,
-                        const char *format, ...)
+void diagnostics_record(DiagnosticPhase phase, DiagnosticCode code,
+                        SourceLocation location, const char *format, ...)
 {
     va_list arguments;
     va_start(arguments, format);
-    diagnostics_recordv(phase, location, format, arguments);
+    diagnostics_recordv(phase, code, location, format, arguments);
     va_end(arguments);
 }
 
@@ -135,13 +167,21 @@ int diagnostics_write_json(FILE *output, int valid)
         const DiagnosticEntry *entry = &entries[index];
         SourceLocation span = entry->location;
         if (index) fputc(',', output);
-        fprintf(output, "{\"phase\":\"%s\",\"severity\":\"error\",\"message\":", phases[entry->phase]);
+        fprintf(output, "{\"phase\":\"%s\",\"severity\":\"error\","
+                        "\"code\":\"%s\",\"message\":",
+                phases[entry->phase], diagnostic_code_name(entry->code));
         write_string(output, entry->message);
         fprintf(output,
                 ",\"start\":{\"line\":%d,\"column\":%d},"
                 "\"end\":{\"line\":%d,\"column\":%d}}",
-                span.first_line, span.first_column, span.last_line, span.last_column);
+                span.first_line, span.first_column,
+                span.last_line, span.last_column);
     }
     fputs("]}\n", output);
     return !ferror(output);
+}
+
+size_t diagnostics_count(void)
+{
+    return count;
 }

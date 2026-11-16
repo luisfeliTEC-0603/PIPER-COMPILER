@@ -33,6 +33,9 @@ CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 REGALLOC_OBJ    = $(patsubst src/regalloc/%.c,build/regalloc/%.o,$(REGALLOC_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
 
+IDE_APP = ide/piper_ide/app.py
+IDE_LOG = build/ide.log
+
 LL1_GRAMMAR           = src/analysis/ll1/piper.ll1
 LL1_GENERATOR         = tools/generate_ll1.py
 LL1_GENERATED_SYMBOLS = build/analysis/ll1/grammar_symbols.h
@@ -61,9 +64,13 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline run clean
 
 all: $(TARGET) bin/porygon-schedule
+
+run: all
+	@mkdir -p build
+	nohup $(PYTHON) $(IDE_APP) > $(CURDIR)/$(IDE_LOG) 2>&1 & echo "IDE ON (PID $$!), log: $(IDE_LOG)"
 
 # Ruta reproducible Piper -> IR/CFG -> asignacion, con y sin spill virtual.
 check-regalloc-pipeline: build/parser.o build/lexer.o $(ANALYSIS_OBJ) \
