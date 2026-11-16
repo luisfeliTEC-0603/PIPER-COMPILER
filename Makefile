@@ -61,9 +61,18 @@ OBJ = build/parser.o \
       $(LIVENESS_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary clean
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline clean
 
 all: $(TARGET) bin/porygon-schedule
+
+# Ruta reproducible Piper -> IR/CFG -> asignacion, con y sin spill virtual.
+check-regalloc-pipeline: build/parser.o build/lexer.o $(ANALYSIS_OBJ) \
+                         $(IR_OBJ) build/cfg/cfg.o build/cfg/cfg_validate.o \
+                         $(REGALLOC_OBJ) $(LIVENESS_OBJ)
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_pipeline.c $^ \
+	      -o build/runs/regalloc/test_pipeline
+	build/runs/regalloc/test_pipeline
 
 # Grafo de temporales virtuales: no necesita frontend ni emisor ASM.
 check-regalloc-machine-graph: build/regalloc/interference_machine.o \

@@ -181,9 +181,9 @@ void regalloc_machine_program_free(RegallocMachineProgram *program);
  * vecinos distintos; forbidden_colors marca los registros r1..r6 que una
  * escritura fija impide usar para un valor vivo a traves de ella.
  *
- * Este grafo se recalcula despues de cada cambio de instrucciones. Mientras
- * R2b no modele las operaciones restantes ni exista emision ASM, no sirve
- * como base para generar el ejecutable final. */
+ * Este grafo se recalcula despues de cada cambio de instrucciones. La
+ * correccion del ejecutable depende de que el emisor respete los registros
+ * fijos y efectos declarados por cada operacion virtual. */
 typedef struct {
     size_t routine, temp_count, word_count;
     uint64_t *neighbors;
