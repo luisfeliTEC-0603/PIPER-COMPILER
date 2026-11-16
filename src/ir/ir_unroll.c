@@ -10,7 +10,7 @@
  * y el epílogo no necesita guarda. Con factor F y N = F*full + tail, el header
  * cuenta grupos completos y un epílogo de tail copias ejecuta el resto. Cada
  * copia conserva su advance, así el control termina en begin + N*step. El
- * resultado es un IrProgram nuevo y validado; el original nunca se modifica.
+ * resultado es un IrProgram nuevo y validado.
  */
 
 #include "ir_unroll.h"

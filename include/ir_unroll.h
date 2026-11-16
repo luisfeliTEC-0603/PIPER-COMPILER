@@ -8,7 +8,7 @@
  * secuencia de copias del cuerpo, reduciendo las vueltas del header y dando
  * al scheduler VLIW más instrucciones independientes por ventana. Opera
  * exclusivamente sobre IR: no lee AST ni modifica símbolos. La entrada se
- * presta intacta; la salida es un IrProgram nuevo, validado, que el llamador
+ * presta intacta. La salida es un IrProgram nuevo, validado, que el llamador
  * libera con ir_program_free. La tabla de símbolos y el AST deben seguir
  * vivos hasta liberar la salida.
  */
