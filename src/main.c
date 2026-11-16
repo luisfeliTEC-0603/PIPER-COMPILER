@@ -8,6 +8,7 @@
 #include "ast.h"
 #include "ir.h"
 #include "cfg.h"
+#include "dce/dce.h"
 #include "codegen.h"
 #include "parser.h"
 #include "assembler/asm_program_parser.h"   // antes "porygon_assembler/..."
@@ -27,6 +28,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 
 void yyrestart(FILE *input_file);
 int yylex_destroy(void);
@@ -53,6 +55,10 @@ enum {
     OPT_CLONES,
     OPT_CLONES_EXACT,
     OPT_CLONES_RENAMED,
+    OPT_DCE,
+    OPT_EMIT_IR_OPT,
+    OPT_EMIT_CFG_OPT,
+    OPT_EMIT_OPT_REPORT,
 };
 
 typedef enum {
@@ -78,6 +84,9 @@ typedef struct {
     const char *symbols_output_path;
     const char *ir_output_path;
     const char *cfg_output_path;
+    const char *ir_opt_output_path;
+    const char *cfg_opt_output_path;
+    const char *opt_report_path;
     const char *requested_output_path;
     int keep_asm;
     int verbose;
@@ -90,6 +99,7 @@ typedef struct {
     int diagnostics_json;
     int clones_min_nodes;      /* 0 = desactivado */
     int clones_mode;           /* 0 = exact, 1 = renamed */
+    int dce;
 } cli_options_t;
 
 typedef porygon_schedule_result_t (*schedule_writer_t)(
@@ -131,6 +141,10 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-bundles <ruta>   Emite los bundles en formato legible\n"
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
+            "  --dce                   Aplica DCE; disponible en el comando ir\n"
+            "  --emit-ir-opt <ruta>     Exporta la IR optimizada (requiere --dce)\n"
+            "  --emit-cfg-opt <ruta>    Exporta el CFG optimizado (requiere --dce)\n"
+            "  --emit-opt-report <ruta> Exporta metricas DCE en JSON\n"
             "  --emit-symbols <ruta>   Exporta la tabla de símbolos legible\n"
             "  --bin-to-mem <bin>      Convierte un ejecutable validado a .mem\n"
             "  --disasm-bin <bin>      Alias de --bin-to-mem\n"
@@ -227,6 +241,10 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"disasm-bin", required_argument, NULL, OPT_DISASM_BIN},
         {"emit-cfg", required_argument, NULL, OPT_EMIT_CFG},
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
+        {"dce", no_argument, NULL, OPT_DCE},
+        {"emit-ir-opt", required_argument, NULL, OPT_EMIT_IR_OPT},
+        {"emit-cfg-opt", required_argument, NULL, OPT_EMIT_CFG_OPT},
+        {"emit-opt-report", required_argument, NULL, OPT_EMIT_OPT_REPORT},
         {"emit-symbols", required_argument, NULL, OPT_EMIT_SYMBOLS},
         {"ll1", no_argument, NULL, OPT_LL1},
         {"ll1-expected", no_argument, NULL, OPT_LL1_EXPECTED},
@@ -273,6 +291,16 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         case OPT_EMIT_IR:
             if (!assign_once(&options->ir_output_path, optarg, "--emit-ir")) return -1;
             break;
+        case OPT_DCE: options->dce = 1; break;
+        case OPT_EMIT_IR_OPT:
+            if (!assign_once(&options->ir_opt_output_path, optarg, "--emit-ir-opt")) return -1;
+            break;
+        case OPT_EMIT_CFG_OPT:
+            if (!assign_once(&options->cfg_opt_output_path, optarg, "--emit-cfg-opt")) return -1;
+            break;
+        case OPT_EMIT_OPT_REPORT:
+            if (!assign_once(&options->opt_report_path, optarg, "--emit-opt-report")) return -1;
+            break;
         case OPT_EMIT_SYMBOLS:
             if (!assign_once(&options->symbols_output_path, optarg,
                              "--emit-symbols")) return -1;
@@ -313,6 +341,14 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     }
     options->requested_output_path = options->binary_output_path;
     options->binary_output_path = NULL;
+    if (options->dce && options->command != PIPOC_COMMAND_IR) {
+        fputs("error: --dce requiere el comando ir; el backend ASM actual consume AST, no IR optimizada\n", stderr);
+        return -1;
+    }
+    if (!options->dce && (options->ir_opt_output_path || options->cfg_opt_output_path || options->opt_report_path)) {
+        fputs("error: las salidas optimizadas requieren --dce\n", stderr);
+        return -1;
+    }
     if ((options->ir_output_path || options->cfg_output_path) && (options->check_only || options->clones_min_nodes > 0 ||
         options->asm_input_path || options->binary_input_path || options->ll1 || options->ll1_expected)) {
         fputs("error: --emit-ir/--emit-cfg requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
@@ -479,12 +515,13 @@ static int validate_paths(const char *input, const char *const *outputs,
     return 1;
 }
 
-/* Un mismo mecanismo para IR y DOT: escribir/cerrar un temporal y renombrar.
- * cfg=NULL exporta IR; de otro modo exporta su grafo. No se mezclan sus estados
- * de error: se convierten aquí a los códigos de salida de la CLI. */
-static int write_analysis(const char *path, const IrProgram *ir, const CfgProgram *cfg)
+/* Publicacion atomica por archivo de IR, DOT o reporte DCE.
+ * report tiene prioridad; sin report, cfg elige DOT y cfg=NULL elige IR.
+ * El llamador proporciona solo el modelo correspondiente a esa salida. */
+static int write_analysis(const char *path, const IrProgram *ir, const CfgProgram *cfg,
+                           const DceReport *report)
 {
-    const char *kind = cfg ? "CFG" : "IR";
+    const char *kind = report ? "reporte DCE" : cfg ? "CFG" : "IR";
     size_t length = strlen(path);
     if (length > SIZE_MAX - 12) return PIPOC_EXIT_COMPILE_ERROR;
     char *temporary = malloc(length + 12);
@@ -499,7 +536,9 @@ static int write_analysis(const char *path, const IrProgram *ir, const CfgProgra
     int result = PIPOC_EXIT_SUCCESS;
     if (file == NULL) { close(fd); result = PIPOC_EXIT_IO_ERROR; }
     else {
-        if (cfg) {
+        if (report) {
+            if (!dce_write_report(file, report)) result = PIPOC_EXIT_IO_ERROR;
+        } else if (cfg) {
             CfgStatus status = cfg_write_dot(file, cfg);
             if (status != CFG_OK) result = status == CFG_IO_ERROR ? PIPOC_EXIT_IO_ERROR : PIPOC_EXIT_COMPILE_ERROR;
         } else {
@@ -752,6 +791,7 @@ static int compile_assembly(const cli_options_t *options)
 
 static int compile_piper(const cli_options_t *options)
 {
+    clock_t compilation_start = clock();
     FILE *input = NULL;
     FILE *asm_stream = NULL;
     AstNode *ast = NULL;
@@ -861,14 +901,66 @@ static int compile_piper(const cli_options_t *options)
             }
         }
         if (options->ir_output_path != NULL) {
-            exit_status = write_analysis(options->ir_output_path, ir, NULL);
+            exit_status = write_analysis(options->ir_output_path, ir, NULL, NULL);
             if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
             if (options->verbose) fprintf(stderr, "[pipoc] IR: %s\n", options->ir_output_path);
         }
         if (options->cfg_output_path != NULL) {
-            exit_status = write_analysis(options->cfg_output_path, ir, cfg);
+            exit_status = write_analysis(options->cfg_output_path, ir, cfg, NULL);
             if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
             if (options->verbose) fprintf(stderr, "[pipoc] CFG: %s\n", options->cfg_output_path);
+        }
+        if (options->dce) {
+            clock_t optimization_start = clock();
+            DceRoutineReport routines;
+            DceStatus status = dce_remove_unreachable_routines(ir, &routines);
+            if (status != DCE_OK) {
+                fprintf(stderr, "error DCE al eliminar rutinas inalcanzables (codigo %d)\n", status);
+                exit_status = PIPOC_EXIT_COMPILE_ERROR;
+                goto done;
+            }
+            if (cfg == NULL || routines.removed_routines != 0) {
+                /* Construir el CFG despues de podar. Si se exporto el original,
+                 * reconstruirlo solo cuando cambiaron los indices de rutinas. */
+                cfg_program_free(cfg);
+                cfg = NULL;
+                CfgDiagnostic graph_error;
+                if (cfg_build(ir, &cfg, &graph_error) != CFG_OK) {
+                    fprintf(stderr, "error CFG despues de DCE: %s\n", graph_error.message);
+                    exit_status = PIPOC_EXIT_COMPILE_ERROR;
+                    goto done;
+                }
+            }
+            DceReport report;
+            LivenessDiagnostic analysis_error = {0};
+            status = dce_optimize(ir, cfg, &report, &analysis_error);
+            if (status != DCE_OK) {
+                fprintf(stderr, "error DCE (codigo %d): %s\n", status, analysis_error.message);
+                exit_status = PIPOC_EXIT_COMPILE_ERROR;
+                goto done;
+            }
+            clock_t end = clock();
+            report.instructions_before += routines.removed_instructions;
+            report.removed_instructions += routines.removed_instructions;
+            report.removed_routines = routines.removed_routines;
+            report.optimization_seconds = optimization_start == (clock_t)-1 || end == (clock_t)-1
+                ? -1.0 : (double)(end - optimization_start) / CLOCKS_PER_SEC;
+            report.compilation_seconds = compilation_start == (clock_t)-1 || end == (clock_t)-1
+                ? -1.0 : (double)(end - compilation_start) / CLOCKS_PER_SEC;
+            exit_status = write_analysis(options->ir_opt_output_path, ir, NULL, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            if (options->cfg_opt_output_path != NULL) {
+                exit_status = write_analysis(options->cfg_opt_output_path, ir, cfg, NULL);
+                if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            }
+            if (options->opt_report_path != NULL) {
+                exit_status = write_analysis(options->opt_report_path, NULL, NULL, &report);
+                if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            }
+            if (options->verbose)
+                fprintf(stderr, "[pipoc] DCE: %zu -> %zu instrucciones IR (%zu eliminadas, %zu rutinas eliminadas)\n",
+                    report.instructions_before, report.instructions_after,
+                    report.removed_instructions, report.removed_routines);
         }
         /* Los fallos posteriores de codegen deben seguir siendo errores. */
         exit_status = PIPOC_EXIT_COMPILE_ERROR;
@@ -945,6 +1037,9 @@ done:
 
 static void report_command_outputs(const cli_options_t *options)
 {
+    if (options->ir_opt_output_path) printf("[pipoc] ir optimizada: %s\n", options->ir_opt_output_path);
+    if (options->cfg_opt_output_path) printf("[pipoc] cfg optimizado: %s\n", options->cfg_opt_output_path);
+    if (options->opt_report_path) printf("[pipoc] reporte DCE: %s\n", options->opt_report_path);
     if (options->ir_output_path != NULL)
         printf("[pipoc] ir: %s\n", options->ir_output_path);
     if (options->cfg_output_path != NULL)
@@ -966,8 +1061,8 @@ static void report_command_outputs(const cli_options_t *options)
 int main(int argc, char **argv)
 {
     cli_options_t options;
-    char *owned_paths[7] = {0};
-    const char *outputs[8];
+    char *owned_paths[8] = {0};
+    const char *outputs[11];
     const char *input_path;
     int parsed = parse_cli(argc, argv, &options);
     int exit_status;
@@ -1013,6 +1108,10 @@ int main(int argc, char **argv)
         }
         if (options.requested_output_path) options.ir_output_path = options.requested_output_path;
         if (!default_output_path(input_path, ".ir", &options.ir_output_path, &owned_paths[6])) {
+            exit_status = PIPOC_EXIT_COMPILE_ERROR;
+            goto cleanup;
+        }
+        if (options.dce && !default_output_path(input_path, ".opt.ir", &options.ir_opt_output_path, &owned_paths[7])) {
             exit_status = PIPOC_EXIT_COMPILE_ERROR;
             goto cleanup;
         }
@@ -1117,18 +1216,25 @@ int main(int argc, char **argv)
     outputs[5] = options.symbols_output_path;
     outputs[6] = options.ir_output_path;
     outputs[7] = options.cfg_output_path;
+    outputs[8] = options.ir_opt_output_path;
+    outputs[9] = options.cfg_opt_output_path;
+    outputs[10] = options.opt_report_path;
     if (options.ir_output_path || options.cfg_output_path) {
         const char *reserved[] = {".rwt", ".bin", ".asm", ".mem", ".bundles", ".ast.json", ".symbols.txt"};
+        const char *analysis_outputs[] = {options.ir_output_path, options.cfg_output_path,
+            options.ir_opt_output_path, options.cfg_opt_output_path, options.opt_report_path};
+        for (size_t path = 0; path < sizeof(analysis_outputs) / sizeof(*analysis_outputs); path++)
         for (size_t i = 0; i < sizeof(reserved) / sizeof(*reserved); i++)
-            if ((options.ir_output_path && ends_with(options.ir_output_path, reserved[i])) ||
-                (options.cfg_output_path && ends_with(options.cfg_output_path, reserved[i]))) {
+            if (analysis_outputs[path] && ends_with(analysis_outputs[path], reserved[i])) {
                 fputs("error: la salida IR/CFG no puede usar la extensión de un fuente u otro artefacto\n", stderr);
                 exit_status = PIPOC_EXIT_USAGE;
                 goto cleanup;
             }
     }
     if ((options.ir_output_path && ends_with(options.ir_output_path, ".dot")) ||
-        (options.cfg_output_path && ends_with(options.cfg_output_path, ".ir"))) {
+        (options.cfg_output_path && ends_with(options.cfg_output_path, ".ir")) ||
+        (options.ir_opt_output_path && ends_with(options.ir_opt_output_path, ".dot")) ||
+        (options.cfg_opt_output_path && ends_with(options.cfg_opt_output_path, ".ir"))) {
         fputs("error: no intercambiar extensiones .ir y .dot entre las salidas\n", stderr);
         exit_status = PIPOC_EXIT_USAGE;
         goto cleanup;

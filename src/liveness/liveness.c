@@ -57,21 +57,34 @@ void liveness_set_remove(LivenessSet *set, size_t value)
     set->words[value / WORD_BITS] &= ~(UINT64_C(1) << (value % WORD_BITS));
 }
 
-LivenessSet *liveness_set_clone(const LivenessSet *source)
+static LivenessSet *allocate_set(size_t value_count, bool clear_words)
 {
     LivenessSet *copy = calloc(1, sizeof(*copy));
     if (copy == NULL)
         return NULL;
-    copy->word_count = source->word_count;
-    copy->value_count = source->value_count;
+    copy->word_count = value_count / WORD_BITS + (value_count % WORD_BITS != 0);
+    copy->value_count = value_count;
     if (copy->word_count != 0) {
-        copy->words = malloc(copy->word_count * sizeof(*copy->words));
+        copy->words = clear_words ? calloc(copy->word_count, sizeof(*copy->words))
+                                 : malloc(copy->word_count * sizeof(*copy->words));
         if (copy->words == NULL) {
             free(copy);
             return NULL;
         }
     }
-    liveness_set_copy(copy, source);
+    return copy;
+}
+
+LivenessSet *liveness_set_create(size_t value_count)
+{
+    return allocate_set(value_count, true);
+}
+
+LivenessSet *liveness_set_clone(const LivenessSet *source)
+{
+    LivenessSet *copy = allocate_set(source->value_count, false);
+    if (copy != NULL)
+        liveness_set_copy(copy, source);
     return copy;
 }
 

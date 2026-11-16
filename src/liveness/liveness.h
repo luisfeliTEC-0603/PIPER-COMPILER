@@ -45,6 +45,9 @@ typedef enum {
 LivenessStatus liveness_analyze_ir(const IrProgram *ir, const CfgProgram *cfg,
                                  LivenessResult **out,
                                  LivenessDiagnostic *diagnostic);
+/* Frontera compartida para consumidores con su propia funcion de transferencia. */
+LivenessStatus liveness_validate_ir(const IrProgram *ir, const CfgProgram *cfg,
+                                   LivenessDiagnostic *diagnostic);
 void liveness_result_free(LivenessResult *result);
 
 /** Consultas sin modificar ni transferir propiedad. Los indices de bloque siguen
@@ -72,6 +75,8 @@ bool liveness_set_contains(const LivenessSet *set, size_t value);
  * Copiar una copia sobre si misma tambien es valido.
  */
 LivenessSet *liveness_set_clone(const LivenessSet *source);
+/* Crea un conjunto propio vacio para un dominio de valores del consumidor. */
+LivenessSet *liveness_set_create(size_t value_count);
 void liveness_set_copy(LivenessSet *target, const LivenessSet *source);
 void liveness_set_add(LivenessSet *set, size_t value);
 void liveness_set_remove(LivenessSet *set, size_t value);

@@ -8,6 +8,7 @@ typedef struct {
 } DceBlockState;
 
 typedef struct {
+    DceValueMap values;
     DceBlockState *blocks;
     size_t block_count;
     size_t *queue;
@@ -44,12 +45,16 @@ static void worklist_free(DceWorklist *work)
     liveness_set_free(work->live);
     free(work->blocks);
     free(work->queue);
+    dce_values_free(&work->values);
 }
 
-static bool prepare_worklist(DceWorklist *work, const IrRoutine *routine,
-                             const LivenessResult *liveness, size_t routine_index,
-                             size_t *next_mark)
+static bool prepare_worklist(DceWorklist *work, const IrProgram *ir,
+                             size_t routine_index, size_t *next_mark)
 {
+    if (!dce_values_build(ir, routine_index, &work->values))
+        return false;
+    const IrRoutine *routine = &ir->routines[routine_index];
+    size_t value_count = work->values.temp_count + work->values.local_count;
     size_t block_count = routine->block_count;
     work->blocks = calloc(block_count, sizeof(*work->blocks));
     work->queue = calloc(block_count, sizeof(*work->queue));
@@ -57,19 +62,16 @@ static bool prepare_worklist(DceWorklist *work, const IrRoutine *routine,
         return false;
     work->block_count = block_count;
 
-    const LivenessSet *first_in = liveness_block_set(liveness, routine_index, 0, LIVENESS_IN);
-    work->live = liveness_set_clone(first_in);
+    work->live = liveness_set_create(value_count);
     if (work->live == NULL)
         return false;
 
     for (size_t b = 0; b < block_count; b++) {
-        const LivenessSet *live_in = liveness_block_set(liveness, routine_index, b, LIVENESS_IN);
-        work->blocks[b].live_in = liveness_set_clone(live_in);
+        work->blocks[b].live_in = liveness_set_create(value_count);
         if (work->blocks[b].live_in == NULL)
             return false;
         /* Arrancar sin demandas evita que un ciclo conserve valores solo por
          * sus conjuntos anteriores. Las instrucciones necesarias agregan usos. */
-        liveness_set_clear(work->blocks[b].live_in);
         work->blocks[b].mark_start = *next_mark;
         *next_mark += routine->blocks[b].instruction_count;
     }
@@ -79,39 +81,43 @@ static bool prepare_worklist(DceWorklist *work, const IrRoutine *routine,
     return true;
 }
 
-static void add_operand_use(LivenessSet *live, IrOperand operand)
+static void add_operand_use(LivenessSet *live, IrOperand operand, const DceValueMap *values)
 {
-    if (operand.kind == IR_OPERAND_TEMP)
-        liveness_set_add(live, operand.value.temp);
+    size_t value = dce_value_id(values, operand);
+    if (value != IR_NO_ID)
+        liveness_set_add(live, value);
 }
 
 /* Solo se incorporan los usos de instrucciones que seguiremos ejecutando. */
-static void update_live_before(LivenessSet *live, const IrInstruction *instruction)
+static void update_live_before(LivenessSet *live, const IrInstruction *instruction,
+                                const DceValueMap *values)
 {
-    if (instruction->result.kind == IR_OPERAND_TEMP)
-        liveness_set_remove(live, instruction->result.value.temp);
-    add_operand_use(live, instruction->arg1);
-    add_operand_use(live, instruction->arg2);
+    size_t defined = dce_value_id(values, instruction->result);
+    if (defined != IR_NO_ID)
+        liveness_set_remove(live, defined);
+    add_operand_use(live, instruction->arg1, values);
+    add_operand_use(live, instruction->arg2, values);
     if (instruction->op == IR_OP_CALL || instruction->op == IR_OP_INTRINSIC) {
         for (size_t argument = 0; argument < instruction->extra.call.argument_count; argument++)
-            add_operand_use(live, instruction->extra.call.arguments[argument]);
+            add_operand_use(live, instruction->extra.call.arguments[argument], values);
     }
 }
 
 /* Con remove=NULL solo calcula IN; las marcas se escriben al estabilizarlo. */
-static size_t scan_block_backward(const IrBlock *block, LivenessSet *live, bool *remove)
+static size_t scan_block_backward(const IrBlock *block, LivenessSet *live,
+                                   const DceValueMap *values, bool *remove)
 {
     size_t removed_count = 0;
     for (size_t i = block->instruction_count; i-- > 0;) {
         const IrInstruction *instruction = &block->instructions[i];
-        bool can_remove = dce_can_remove_instruction(instruction, live);
+        bool can_remove = dce_can_remove_mapped_instruction(instruction, live, values);
         if (remove != NULL)
             remove[i] = can_remove;
         if (can_remove) {
             removed_count++;
             continue;
         }
-        update_live_before(live, instruction);
+        update_live_before(live, instruction, values);
     }
     return removed_count;
 }
@@ -146,7 +152,7 @@ static void solve_routine(DceWorklist *work, const IrRoutine *routine,
         const CfgNode *node = &cfg->nodes[block + 1];
 
         collect_live_out(work, cfg, node);
-        scan_block_backward(&routine->blocks[block], work->live, NULL);
+        scan_block_backward(&routine->blocks[block], work->live, &work->values, NULL);
         if (!liveness_set_equal(state->live_in, work->live)) {
             liveness_set_copy(state->live_in, work->live);
             enqueue_predecessors(work, cfg, node);
@@ -161,21 +167,20 @@ static size_t mark_routine(DceWorklist *work, const IrRoutine *routine,
     for (size_t block = 0; block < routine->block_count; block++) {
         const CfgNode *node = &cfg->nodes[block + 1];
         collect_live_out(work, cfg, node);
-        removed_count += scan_block_backward(&routine->blocks[block], work->live,
+        removed_count += scan_block_backward(&routine->blocks[block], work->live, &work->values,
                                              remove + work->blocks[block].mark_start);
     }
     return removed_count;
 }
 
 bool dce_mark_dead_instructions(const IrProgram *ir, const CfgProgram *cfg,
-                                const LivenessResult *liveness, bool *remove,
-                                size_t *removed_count)
+                                bool *remove, size_t *removed_count)
 {
     size_t next_mark = 0;
     size_t removed = 0;
     for (size_t r = 0; r < ir->routine_count; r++) {
         DceWorklist work = {0};
-        if (!prepare_worklist(&work, &ir->routines[r], liveness, r, &next_mark)) {
+        if (!prepare_worklist(&work, ir, r, &next_mark)) {
             worklist_free(&work);
             return false;
         }
