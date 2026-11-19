@@ -9,6 +9,7 @@
 #include "ir.h"
 #include "ir_unroll.h"
 #include "cfg.h"
+#include "regalloc.h"
 #include "dce/dce.h"
 #include "codegen.h"
 #include "parser.h"
@@ -49,6 +50,7 @@ enum {
     OPT_EMIT_SYMBOLS,
     OPT_EMIT_IR,
     OPT_EMIT_CFG,
+    OPT_EMIT_REGALLOC_GRAPH,
     OPT_LL1,
     OPT_LL1_EXPECTED,
     OPT_CHECK,
@@ -86,6 +88,7 @@ typedef struct {
     const char *symbols_output_path;
     const char *ir_output_path;
     const char *cfg_output_path;
+    const char *regalloc_graph_output_path;
     const char *ir_opt_output_path;
     const char *cfg_opt_output_path;
     const char *opt_report_path;
@@ -144,6 +147,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-mem <ruta>       Emite texto hexadecimal para $readmemh\n"
             "  --emit-bundles <ruta>   Emite los bundles en formato legible\n"
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
+            "  --emit-regalloc-graph <ruta.dot>  Exporta interferencias IR preliminares\n"
             "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
             "  --unroll <N|auto|off>   Desenrolla loops constantes en el IR (afecta --emit-ir/--emit-cfg)\n"
             "  --dce                   Aplica DCE; disponible en el comando ir\n"
@@ -245,6 +249,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"bin-to-mem", required_argument, NULL, OPT_BIN_TO_MEM},
         {"disasm-bin", required_argument, NULL, OPT_DISASM_BIN},
         {"emit-cfg", required_argument, NULL, OPT_EMIT_CFG},
+        {"emit-regalloc-graph", required_argument, NULL, OPT_EMIT_REGALLOC_GRAPH},
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
         {"unroll", required_argument, NULL, OPT_UNROLL},
         {"dce", no_argument, NULL, OPT_DCE},
@@ -293,6 +298,10 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             break;
         case OPT_EMIT_CFG:
             if (!assign_once(&options->cfg_output_path, optarg, "--emit-cfg")) return -1;
+            break;
+        case OPT_EMIT_REGALLOC_GRAPH:
+            if (!assign_once(&options->regalloc_graph_output_path, optarg,
+                             "--emit-regalloc-graph")) return -1;
             break;
         case OPT_EMIT_IR:
             if (!assign_once(&options->ir_output_path, optarg, "--emit-ir")) return -1;
@@ -370,7 +379,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     }
     if ((options->ir_output_path || options->cfg_output_path) && (options->check_only || options->clones_min_nodes > 0 ||
         options->asm_input_path || options->binary_input_path || options->ll1 || options->ll1_expected)) {
-        fputs("error: --emit-ir/--emit-cfg requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
+        fputs("error: --emit-ir/--emit-cfg/--emit-regalloc-graph requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
         return -1;
     }
     if (options->command == PIPOC_COMMAND_IR && (options->keep_asm || options->print_packages ||
@@ -569,6 +578,49 @@ static int write_analysis(const char *path, const IrProgram *ir, const CfgProgra
     if (result == PIPOC_EXIT_SUCCESS && rename(temporary, path) != 0) result = PIPOC_EXIT_IO_ERROR;
     if (result != PIPOC_EXIT_SUCCESS) {
         fprintf(stderr, "error: no se pudo publicar %s en '%s'\n", kind, path);
+        unlink(temporary);
+    }
+    free(temporary);
+    return result;
+}
+
+/* Publica el DOT de interferencias solo tras escribir y cerrar el temporal.
+ * El grafo se obtiene del liveness IR; esta salida no cambia el codegen. */
+static int write_regalloc_graph(const char *path, const RegallocAnalysis *analysis)
+{
+    size_t length = strlen(path);
+    if (length > SIZE_MAX - 12) return PIPOC_EXIT_COMPILE_ERROR;
+    char *temporary = malloc(length + 12);
+    if (temporary == NULL) return PIPOC_EXIT_COMPILE_ERROR;
+    snprintf(temporary, length + 12, "%s.tmp.XXXXXX", path);
+    int fd = mkstemp(temporary);
+    if (fd < 0) {
+        fprintf(stderr, "error: no se pudo crear temporal para '%s': %s\n",
+                path, strerror(errno));
+        free(temporary);
+        return PIPOC_EXIT_IO_ERROR;
+    }
+    FILE *file = fdopen(fd, "w");
+    int result = PIPOC_EXIT_SUCCESS;
+    if (file == NULL) {
+        close(fd);
+        result = PIPOC_EXIT_IO_ERROR;
+    } else {
+        RegallocDiagnostic diagnostic;
+        RegallocStatus status = regalloc_write_ir_graph_dot(file, analysis,
+                                                            &diagnostic);
+        if (status != REGALLOC_OK) {
+            fprintf(stderr, "error en grafo de registros, rutina %zu: %s\n",
+                    diagnostic.routine, diagnostic.message);
+            result = status == REGALLOC_IO_ERROR ? PIPOC_EXIT_IO_ERROR :
+                                                 PIPOC_EXIT_COMPILE_ERROR;
+        }
+        if (fclose(file) != 0) result = PIPOC_EXIT_IO_ERROR;
+    }
+    if (result == PIPOC_EXIT_SUCCESS && rename(temporary, path) != 0)
+        result = PIPOC_EXIT_IO_ERROR;
+    if (result != PIPOC_EXIT_SUCCESS) {
+        fprintf(stderr, "error: no se pudo publicar grafo en '%s'\n", path);
         unlink(temporary);
     }
     free(temporary);
@@ -816,6 +868,7 @@ static int compile_piper(const cli_options_t *options)
     AstNode *ast = NULL;
     IrProgram *ir = NULL, *ir_opt = NULL;
     CfgProgram *cfg = NULL;
+    RegallocAnalysis *regalloc = NULL;
     SymbolTable *symbols = NULL;
     char *asm_text = NULL;
     size_t asm_length = 0;
@@ -903,7 +956,8 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
-    if (options->ir_output_path != NULL || options->cfg_output_path != NULL) {
+    if (options->ir_output_path != NULL || options->cfg_output_path != NULL ||
+        options->regalloc_graph_output_path != NULL) {
         IrDiagnostic diagnostic;
         if (options->verbose) fprintf(stderr, "[pipoc] Generación de IR\n");
         if (ir_generate(ast, symbols, &ir, &diagnostic) != IR_OK) {
@@ -1061,6 +1115,7 @@ done:
     porygon_schedule_free(&schedule);
     porygon_machine_program_free(&program);
     free(asm_text);
+    regalloc_analysis_free(regalloc);
     cfg_program_free(cfg);
     ir_program_free(ir_opt);
     ir_program_free(ir);
@@ -1078,6 +1133,8 @@ static void report_command_outputs(const cli_options_t *options)
         printf("[pipoc] ir: %s\n", options->ir_output_path);
     if (options->cfg_output_path != NULL)
         printf("[pipoc] cfg: %s\n", options->cfg_output_path);
+    if (options->regalloc_graph_output_path != NULL)
+        printf("[pipoc] regalloc-graph: %s\n", options->regalloc_graph_output_path);
     if (options->binary_output_path != NULL)
         printf("[pipoc] bin: %s\n", options->binary_output_path);
     if (options->asm_output_path != NULL)
@@ -1281,6 +1338,12 @@ int main(int argc, char **argv)
         (options.ir_opt_output_path && ends_with(options.ir_opt_output_path, ".dot")) ||
         (options.cfg_opt_output_path && ends_with(options.cfg_opt_output_path, ".ir"))) {
         fputs("error: no intercambiar extensiones .ir y .dot entre las salidas\n", stderr);
+        exit_status = PIPOC_EXIT_USAGE;
+        goto cleanup;
+    }
+    if (options.regalloc_graph_output_path &&
+        !ends_with(options.regalloc_graph_output_path, ".dot")) {
+        fputs("error: --emit-regalloc-graph requiere una ruta .dot\n", stderr);
         exit_status = PIPOC_EXIT_USAGE;
         goto cleanup;
     }

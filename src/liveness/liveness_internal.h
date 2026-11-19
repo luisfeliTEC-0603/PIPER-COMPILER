@@ -43,5 +43,6 @@ LivenessStatus live_report(LivenessDiagnostic *diagnostic, LivenessStatus status
  */
 LivenessStatus live_solve(const LiveInput *input, LivenessResult **out,
                           LivenessDiagnostic *diagnostic);
+void live_input_free(LiveInput *input);
 
 #endif

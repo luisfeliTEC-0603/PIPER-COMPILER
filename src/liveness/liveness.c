@@ -28,6 +28,22 @@ struct LivenessResult {
     size_t routine_count;
 };
 
+/** Ambos adaptadores poseen las listas de usos e instrucciones hasta que el
+ * solver termina. Los resultados solo contienen bits propios, no estos datos. */
+void live_input_free(LiveInput *input)
+{
+    if (input == NULL) return;
+    for (size_t r = 0; r < input->routine_count; r++) {
+        LiveInputRoutine *routine = &input->routines[r];
+        for (size_t b = 0; b < routine->block_count; b++)
+            free(routine->blocks[b].instructions);
+        free(routine->blocks);
+        free(routine->use_storage);
+    }
+    free(input->routines);
+    *input = (LiveInput){0};
+}
+
 LivenessStatus live_report(LivenessDiagnostic *diagnostic, LivenessStatus status,
                            size_t routine, IrId block, const char *message)
 {

@@ -9,6 +9,10 @@
  */
 #include "cfg.h"
 
+/* Declaracion adelantada: el adaptador de maquina comparte este resultado sin
+ * hacer que el solver dependa de la estructura del backend. */
+typedef struct RegallocMachineProgram RegallocMachineProgram;
+
 typedef enum {
     LIVENESS_OK = 0,
     LIVENESS_INVALID_INPUT,
@@ -45,6 +49,14 @@ typedef enum {
 LivenessStatus liveness_analyze_ir(const IrProgram *ir, const CfgProgram *cfg,
                                  LivenessResult **out,
                                  LivenessDiagnostic *diagnostic);
+/** Analiza IDs virtuales tras la bajada a instrucciones de maquina.
+ * En operaciones de dos direcciones, def cuenta tambien como uso. Los bits
+ * fixed_reads/fixed_writes son restricciones fisicas para el coloreador, no
+ * IDs virtuales del conjunto; se procesaran por separado en su grafo.
+ * Igual que con IR, el resultado debe liberarse antes de mutar machine. */
+LivenessStatus liveness_analyze_machine(const RegallocMachineProgram *machine,
+                                      LivenessResult **out,
+                                      LivenessDiagnostic *diagnostic);
 /* Frontera compartida para consumidores con su propia funcion de transferencia. */
 LivenessStatus liveness_validate_ir(const IrProgram *ir, const CfgProgram *cfg,
                                    LivenessDiagnostic *diagnostic);

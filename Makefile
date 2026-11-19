@@ -19,6 +19,7 @@ SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
 EMIT_SRC        = $(wildcard src/emit/*.c)
 IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
+REGALLOC_SRC    = $(wildcard src/regalloc/*.c)
 LIVENESS_SRC    = $(wildcard src/liveness/*.c)
 DCE_SRC         = $(wildcard src/dce/*.c)
 
@@ -30,6 +31,7 @@ SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_S
 EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
 IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
+REGALLOC_OBJ    = $(patsubst src/regalloc/%.c,build/regalloc/%.o,$(REGALLOC_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
 DCE_OBJ         = $(patsubst src/dce/%.c,build/dce/%.o,$(DCE_SRC))
 
@@ -60,20 +62,127 @@ OBJ = build/parser.o \
       $(EMIT_OBJ) \
       $(IR_OBJ) \
       $(CFG_OBJ) \
+      $(REGALLOC_OBJ) \
       $(LIVENESS_OBJ) \
       $(DCE_OBJ)
 
 .DELETE_ON_ERROR:
-.PHONY: all generate clean run ll1-table
+.PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline run clean
 
 all: $(TARGET) bin/porygon-schedule
-
-generate: build/parser.c build/parser.h build/lexer.c \
-          $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
 
 run: all
 	@mkdir -p build
 	nohup $(PYTHON) $(IDE_APP) > $(CURDIR)/$(IDE_LOG) 2>&1 & echo "IDE ON (PID $$!), log: $(IDE_LOG)"
+
+# Ruta reproducible Piper -> IR/CFG -> asignacion, con y sin spill virtual.
+check-regalloc-pipeline: build/parser.o build/lexer.o $(ANALYSIS_OBJ) \
+                         $(IR_OBJ) build/cfg/cfg.o build/cfg/cfg_validate.o \
+                         $(REGALLOC_OBJ) $(LIVENESS_OBJ)
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_pipeline.c $^ \
+	      -o build/runs/regalloc/test_pipeline
+	build/runs/regalloc/test_pipeline
+
+# Grafo de temporales virtuales: no necesita frontend ni emisor ASM.
+check-regalloc-machine-graph: build/regalloc/interference_machine.o \
+                              build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_machine_graph.c \
+	      build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_machine_graph
+	build/runs/regalloc/test_machine_graph
+
+# Contrato de entrega al emisor: colores, frame y ranuras de spill.
+check-regalloc-assignment: build/regalloc/assignment.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_assignment.c \
+	      build/regalloc/assignment.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_assignment
+	build/runs/regalloc/test_assignment
+
+# Contrasta liveness/grafo con un ejemplo publicado y comprueba toda la pila.
+check-regalloc-coloring: build/regalloc/color_machine.o \
+                         build/regalloc/interference_machine.o \
+                         build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_coloring.c \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_coloring
+	build/runs/regalloc/test_coloring
+
+# R2b escalar: contrato de registros fijos para simbolos e inmediatos grandes.
+check-regalloc-lower-symbols: build/regalloc/machine.o build/regalloc/assignment.o \
+                              build/regalloc/color_machine.o \
+                              build/regalloc/interference_machine.o \
+                              build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_symbols.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_symbols
+	build/runs/regalloc/test_lower_symbols
+
+# R2b llamadas: argumentos fijos, valores vivos y slots de argumentos en pila.
+check-regalloc-lower-calls: build/regalloc/machine.o build/regalloc/assignment.o \
+                           build/regalloc/color_machine.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_calls.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_calls
+	build/runs/regalloc/test_lower_calls
+
+# R2b orden tipado: signo independiente en cada operando y recorrido del grafo.
+check-regalloc-lower-order: build/regalloc/machine.o build/regalloc/assignment.o \
+                           build/regalloc/color_machine.o \
+                           build/regalloc/interference_machine.o \
+                           build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_order.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_order
+	build/runs/regalloc/test_lower_order
+
+# R2b suma/resta/multiplicacion comprobadas y efectos visibles para el grafo.
+check-regalloc-lower-checked: build/regalloc/machine.o build/regalloc/assignment.o \
+                             build/regalloc/color_machine.o \
+                             build/regalloc/interference_machine.o \
+                             build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_checked.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_checked
+	build/runs/regalloc/test_lower_checked
+
+# R2b conversiones y negacion comprobadas, incluido store despues del chequeo.
+check-regalloc-lower-checked-unary: build/regalloc/machine.o build/regalloc/assignment.o \
+                                   build/regalloc/color_machine.o \
+                                   build/regalloc/interference_machine.o \
+                                   build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/regalloc
+	$(CC) $(CFLAGS) tests/regalloc_lower_checked_unary.c \
+	      build/regalloc/machine.o build/regalloc/assignment.o \
+	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
+	      build/liveness/liveness.o build/liveness/liveness_machine.o \
+	      -o build/runs/regalloc/test_lower_checked_unary
+	build/runs/regalloc/test_lower_checked_unary
+
+generate: build/parser.c build/parser.h build/lexer.c \
+          $(LL1_GENERATED_SYMBOLS) $(LL1_GENERATED_DATA)
 
 ll1-table: $(LL1_REPORT)
 
@@ -114,6 +223,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h \
               include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h src/dce/dce.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
@@ -132,7 +242,11 @@ build/cfg/%.o: src/cfg/%.c include/cfg.h include/ir.h src/cfg/cfg_internal.h src
 	@mkdir -p build/cfg
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/cfg.h include/ir.h
+build/regalloc/%.o: src/regalloc/%.c include/regalloc.h include/regalloc_machine.h src/liveness/liveness.h include/cfg.h include/ir.h
+	@mkdir -p build/regalloc
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/regalloc_machine.h include/cfg.h include/ir.h
 	@mkdir -p build/liveness
 	$(CC) $(CFLAGS) -c $< -o $@
 
