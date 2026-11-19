@@ -1,0 +1,16 @@
+create B32 contador.
+
+routine B32 registrar[B32 valor] {
+    contador store valor.
+    output valor.
+}
+
+routine B32 main[] {
+    create B32 muerto.
+    create B32 resultado.
+    muerto store 11.
+    muerto store 22.
+    resultado store registrar[7].
+    muerto store registrar[9].
+    output resultado + contador.
+}

@@ -131,9 +131,12 @@ static LivenessStatus prepare_routine(LiveInputRoutine *target, const IrRoutine 
 }
 
 /* Validar una vez en el limite publico; las funciones internas confian en ello. */
-static LivenessStatus validate_ir_and_cfg(const IrProgram *ir, const CfgProgram *cfg,
+LivenessStatus liveness_validate_ir(const IrProgram *ir, const CfgProgram *cfg,
                                          LivenessDiagnostic *diagnostic)
 {
+    if (ir == NULL || cfg == NULL || cfg->ir != ir)
+        return live_report(diagnostic, LIVENESS_INVALID_INPUT, SIZE_MAX, IR_NO_ID,
+                           "Se requiere IR/CFG correspondientes.");
     IrDiagnostic ir_error;
     IrStatus ir_status = ir_validate(ir, &ir_error);
     if (ir_status != IR_OK)
@@ -173,10 +176,10 @@ LivenessStatus liveness_analyze_ir(const IrProgram *ir, const CfgProgram *cfg,
                                  LivenessResult **out,
                                  LivenessDiagnostic *diagnostic)
 {
-    if (ir == NULL || cfg == NULL || cfg->ir != ir || out == NULL || *out != NULL)
+    if (out == NULL || *out != NULL)
         return live_report(diagnostic, LIVENESS_INVALID_INPUT, SIZE_MAX, IR_NO_ID,
                            "Se requiere IR/CFG correspondientes y salida NULL.");
-    LivenessStatus status = validate_ir_and_cfg(ir, cfg, diagnostic);
+    LivenessStatus status = liveness_validate_ir(ir, cfg, diagnostic);
     if (status != LIVENESS_OK)
         return status;
 

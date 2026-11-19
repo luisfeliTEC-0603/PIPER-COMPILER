@@ -197,6 +197,10 @@ IrStatus ir_validate(const IrProgram *program, IrDiagnostic *diagnostic);
  */
 IrStatus ir_write(FILE *output, const IrProgram *program);
 
+/* Libera el contenido propio de una rutina y la deja vacia. No libera el
+ * objeto IrRoutine ni su simbolo prestado. Acepta construcciones parciales. */
+void ir_routine_dispose(IrRoutine *routine);
+
 /**
  * @brief Libera un programa completo o parcialmente construido; acepta NULL.
  * @param program Propiedad a consumir: rutinas, bloques, instrucciones y las

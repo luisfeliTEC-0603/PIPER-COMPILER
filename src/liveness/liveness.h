@@ -57,6 +57,9 @@ LivenessStatus liveness_analyze_ir(const IrProgram *ir, const CfgProgram *cfg,
 LivenessStatus liveness_analyze_machine(const RegallocMachineProgram *machine,
                                       LivenessResult **out,
                                       LivenessDiagnostic *diagnostic);
+/* Frontera compartida para consumidores con su propia funcion de transferencia. */
+LivenessStatus liveness_validate_ir(const IrProgram *ir, const CfgProgram *cfg,
+                                   LivenessDiagnostic *diagnostic);
 void liveness_result_free(LivenessResult *result);
 
 /** Consultas sin modificar ni transferir propiedad. Los indices de bloque siguen
@@ -76,5 +79,23 @@ const LivenessSet *liveness_instruction_set(const LivenessResult *result,
                                            size_t instruction,
                                            LivenessPoint point);
 bool liveness_set_contains(const LivenessSet *set, size_t value);
+
+/* Conjuntos de trabajo independientes del resultado de analisis.
+ * clone recibe un conjunto valido y devuelve una copia propia o NULL si falla
+ * la reserva. Solo estas copias se modifican y se liberan con set_free.
+ * copy requiere conjuntos del mismo universo; add/remove requieren un ID valido.
+ * Copiar una copia sobre si misma tambien es valido.
+ */
+LivenessSet *liveness_set_clone(const LivenessSet *source);
+/* Crea un conjunto propio vacio para un dominio de valores del consumidor. */
+LivenessSet *liveness_set_create(size_t value_count);
+void liveness_set_copy(LivenessSet *target, const LivenessSet *source);
+void liveness_set_add(LivenessSet *set, size_t value);
+void liveness_set_remove(LivenessSet *set, size_t value);
+/* Operaciones por palabras; union/equal requieren el mismo universo de IDs. */
+void liveness_set_clear(LivenessSet *set);
+void liveness_set_union(LivenessSet *target, const LivenessSet *source);
+bool liveness_set_equal(const LivenessSet *left, const LivenessSet *right);
+void liveness_set_free(LivenessSet *set);
 
 #endif

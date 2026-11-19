@@ -300,21 +300,25 @@ void ir_fail(IrContext *ctx, IrStatus status, SourceLocation location,
     snprintf(ctx->error.message, sizeof(ctx->error.message), "%s", message != NULL ? message : "Error IR.");
 }
 
+void ir_routine_dispose(IrRoutine *routine)
+{
+    for (size_t b = 0; b < routine->block_count; b++) {
+        IrBlock *block = &routine->blocks[b];
+        for (size_t i = 0; i < block->instruction_count; i++)
+            free_call_arguments(&block->instructions[i]);
+        free(block->instructions);
+    }
+    free(routine->blocks);
+    *routine = (IrRoutine){0};
+}
+
 /** counts solo incluyen objetos registrados: una reserva sin elementos también
  * se libera. Los punteros prestados de operandos, funciones y tabla no se tocan. */
 void ir_program_free(IrProgram *program)
 {
     if (program == NULL) return;
-    for (size_t r = 0; r < program->routine_count; r++) {
-        IrRoutine *routine = &program->routines[r];
-        for (size_t b = 0; b < routine->block_count; b++) {
-            IrBlock *block = &routine->blocks[b];
-            for (size_t i = 0; i < block->instruction_count; i++)
-                free_call_arguments(&block->instructions[i]);
-            free(block->instructions);
-        }
-        free(routine->blocks);
-    }
+    for (size_t r = 0; r < program->routine_count; r++)
+        ir_routine_dispose(&program->routines[r]);
     free(program->routines);
     free(program);
 }

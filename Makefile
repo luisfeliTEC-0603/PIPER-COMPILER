@@ -21,6 +21,7 @@ IR_SRC          = $(wildcard src/ir/*.c)
 CFG_SRC         = $(wildcard src/cfg/*.c)
 REGALLOC_SRC    = $(wildcard src/regalloc/*.c)
 LIVENESS_SRC    = $(wildcard src/liveness/*.c)
+DCE_SRC         = $(wildcard src/dce/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
@@ -32,6 +33,7 @@ IR_OBJ          = $(patsubst src/ir/%.c,build/ir/%.o,$(IR_SRC))
 CFG_OBJ         = $(patsubst src/cfg/%.c,build/cfg/%.o,$(CFG_SRC))
 REGALLOC_OBJ    = $(patsubst src/regalloc/%.c,build/regalloc/%.o,$(REGALLOC_SRC))
 LIVENESS_OBJ    = $(patsubst src/liveness/%.c,build/liveness/%.o,$(LIVENESS_SRC))
+DCE_OBJ         = $(patsubst src/dce/%.c,build/dce/%.o,$(DCE_SRC))
 
 IDE_APP = ide/piper_ide/app.py
 IDE_LOG = build/ide.log
@@ -61,7 +63,8 @@ OBJ = build/parser.o \
       $(IR_OBJ) \
       $(CFG_OBJ) \
       $(REGALLOC_OBJ) \
-      $(LIVENESS_OBJ)
+      $(LIVENESS_OBJ) \
+      $(DCE_OBJ)
 
 .DELETE_ON_ERROR:
 .PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline run clean
@@ -221,6 +224,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
               include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h \
+              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h src/dce/dce.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
@@ -244,6 +248,10 @@ build/regalloc/%.o: src/regalloc/%.c include/regalloc.h include/regalloc_machine
 
 build/liveness/%.o: src/liveness/%.c src/liveness/liveness_internal.h src/liveness/liveness.h include/regalloc_machine.h include/cfg.h include/ir.h
 	@mkdir -p build/liveness
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/dce/%.o: src/dce/%.c $(wildcard src/dce/*.h) src/liveness/liveness.h include/ir.h include/cfg.h include/symbol_table.h
+	@mkdir -p build/dce
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/%.o: src/analysis/ll1/%.c \

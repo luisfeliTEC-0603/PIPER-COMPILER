@@ -1,0 +1,28 @@
+routine B32 test[] {
+    create B32 i.
+    create B32 a.
+    create B32 b.
+    create B32 c.
+    create B32 d.
+    a store 0.
+    b store 0.
+    c store 0.
+    d store 0.
+    loop [i & 0 -> 20 & 1] {
+        a store a + i.
+        b store b + 1.
+        c store c * 2.
+        d store d - i.
+    }
+    output a.
+}
+
+routine B32 main[] {
+    create B32 i.
+    create B32 suma.
+    suma store 0.
+    loop [i & 0 -> 103 & 1] {
+        suma store suma + i.
+    }
+    output suma.
+}
