@@ -4,18 +4,6 @@
 #include "liveness_internal.h"
 #include <stdlib.h>
 
-static void input_free(LiveInput *input)
-{
-    for (size_t routine_index = 0; routine_index < input->routine_count; routine_index++) {
-        LiveInputRoutine *routine = &input->routines[routine_index];
-        for (size_t block_index = 0; block_index < routine->block_count; block_index++)
-            free(routine->blocks[block_index].instructions);
-        free(routine->blocks);
-        free(routine->use_storage);
-    }
-    free(input->routines);
-}
-
 /* Con use_ids=NULL solo cuenta; con almacenamiento tambien escribe los IDs.
  * Los usos repetidos se conservan: el solver los reune en sus bitsets.
  */
@@ -197,6 +185,6 @@ LivenessStatus liveness_analyze_ir(const IrProgram *ir, const CfgProgram *cfg,
     if (status == LIVENESS_OK)
         status = live_solve(&input, out, diagnostic);
     /* Unico dueño de la entrada temporal, tanto en exito como en fallo. */
-    input_free(&input);
+    live_input_free(&input);
     return status;
 }
