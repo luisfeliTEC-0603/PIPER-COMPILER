@@ -74,7 +74,7 @@ DceStatus dce_optimize(IrProgram *ir, const CfgProgram *cfg, DceReport *report,
                         LivenessDiagnostic *analysis_diagnostic);
 /* Cero eliminaciones es exito; changed en JSON indica si hubo cambios.
  * Escribe JSON en un stream prestado; no lo cierra. Metricas ISA no disponibles
- * quedan explicitamente en null hasta conectar la emision desde IR. */
+ * quedan explicitamente en null: la medicion de ISA/ciclos no pertenece a DCE. */
 bool dce_write_report(FILE *output, const DceReport *report);
 
 #endif

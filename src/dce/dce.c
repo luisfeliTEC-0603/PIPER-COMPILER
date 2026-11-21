@@ -157,6 +157,6 @@ bool dce_write_report(FILE *output, const DceReport *report)
     if (report->compilation_seconds < 0) fputs("null", output);
     else fprintf(output, "%.9f", report->compilation_seconds);
     fputs(",\n  \"target_code_bytes\": null,\n  \"simulator_cycles\": null,\n"
-        "  \"target_metrics_status\": \"requires_backend_consuming_optimized_ir\"\n}\n", output);
+        "  \"target_metrics_status\": \"requires_target_metrics_collection\"\n}\n", output);
     return !ferror(output);
 }

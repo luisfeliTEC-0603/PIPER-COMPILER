@@ -83,6 +83,10 @@ static uint32_t run_main(const RegallocAssignedProgram *assigned, size_t r,
         case REGALLOC_M_CALL_RESULT: {
             const uint32_t expected[] = {11, 22, 33, 44, 55, 66};
             assert(in->call_arg_count == 6 && call_args == 6);
+            /* Verificar los argumentos fisicos al saltar, no solo la copia
+             * observada en CALL_ARG: una recarga posterior podria pisarlos. */
+            for (size_t a = 0; a < REGALLOC_REGISTER_ARGS; a++)
+                assert(registers[a + 1] == expected[a]);
             for (size_t a = 0; a < 6; a++)
                 assert(arguments[a] == expected[a]);
             memcpy(registers, saved, sizeof(registers));

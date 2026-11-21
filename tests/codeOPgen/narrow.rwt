@@ -1,0 +1,6 @@
+routine B8 narrow[B32 input] {
+    create B8 small.
+    small store input.
+    output small.
+}
+routine B32 main[] { output narrow[128]. }

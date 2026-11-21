@@ -123,12 +123,12 @@ static void test_stack_arguments_and_array_rejection(void)
     assert(lowered->blocks[0].instruction_count == 15);
     const RegallocMachineInstruction *m = lowered->blocks[0].instructions;
     assert(m[6].op == REGALLOC_M_CALL_SAVE);
-    assert(m[11].op == REGALLOC_M_CALL_ARG && m[11].call_arg_index == 4 &&
-           m[11].fixed_reads == REGALLOC_PHYS_R7 &&
-           m[11].flags == IR_WRITE_MEMORY);
-    assert(m[12].op == REGALLOC_M_CALL_ARG && m[12].call_arg_index == 5 &&
-           m[12].fixed_reads == REGALLOC_PHYS_R7 &&
-           m[12].flags == IR_WRITE_MEMORY);
+    assert(m[7].op == REGALLOC_M_CALL_ARG && m[7].call_arg_index == 4 &&
+           m[7].fixed_reads == REGALLOC_PHYS_R7 &&
+           m[7].flags == IR_WRITE_MEMORY);
+    assert(m[8].op == REGALLOC_M_CALL_ARG && m[8].call_arg_index == 5 &&
+           m[8].fixed_reads == REGALLOC_PHYS_R7 &&
+           m[8].flags == IR_WRITE_MEMORY);
     assert(m[13].op == REGALLOC_M_CALL_VOID && m[13].call_arg_count == 6);
     LivenessResult *live = NULL;
     LivenessDiagnostic live_error;

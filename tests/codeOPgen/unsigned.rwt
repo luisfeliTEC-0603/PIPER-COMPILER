@@ -1,0 +1,3 @@
+routine uB32 product[uB32 a, uB32 b] { output a * b. }
+routine uB32 divide[uB32 a, uB32 b] { output a / b. }
+routine uB32 main[] { output product[65535,65537] - divide[4294967295,3]. }

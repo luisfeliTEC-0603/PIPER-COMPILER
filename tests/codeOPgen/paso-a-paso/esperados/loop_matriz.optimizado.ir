@@ -1,0 +1,61 @@
+function main() -> B32
+    variables: local matriz:B32[2x2], local fila:B32, local suma:B32, local descartado:B32
+    temporales: t0:&B32, t1:&B32, t2:&B32, t3:&B32, t4:B32, t5:bool, t6:B32, t7:B32, t8:B32, t9:B32, t10:&B32, t11:B32, t12:&B32, t13:B32, t14:B32, t15:B32, t16:B32, t17:B32, t18:B32, t19:B32, t20:B32, t21:B32, t22:&B32, t23:B32, t24:&B32, t25:B32, t26:B32, t27:B32, t28:B32
+    constantes: 1:B32, 4:B32, 2:B32, 8:B32, 3:B32, 12:B32, 0:B32
+B0:
+    t0 = &matriz
+    *t0 = 1 ; escribe memoria
+    t1 = t0 + 4
+    *t1 = 2 ; escribe memoria
+    t2 = t0 + 8
+    *t2 = 3 ; escribe memoria
+    t3 = t0 + 12
+    *t3 = 4 ; escribe memoria
+    suma = 0
+    fila = 0
+    jump B1
+B1:
+    t4 = fila
+    t5 = t4 < 2
+    if t5 jump B2 else B3
+B2:
+    t6 = suma
+    t7 = fila
+    check 0 <= t7 < 2 ; puede fallar
+    check 0 <= 1 < 2 ; puede fallar
+    t8 = t7 * 2
+    t9 = t8 + 1
+    t10 = &matriz
+    t11 = t9 * 4
+    t12 = t10 + t11
+    t13 = *t12 ; lee memoria
+    t14 = t6 + t13 ; comprueba rango del resultado B32, puede fallar
+    suma = t14
+    jump B4
+B3:
+    t17 = suma
+    return t17
+B4:
+    t15 = fila
+    t16 = t15 + 1
+    fila = t16
+    jump B5
+B5:
+    t18 = suma
+    t19 = fila
+    check 0 <= t19 < 2 ; puede fallar
+    check 0 <= 1 < 2 ; puede fallar
+    t20 = t19 * 2
+    t21 = t20 + 1
+    t22 = &matriz
+    t23 = t21 * 4
+    t24 = t22 + t23
+    t25 = *t24 ; lee memoria
+    t26 = t18 + t25 ; comprueba rango del resultado B32, puede fallar
+    suma = t26
+    jump B6
+B6:
+    t27 = fila
+    t28 = t27 + 1
+    fila = t28
+    jump B1

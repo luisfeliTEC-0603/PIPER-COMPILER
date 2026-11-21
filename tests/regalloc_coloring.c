@@ -271,7 +271,9 @@ static void test_machine_graph_against_reference(void)
             if (in->op == REGALLOC_M_TO_RETURN) use = 1u << in->use1;
             unsigned before = (after & ~def) | use;
             reference_live_pairs(before, expected_rows);
-            reference_live_pairs(after, expected_rows);
+            /* Una escritura existe aunque su resultado no se lea: su
+             * destino debe distinguirse de TODOS los valores de salida. */
+            reference_live_pairs(after | def, expected_rows);
             if (in->fixed_writes != 0)
                 for (size_t t = 0; t < 3; t++)
                     if ((before & after & (1u << t)) != 0)

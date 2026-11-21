@@ -17,7 +17,8 @@
  * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
  * La aritmetica comprobada usa r5/r6 reservados y conserva MAY_TRAP.
  * ADDR/CHECK_BOUNDS/LOAD/STORE cubren accesos indexados y la familia CRYPTO
- * expone sus efectos y registros fijos. Todavia no hay emisor ASM de esta IR.
+ * expone sus efectos y registros fijos. codeOPgen emite ASM desde la vista
+ * asignada de este modelo, sin volver a recorrer el AST.
  */
 #include "regalloc.h"
 
@@ -109,8 +110,9 @@ typedef enum {
  * call_arg_index; CALL lleva symbol=callee. El emisor guarda r1..r6 antes de
  * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
  * final. Los argumentos i>=4 se guardan despues del call record de 32 bytes.
- * Ningun CALL_ARG crea un temporal nuevo entre la primera escritura fisica
- * de argumento y el salto. Las intrinsecas usan immediate/immediate2 para
+ * Los argumentos de pila se colocan primero. El grafo protege los registros
+ * de argumentos ya escritos frente a definiciones/recargas posteriores.
+ * Las intrinsecas usan immediate/immediate2 para
  * indices de 2 bits; CRYPTO_WORD lleva el indice de palabra en immediate.
  * CRYPTO_FEISTEL toma la direccion B32[2] en use1 y usa r1/r2/r3 fijos. */
 typedef struct {
@@ -168,8 +170,8 @@ typedef struct RegallocMachineProgram {
  * limpia el resultado parcial y deja *out=NULL. Requiere un analisis preparado
  * sobre IR/CFG aun vivos; analysis->liveness puede ser NULL.
  *
- * El modelo no se integra aun con el CLI. regalloc_allocate consume esta
- * bajada y entrega colores/spills para el subconjunto admitido. */
+ * regalloc_allocate consume esta bajada y entrega colores/spills al emisor
+ * codeOPgen, tanto en la CLI como en las pruebas del backend. */
 RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
                                     RegallocMachineProgram **out,
                                     RegallocDiagnostic *diagnostic);

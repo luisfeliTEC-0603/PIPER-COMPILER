@@ -1,5 +1,5 @@
 /** @file regalloc.c
- * Preparacion del futuro backend desde IR, en tres pasos:
+ * Preparacion del backend desde IR, en tres pasos:
  * 1. comprobar que la IR y el CFG se refieren al mismo programa y son validos;
  * 2. reservar una entrada por rutina y bloque, conservando sus IDs reales;
  * 3. publicar la salida solo cuando todas las reservas terminan.

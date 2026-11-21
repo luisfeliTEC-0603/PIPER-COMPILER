@@ -371,8 +371,8 @@ Fuentes y salidas esperadas: `tests/ir/`. Construir con `make all`, exportar con
 | Presentación `Apuntes_PresentacionOptimizacion.pdf`, diapositivas 5–9 y 14 | Operaciones, cuádruplos, recorrido del AST y líderes de bloques. |
 | [main.c](../../src/main.c), [Makefile](../../Makefile) | Orquestación, CLI, rutas y construcción. |
 | [ast.h](../../include/ast.h), [semantic.c](../../src/analysis/semantic.c), [symbol_table.h](../../include/symbol_table.h) | Entrada, resolución, tipos, ámbitos y almacenamiento existente. |
-| [codegen_expr.c](../../src/codegen/codegen_expr.c), [codegen_stmt.c](../../src/codegen/codegen_stmt.c) | Orden de evaluación, prefijos, ciclos y destinos. |
-| [codegen_array.c](../../src/codegen/codegen_array.c), [codegen_arithmetic.c](../../src/codegen/codegen_arithmetic.c), [codegen_crypto.c](../../src/codegen/codegen_crypto.c) | Límites dinámicos, errores de aritmética e intrínsecas. |
+| [ir_expr.c](../../src/ir/ir_expr.c), [ir_stmt.c](../../src/ir/ir_stmt.c) | Orden de evaluación, ciclos y destinos en la IR. |
+| [codeOPgen](../codeOPgen.md) | Emision desde maquina asignada: limites dinamicos, errores de aritmetica e intrinsecas. Sustituye el antiguo recorrido AST de codegen. |
 
 Las APIs/formatos de esta guía son decisiones de implementación. No se presupone que el enunciado imponga esos nombres.
 

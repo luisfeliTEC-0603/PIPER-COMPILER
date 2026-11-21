@@ -11,7 +11,7 @@
 #include "cfg.h"
 #include "regalloc.h"
 #include "dce/dce.h"
-#include "codegen.h"
+#include "codeOPgen.h"
 #include "parser.h"
 #include "assembler/asm_program_parser.h"   // antes "porygon_assembler/..."
 #include "scheduler/scheduler.h"            // antes "scheduler/..." (sin prefijo)
@@ -60,6 +60,7 @@ enum {
     OPT_CLONES_RENAMED,
     OPT_UNROLL,
     OPT_DCE,
+    OPT_SPILL,
     OPT_EMIT_IR_OPT,
     OPT_EMIT_CFG_OPT,
     OPT_EMIT_OPT_REPORT,
@@ -107,6 +108,8 @@ typedef struct {
     IrUnrollMode unroll_mode;  /* --unroll */
     size_t unroll_factor;
     int dce;
+    int allow_spill;
+    int spill_requested;
 } cli_options_t;
 
 typedef porygon_schedule_result_t (*schedule_writer_t)(
@@ -149,10 +152,11 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-regalloc-graph <ruta.dot>  Exporta interferencias IR preliminares tras las pasadas solicitadas\n"
             "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
-            "  --unroll <N|auto|off>   Desenrolla loops constantes en el IR (afecta --emit-ir/--emit-cfg)\n"
-            "  --dce                   Aplica DCE; disponible en el comando ir\n"
-            "  --emit-ir-opt <ruta>     Exporta la IR optimizada (requiere --dce)\n"
-            "  --emit-cfg-opt <ruta>    Exporta el CFG optimizado (requiere --dce)\n"
+            "  --unroll <N|auto|off>   Desenrolla loops constantes antes de asignar registros y emitir ASM\n"
+            "  --dce                   Elimina instrucciones y rutinas innecesarias antes de generar ASM\n"
+            "  --spill <on|off>        Permite spills si faltan registros (defecto on)\n"
+            "  --emit-ir-opt <ruta>     Exporta IR tras unroll/DCE\n"
+            "  --emit-cfg-opt <ruta>    Exporta CFG tras unroll/DCE\n"
             "  --emit-opt-report <ruta> Exporta metricas DCE en JSON\n"
             "  --emit-symbols <ruta>   Exporta la tabla de símbolos legible\n"
             "  --bin-to-mem <bin>      Convierte un ejecutable validado a .mem\n"
@@ -253,6 +257,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
         {"unroll", required_argument, NULL, OPT_UNROLL},
         {"dce", no_argument, NULL, OPT_DCE},
+        {"spill", required_argument, NULL, OPT_SPILL},
         {"emit-ir-opt", required_argument, NULL, OPT_EMIT_IR_OPT},
         {"emit-cfg-opt", required_argument, NULL, OPT_EMIT_CFG_OPT},
         {"emit-opt-report", required_argument, NULL, OPT_EMIT_OPT_REPORT},
@@ -268,6 +273,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {NULL, 0, NULL, 0}
     };
     memset(options, 0, sizeof(*options));
+    options->allow_spill = 1;
     has_command = argc > 1 && parse_command(argv[1], &options->command);
     opterr = 0;
     optind = has_command ? 2 : 1;
@@ -321,6 +327,15 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             }
             break;
         case OPT_DCE: options->dce = 1; break;
+        case OPT_SPILL:
+            options->spill_requested = 1;
+            if (strcmp(optarg, "on") == 0) options->allow_spill = 1;
+            else if (strcmp(optarg, "off") == 0) options->allow_spill = 0;
+            else {
+                fputs("error: --spill requiere on u off\n", stderr);
+                return -1;
+            }
+            break;
         case OPT_EMIT_IR_OPT:
             if (!assign_once(&options->ir_opt_output_path, optarg, "--emit-ir-opt")) return -1;
             break;
@@ -370,16 +385,19 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     }
     options->requested_output_path = options->binary_output_path;
     options->binary_output_path = NULL;
-    if (options->dce && options->command != PIPOC_COMMAND_IR) {
-        fputs("error: --dce requiere el comando ir; el backend ASM actual consume AST, no IR optimizada\n", stderr);
+    if (!options->dce && options->opt_report_path) {
+        fputs("error: --emit-opt-report requiere --dce\n", stderr);
         return -1;
     }
-    if (!options->dce && (options->ir_opt_output_path || options->cfg_opt_output_path || options->opt_report_path)) {
-        fputs("error: las salidas optimizadas requieren --dce\n", stderr);
+    if (!options->dce && options->unroll_mode == IR_UNROLL_OFF &&
+        (options->ir_opt_output_path || options->cfg_opt_output_path)) {
+        fputs("error: las salidas optimizadas requieren --dce o --unroll\n", stderr);
         return -1;
     }
     if ((options->ir_output_path || options->cfg_output_path ||
-         options->regalloc_graph_output_path) && (options->check_only || options->clones_min_nodes > 0 ||
+         options->regalloc_graph_output_path || options->ir_opt_output_path ||
+         options->cfg_opt_output_path || options->dce || options->spill_requested ||
+         options->unroll_mode != IR_UNROLL_OFF) && (options->check_only || options->clones_min_nodes > 0 ||
         options->asm_input_path || options->binary_input_path || options->ll1 || options->ll1_expected)) {
         fputs("error: --emit-ir/--emit-cfg/--emit-regalloc-graph requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
         return -1;
@@ -879,16 +897,20 @@ static int compile_piper(const cli_options_t *options)
     FILE *asm_stream = NULL;
     AstNode *ast = NULL;
     IrProgram *ir = NULL, *ir_opt = NULL;
+    IrProgram *active_ir = NULL;
     CfgProgram *cfg = NULL;
     RegallocAnalysis *regalloc = NULL;
+    RegallocAllocation *allocation = NULL;
     SymbolTable *symbols = NULL;
     char *asm_text = NULL;
     size_t asm_length = 0;
     porygon_machine_program_t program = {0};
     porygon_schedule_t schedule = {0};
     porygon_program_parse_result_t parsed;
-    CodegenOptions codegen_options = {0, 0};
-    CodegenResult codegen_result;
+    CodeOPgenDiagnostic emission_error;
+    CodeOPgenResult emission_status;
+    int needs_asm = options->binary_output_path != NULL || options->asm_output_path != NULL ||
+        options->mem_output_path != NULL || options->bundles_output_path != NULL || options->print_packages;
     int parse_status;
     int exit_status = PIPOC_EXIT_COMPILE_ERROR;
 
@@ -898,7 +920,14 @@ static int compile_piper(const cli_options_t *options)
                 options->source_path, strerror(errno));
         return PIPOC_EXIT_IO_ERROR;
     }
-    if (options->verbose) fprintf(stderr, "[pipoc] Fase léxica/sintáctica\n");
+    if (options->verbose) {
+        fprintf(stderr, "[pipoc] Opciones: unroll=%s factor=%zu DCE=%s spilling=%s\n",
+                options->unroll_mode == IR_UNROLL_OFF ? "off" :
+                options->unroll_mode == IR_UNROLL_AUTO ? "auto" : "factor",
+                options->unroll_factor, options->dce ? "on" : "off",
+                options->allow_spill ? "on" : "off");
+        fprintf(stderr, "[pipoc] Fase léxica/sintáctica\n");
+    }
     yyrestart(input);
     lexer_set_trace(0);
     symbols = symbol_table_create();
@@ -968,7 +997,8 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
-    if (options->ir_output_path != NULL || options->cfg_output_path != NULL ||
+    if (needs_asm || options->ir_output_path != NULL || options->cfg_output_path != NULL ||
+        options->ir_opt_output_path != NULL || options->cfg_opt_output_path != NULL ||
         options->regalloc_graph_output_path != NULL) {
         IrDiagnostic diagnostic;
         if (options->verbose) fprintf(stderr, "[pipoc] Generación de IR\n");
@@ -977,7 +1007,7 @@ static int compile_piper(const cli_options_t *options)
                 diagnostic.location.first_column, diagnostic.message);
             goto done;
         }
-        IrProgram *active_ir = ir;
+        active_ir = ir;
         if (options->unroll_mode != IR_UNROLL_OFF) {
             IrUnrollOptions unroll = ir_unroll_default_options();
             IrUnrollStats unroll_stats;
@@ -995,7 +1025,7 @@ static int compile_piper(const cli_options_t *options)
             active_ir = ir_opt;
             if (options->verbose) ir_unroll_stats_write(stderr, &unroll_stats);
         }
-        if (options->cfg_output_path != NULL ||
+        if (needs_asm || options->cfg_output_path != NULL || options->cfg_opt_output_path != NULL ||
             options->regalloc_graph_output_path != NULL) {
             CfgDiagnostic graph_error;
             if (options->verbose) fprintf(stderr, "[pipoc] Construcción de CFG\n");
@@ -1051,12 +1081,6 @@ static int compile_piper(const cli_options_t *options)
                 ? -1.0 : (double)(end - optimization_start) / CLOCKS_PER_SEC;
             report.compilation_seconds = compilation_start == (clock_t)-1 || end == (clock_t)-1
                 ? -1.0 : (double)(end - compilation_start) / CLOCKS_PER_SEC;
-            exit_status = write_analysis(options->ir_opt_output_path, active_ir, NULL, NULL);
-            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
-            if (options->cfg_opt_output_path != NULL) {
-                exit_status = write_analysis(options->cfg_opt_output_path, active_ir, cfg, NULL);
-                if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
-            }
             if (options->opt_report_path != NULL) {
                 exit_status = write_analysis(options->opt_report_path, NULL, NULL, &report);
                 if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
@@ -1066,15 +1090,30 @@ static int compile_piper(const cli_options_t *options)
                     report.instructions_before, report.instructions_after,
                     report.removed_instructions, report.removed_routines);
         }
+        if (options->ir_opt_output_path != NULL) {
+            exit_status = write_analysis(options->ir_opt_output_path, active_ir, NULL, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+        }
+        if (options->cfg_opt_output_path != NULL) {
+            exit_status = write_analysis(options->cfg_opt_output_path, active_ir, cfg, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+        }
         /* Analizar la instantanea final: DCE puede haber cambiado instrucciones
          * o indices de rutinas. No conservar liveness anterior a esas pasadas. */
-        if (options->regalloc_graph_output_path != NULL) {
+        if (needs_asm || options->regalloc_graph_output_path != NULL) {
             RegallocDiagnostic graph_error;
             exit_status = PIPOC_EXIT_COMPILE_ERROR;
-            if (regalloc_prepare(active_ir, cfg, &regalloc, &graph_error) != REGALLOC_OK ||
-                regalloc_compute_liveness(regalloc, &graph_error) != REGALLOC_OK) {
+            if (regalloc_prepare(active_ir, cfg, &regalloc, &graph_error) != REGALLOC_OK) {
                 fprintf(stderr, "error en analisis de registros, rutina %zu: %s\n",
                         graph_error.routine, graph_error.message);
+                goto done;
+            }
+        }
+        if (options->regalloc_graph_output_path != NULL) {
+            RegallocDiagnostic graph_error;
+            if (regalloc_compute_liveness(regalloc, &graph_error) != REGALLOC_OK) {
+                fprintf(stderr, "error liveness IR: %s\n", graph_error.message);
+                exit_status = PIPOC_EXIT_COMPILE_ERROR;
                 goto done;
             }
             exit_status = write_regalloc_graph(options->regalloc_graph_output_path, regalloc);
@@ -1099,7 +1138,21 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
-    codegen_result = codegen_generate(ast, symbols, asm_stream, &codegen_options);
+    RegallocOptions allocation_options = regalloc_default_options();
+    RegallocDiagnostic allocation_error;
+    allocation_options.allow_spill = options->allow_spill != 0;
+    if (regalloc_allocate_with_options(regalloc, &allocation_options, &allocation,
+                                      &allocation_error) != REGALLOC_OK) {
+        fprintf(stderr, "error asignacion, rutina %zu: %s\n",
+                allocation_error.routine, allocation_error.message);
+        goto done;
+    }
+    if (options->verbose && regalloc_allocation_write_report(stderr, allocation) != REGALLOC_OK) {
+        exit_status = PIPOC_EXIT_IO_ERROR;
+        goto done;
+    }
+    emission_status = codeOPgen_generate(regalloc_allocation_view(allocation), asm_stream,
+                                         NULL, &emission_error);
     if (fclose(asm_stream) != 0) {
         asm_stream = NULL;
         fputs("error: no se pudo cerrar el buffer ASM\n", stderr);
@@ -1107,8 +1160,11 @@ static int compile_piper(const cli_options_t *options)
         goto done;
     }
     asm_stream = NULL;
-    if (codegen_result != CODEGEN_OK) {
-        fprintf(stderr, "error: generación de código falló (código %d)\n", codegen_result);
+    if (emission_status != CODEOPGEN_OK) {
+        fprintf(stderr, "error codeOPgen, rutina %zu B%zu instruccion %zu: %s\n",
+                emission_error.routine, emission_error.block,
+                emission_error.instruction, emission_error.message);
+        if (emission_status == CODEOPGEN_IO_ERROR) exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
     if (options->asm_output_path != NULL &&
@@ -1149,6 +1205,7 @@ done:
     porygon_schedule_free(&schedule);
     porygon_machine_program_free(&program);
     free(asm_text);
+    regalloc_allocation_free(allocation);
     regalloc_analysis_free(regalloc);
     cfg_program_free(cfg);
     ir_program_free(ir_opt);

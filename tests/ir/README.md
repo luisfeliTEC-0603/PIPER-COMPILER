@@ -30,7 +30,7 @@ Para generar también el binario, con el backend actual:
 bin/pipoc tests/ir/scalar.rwt -o build/runs/ir/scalar.bin --emit-ir build/runs/ir/scalar.ir
 ```
 
-Sin `-o`, `bin/pipoc ir programa.rwt` guarda `programa.ir` junto al fuente. `all` añade IR únicamente si se solicita `--emit-ir`. Para añadir el grafo usar `--emit-cfg salida.dot`; ejemplos en [la guía de CFG](../cfg/README.md). La optimización sigue pendiente.
+Sin `-o`, `bin/pipoc ir programa.rwt` guarda `programa.ir` junto al fuente. `all` añade IR únicamente si se solicita `--emit-ir`. Para añadir el grafo usar `--emit-cfg salida.dot`; ejemplos en [la guía de CFG](../cfg/README.md). La IR activa ya alimenta codeOPgen; unrolling y DCE se solicitan con --unroll y --dce.
 
 Para comparar un archivo con la referencia desde terminal:
 
