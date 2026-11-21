@@ -23,6 +23,36 @@ typedef enum {
     IR_UNROLL_FACTOR     /**< Usa opts->factor como F para todos los loops. */
 } IrUnrollMode;
 
+/** Decisión del módulo por header candidato; no representa un error de IR. */
+typedef enum {
+    IR_UNROLL_APPLIED = 0,
+    IR_UNROLL_NON_CONSTANT,
+    IR_UNROLL_STRUCTURE,
+    IR_UNROLL_EFFECTS,
+    IR_UNROLL_INTERNAL_CYCLE,
+    IR_UNROLL_CONTROL_MODIFIED,
+    IR_UNROLL_EXTERNAL_TEMP,
+    IR_UNROLL_ITERATION_LIMIT,
+    IR_UNROLL_FACTOR_LIMIT,
+    IR_UNROLL_BLOCK_BUDGET,
+    IR_UNROLL_SIZE_LIMIT
+} IrUnrollReason;
+
+typedef struct {
+    size_t routine;
+    IrId block;
+    SourceLocation location;
+    size_t factor;
+    uint64_t iterations; /**< Cero si el análisis no llegó a calcular N. */
+    IrUnrollReason reason;
+} IrUnrollLoopReport;
+
+/** Vista prestada durante la llamada; copiarla para conservarla. No modificar
+ * IR desde el callback. Si la pasada falla, sus decisiones son provisionales. */
+typedef void (*IrUnrollObserver)(const IrUnrollLoopReport *report, void *context);
+
+const char *ir_unroll_reason_name(IrUnrollReason reason);
+
 /** @brief Opciones de ir_unroll.
  *
  * @details En max_iterations, max_unrolled_blocks y max_factor, 0 significa
@@ -38,6 +68,8 @@ typedef struct {
     size_t max_iterations;      /**< Techo de N; 0 = sin techo. */
     size_t max_unrolled_blocks; /**< Techo de bloques por rutina tras unroll; 0 = sin techo. */
     size_t max_factor;          /**< Techo de F en AUTO; 0 = sin techo. */
+    IrUnrollObserver observer;  /**< Opcional; una decisión por loop candidato. */
+    void *observer_context;
 } IrUnrollOptions;
 
 /** @brief Métricas de una ejecución de ir_unroll.

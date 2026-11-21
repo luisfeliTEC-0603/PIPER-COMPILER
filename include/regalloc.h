@@ -24,7 +24,8 @@ typedef enum {
     REGALLOC_INVALID_CFG,
     REGALLOC_UNSUPPORTED,
     REGALLOC_OUT_OF_MEMORY,
-    REGALLOC_IO_ERROR
+    REGALLOC_IO_ERROR,
+    REGALLOC_SPILL_REQUIRED /**< No se publica asignacion: spilling prohibido. */
 } RegallocStatus;
 
 /** Primer error localizado. routine es un indice en IrProgram.routines;

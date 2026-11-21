@@ -279,9 +279,45 @@ size_t regalloc_assigned_spill_offset(const RegallocAssignedProgram *assigned,
  * simbolos siguen prestados desde analysis y deben permanecer vivos. */
 typedef struct RegallocAllocation RegallocAllocation;
 
+typedef struct {
+    bool allow_spill; /**< false: falla si el coloreo deja valores sin registro. */
+} RegallocOptions;
+
+RegallocOptions regalloc_default_options(void);
+
+/** Una identidad virtual derramada por slot. No es un Symbol del frontend. */
+typedef struct {
+    IrId temp;
+    size_t slot;
+} RegallocSpill;
+
+/** Conteos estaticos de la maquina final; no son accesos dinamicos por ciclo.
+ * spills se presta desde la asignacion y vive hasta allocation_free. */
+typedef struct {
+    size_t spilled_temporaries, spill_slots, spill_loads, spill_stores, frame_bytes;
+    const RegallocSpill *spills;
+} RegallocRoutineReport;
+
+const RegallocRoutineReport *regalloc_allocation_routine_report(
+    const RegallocAllocation *allocation, size_t routine);
+
+/** Reporte legible por rutina y acceso: temporal/slot/offset y ubicacion final
+ * (bloque/instruccion), origen IR y ubicacion fuente. No cierra output. */
+RegallocStatus regalloc_allocation_write_report(FILE *output,
+                                               const RegallocAllocation *allocation);
+
+/** Igual que allocate, con opciones explicitas no NULL. Si allow_spill=false
+ * y el coloreo no basta, devuelve SPILL_REQUIRED, diagnostico y *out=NULL.
+ * No modifica IR, simbolos ni sus direcciones. */
+RegallocStatus regalloc_allocate_with_options(const RegallocAnalysis *analysis,
+                                              const RegallocOptions *options,
+                                              RegallocAllocation **out,
+                                              RegallocDiagnostic *diagnostic);
+
 /** Baja el subconjunto IR admitido, repite liveness/grafo/coloreo y reescribe
  * los valores sin color con SPILL_LOAD/STORE hasta entregar todos los operandos
- * en r1..r4. Ante fallo libera el trabajo parcial y deja *out == NULL. */
+ * en r1..r4. Permite spilling por defecto. Ante fallo libera el trabajo
+ * parcial y deja *out == NULL. */
 RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
                                  RegallocAllocation **out,
                                  RegallocDiagnostic *diagnostic);

@@ -11,6 +11,7 @@
 struct RegallocAllocation {
     RegallocMachineProgram *machine;
     RegallocAssignedRoutine *routines;
+    RegallocRoutineReport *reports;
     RegallocAssignedProgram view;
 };
 
@@ -34,6 +35,10 @@ void regalloc_allocation_free(RegallocAllocation *allocation)
         for (size_t r = 0; r < allocation->view.routine_count; r++)
             free((void *)allocation->routines[r].register_for_temp);
     free(allocation->routines);
+    if (allocation->reports != NULL)
+        for (size_t r = 0; r < allocation->view.routine_count; r++)
+            free((void *)allocation->reports[r].spills);
+    free(allocation->reports);
     regalloc_machine_program_free(allocation->machine);
     free(allocation);
 }
@@ -301,13 +306,14 @@ static RegallocStatus rewrite_spill(RegallocMachineProgram *machine, size_t r,
     return REGALLOC_OK;
 }
 
-RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
-                                 RegallocAllocation **out,
-                                 RegallocDiagnostic *diagnostic)
+RegallocStatus regalloc_allocate_with_options(const RegallocAnalysis *analysis,
+                                              const RegallocOptions *options,
+                                              RegallocAllocation **out,
+                                              RegallocDiagnostic *diagnostic)
 {
-    if (out == NULL || *out != NULL)
+    if (options == NULL || out == NULL || *out != NULL)
         return allocation_error(diagnostic, REGALLOC_INVALID_INPUT, SIZE_MAX,
-                                IR_NO_ID, "La salida de asignacion debe empezar en NULL.");
+                                IR_NO_ID, "Se requieren opciones y salida inicialmente NULL.");
     RegallocAllocation *result = calloc(1, sizeof(*result));
     if (result == NULL)
         return allocation_error(diagnostic, REGALLOC_OUT_OF_MEMORY, SIZE_MAX,
@@ -319,7 +325,8 @@ RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
     result->view.routine_count = result->machine->routine_count;
     result->routines = calloc(result->view.routine_count,
                               sizeof(*result->routines));
-    if (result->routines == NULL) {
+    result->reports = calloc(result->view.routine_count, sizeof(*result->reports));
+    if (result->routines == NULL || result->reports == NULL) {
         status = allocation_error(diagnostic, REGALLOC_OUT_OF_MEMORY, SIZE_MAX,
                                   IR_NO_ID, "No se pudieron reservar las rutinas coloreadas.");
         goto failed;
@@ -381,6 +388,25 @@ RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
                 regalloc_machine_graph_free(graph);
                 break;
             }
+            /* Un candidato de simplificacion no basta: solo se decide tras
+             * reconstruir todos los colores. Nunca entregar ceros al emisor. */
+            if (!options->allow_spill) {
+                const Symbol *function = result->machine->source->routines[
+                    routine->ir_routine].symbol;
+                const char *name = function != NULL ? function->name : "<startup>";
+                char message[256];
+                snprintf(message, sizeof(message),
+                    "No se pudo asignar registros en '%.64s': spilling esta deshabilitado. "
+                    "Habilite \"Permitir spilling\" (spilling registers) para compilar este programa.",
+                    name);
+                status = allocation_error(diagnostic, REGALLOC_SPILL_REQUIRED, r,
+                    IR_NO_ID, message);
+                regalloc_coloring_free(coloring);
+                free(costs);
+                regalloc_machine_graph_free(graph);
+                free(protected);
+                goto failed;
+            }
             IrId victim = choose_victim(graph, coloring, costs, protected);
             regalloc_coloring_free(coloring);
             free(costs);
@@ -391,6 +417,24 @@ RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
                 free(protected);
                 goto failed;
             }
+            RegallocRoutineReport *report = &result->reports[r];
+            size_t slot = routine->spill_slot_count;
+            if (slot >= SIZE_MAX / sizeof(RegallocSpill) - 1) {
+                status = allocation_error(diagnostic, REGALLOC_OUT_OF_MEMORY, r,
+                                          IR_NO_ID, "Demasiados registros de spill.");
+                free(protected);
+                goto failed;
+            }
+            RegallocSpill *spills = realloc((void *)report->spills,
+                                             (slot + 1) * sizeof(*spills));
+            if (spills == NULL) {
+                status = allocation_error(diagnostic, REGALLOC_OUT_OF_MEMORY, r,
+                                          IR_NO_ID, "Sin memoria para reportar spill.");
+                free(protected);
+                goto failed;
+            }
+            report->spills = spills;
+            spills[slot] = (RegallocSpill){.temp = victim, .slot = slot};
             status = rewrite_spill(result->machine, r, victim, &protected,
                                    diagnostic);
             if (status != REGALLOC_OK) {
@@ -399,6 +443,15 @@ RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
             }
         }
         free(protected);
+        RegallocRoutineReport *report = &result->reports[r];
+        report->spilled_temporaries = report->spill_slots = routine->spill_slot_count;
+        report->frame_bytes = result->routines[r].frame_bytes;
+        for (size_t b = 0; b < routine->block_count; b++)
+            for (size_t i = 0; i < routine->blocks[b].instruction_count; i++) {
+                RegallocMachineOp op = routine->blocks[b].instructions[i].op;
+                report->spill_loads += op == REGALLOC_M_SPILL_LOAD;
+                report->spill_stores += op == REGALLOC_M_SPILL_STORE;
+            }
     }
     status = regalloc_assigned_program_validate(&result->view, diagnostic);
     if (status != REGALLOC_OK) goto failed;
@@ -407,4 +460,54 @@ RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
 failed:
     regalloc_allocation_free(result);
     return status;
+}
+
+RegallocOptions regalloc_default_options(void)
+{
+    return (RegallocOptions){.allow_spill = true};
+}
+
+RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
+                                 RegallocAllocation **out,
+                                 RegallocDiagnostic *diagnostic)
+{
+    RegallocOptions options = regalloc_default_options();
+    return regalloc_allocate_with_options(analysis, &options, out, diagnostic);
+}
+
+const RegallocRoutineReport *regalloc_allocation_routine_report(
+    const RegallocAllocation *allocation, size_t routine)
+{
+    return allocation == NULL || routine >= allocation->view.routine_count
+        ? NULL : &allocation->reports[routine];
+}
+
+RegallocStatus regalloc_allocation_write_report(FILE *output,
+                                               const RegallocAllocation *allocation)
+{
+    if (output == NULL || allocation == NULL) return REGALLOC_INVALID_INPUT;
+    for (size_t r = 0; r < allocation->view.routine_count; r++) {
+        const RegallocRoutineReport *report = &allocation->reports[r];
+        const RegallocMachineRoutine *routine = &allocation->machine->routines[r];
+        fprintf(output, "[regalloc] rutina %zu: temporales=%zu slots=%zu frame=%zu "
+                "cargas=%zu stores=%zu\n", r, report->spilled_temporaries,
+                report->spill_slots, report->frame_bytes, report->spill_loads,
+                report->spill_stores);
+        for (size_t s = 0; s < report->spill_slots; s++)
+            fprintf(output, "  t%zu -> slot %zu offset=%zu(r7)\n",
+                    report->spills[s].temp, report->spills[s].slot,
+                    regalloc_assigned_spill_offset(&allocation->view, r, s));
+        for (size_t b = 0; b < routine->block_count; b++)
+            for (size_t i = 0; i < routine->blocks[b].instruction_count; i++) {
+                const RegallocMachineInstruction *in = &routine->blocks[b].instructions[i];
+                if (in->op != REGALLOC_M_SPILL_LOAD && in->op != REGALLOC_M_SPILL_STORE)
+                    continue;
+                fprintf(output, "  B%zu instruccion %zu: %s slot %zu "
+                        "origen IR=%zu fuente=%d:%d\n", routine->blocks[b].id, i,
+                        in->op == REGALLOC_M_SPILL_LOAD ? "SPILL_LOAD" : "SPILL_STORE",
+                        in->slot, in->origin_instruction, in->location.first_line,
+                        in->location.first_column);
+            }
+    }
+    return ferror(output) ? REGALLOC_IO_ERROR : REGALLOC_OK;
 }

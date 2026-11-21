@@ -862,6 +862,16 @@ static int compile_assembly(const cli_options_t *options)
     return exit_status;
 }
 
+/* El modulo decide elegibilidad; main solo presenta su reporte en modo -v. */
+static void report_unroll_loop(const IrUnrollLoopReport *report, void *context)
+{
+    FILE *output = context;
+    fprintf(output, "[unroll] rutina %zu B%zu (%d:%d): %s; factor=%zu\n",
+            report->routine, report->block, report->location.first_line,
+            report->location.first_column, ir_unroll_reason_name(report->reason),
+            report->factor);
+}
+
 static int compile_piper(const cli_options_t *options)
 {
     clock_t compilation_start = clock();
@@ -973,6 +983,10 @@ static int compile_piper(const cli_options_t *options)
             IrUnrollStats unroll_stats;
             unroll.mode = options->unroll_mode;
             unroll.factor = options->unroll_factor;
+            if (options->verbose) {
+                unroll.observer = report_unroll_loop;
+                unroll.observer_context = stderr;
+            }
             if (options->verbose) fprintf(stderr, "[pipoc] Unrolling de loops\n");
             if (ir_unroll(ir, &unroll, &ir_opt, &diagnostic, &unroll_stats) != IR_OK) {
                 fprintf(stderr, "error unroll: %s\n", diagnostic.message);

@@ -176,13 +176,15 @@ fail:
  * de la región usados fuera de ella (el renombrado por copia los invalidaría).
  */
 
-static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o, LoopInfo *L)
+static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o,
+                          LoopInfo *L, IrUnrollReason *reason)
 {
     LoopResult res = LOOP_REJECT;
     size_t n = r->block_count;
     size_t *stack = NULL, *indeg = NULL, *queue = NULL;
     const IrBlock *T = &r->blocks[h];
     *L = (LoopInfo){0};
+    *reason = IR_UNROLL_STRUCTURE;
 
     /* Forma canónica que produce ir_stmt.c para `loop`:
      *   [..., COPY cur = control ; LT c = cur, END ; BRANCH c body, exit]
@@ -201,7 +203,10 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
     IrId body_id = br->extra.targets[0];
     L->exit_id = br->extra.targets[1];
 
-    if (lt->arg2.kind != IR_OPERAND_CONSTANT) return LOOP_REJECT;     /* N no calculable */
+    if (lt->arg2.kind != IR_OPERAND_CONSTANT) {
+        *reason = IR_UNROLL_NON_CONSTANT;
+        return LOOP_REJECT;
+    }
     if (L->exit_id == L->header_id) return LOOP_REJECT;               /* sin salida por condición */
     if (body_id == L->header_id || body_id == L->exit_id || r->entry == L->header_id) return LOOP_REJECT;
     L->body_pos = find_block(r, body_id);
@@ -241,7 +246,10 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
         if (b->id == r->entry) goto done;
         for (size_t i = 0; i < b->instruction_count; i++) {
             IrOpcode op = b->instructions[i].op;
-            if (op == IR_OP_CALL || op == IR_OP_INTRINSIC || op == IR_OP_RETURN) goto done;
+            if (op == IR_OP_CALL || op == IR_OP_INTRINSIC || op == IR_OP_RETURN) {
+                *reason = IR_UNROLL_EFFECTS;
+                goto done;
+            }
         }
         const IrInstruction *e = last_of(b);
         size_t paths = e->op == IR_OP_BRANCH ? 2 : 1;
@@ -270,13 +278,21 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
     const IrInstruction *ie = last_of(ib);
     if (ie->op != IR_OP_JUMP || ib->instruction_count < 2) goto done;
     const IrInstruction *bi = &ib->instructions[ib->instruction_count - 2];
-    if (bi->op != IR_OP_COPY || !sym_is(bi->result, L->control) || bi->arg1.kind != IR_OPERAND_CONSTANT) goto done;
+    if (bi->op != IR_OP_COPY || !sym_is(bi->result, L->control)) goto done;
+    if (bi->arg1.kind != IR_OPERAND_CONSTANT) {
+        *reason = IR_UNROLL_NON_CONSTANT;
+        goto done;
+    }
     L->begin = bi->arg1.value.constant;
 
     const IrBlock *ab = &r->blocks[L->adv];
     if (ab->instruction_count != 4) goto done;
     const IrInstruction *a0 = &ab->instructions[0], *a1 = &ab->instructions[1],
                         *a2 = &ab->instructions[2], *a3 = &ab->instructions[3];
+    if (a1->arg2.kind != IR_OPERAND_CONSTANT) {
+        *reason = IR_UNROLL_NON_CONSTANT;
+        goto done;
+    }
     if (a0->op != IR_OP_COPY || !sym_is(a0->arg1, L->control) || a0->result.kind != IR_OPERAND_TEMP ||
         a1->op != IR_OP_ADD || (a1->flags & IR_CHECKED) || !temp_is(a1->arg1, a0->result.value.temp) ||
         a1->arg2.kind != IR_OPERAND_CONSTANT || a1->arg2.value.constant <= 0 ||
@@ -306,7 +322,10 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
             if (q != NPOS && L->ridx[q] != NPOS && --indeg[L->ridx[q]] == 0) queue[qt++] = L->ridx[q];
         }
     }
-    if (removed != L->region_count) goto done;
+    if (removed != L->region_count) {
+        *reason = IR_UNROLL_INTERNAL_CYCLE;
+        goto done;
+    }
 
     /* Si el cuerpo escribe control o toma su dirección, N deja de ser exacto
      * (el cuerpo podría alterar el contador) y el epílogo necesitaría guarda.
@@ -316,7 +335,10 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
         const IrBlock *b = &r->blocks[L->region[j]];
         for (size_t i = 0; i < b->instruction_count; i++) {
             const IrInstruction *in = &b->instructions[i];
-            if (sym_is(in->result, L->control) || (in->op == IR_OP_ADDR && sym_is(in->arg1, L->control))) goto done;
+            if (sym_is(in->result, L->control) || (in->op == IR_OP_ADDR && sym_is(in->arg1, L->control))) {
+                *reason = IR_UNROLL_CONTROL_MODIFIED;
+                goto done;
+            }
         }
     }
 
@@ -324,11 +346,20 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
      * con signo y se hace en uint64_t. Se acota por max_iterations (0 = sin
      * techo) para no explotar el IR con loops enormes. */
     int64_t end = lt->arg2.value.constant;
-    if (L->begin >= end) goto done;
+    if (L->begin >= end) {
+        *reason = IR_UNROLL_FACTOR_LIMIT;
+        goto done;
+    }
     uint64_t diff = (uint64_t)end - (uint64_t)L->begin, step = (uint64_t)L->step;
-    if (diff > UINT64_MAX - (step - 1)) goto done;
+    if (diff > UINT64_MAX - (step - 1)) {
+        *reason = IR_UNROLL_SIZE_LIMIT;
+        goto done;
+    }
     L->iterations = (diff + step - 1) / step;
-    if (L->iterations < 1 || (o->max_iterations && L->iterations > o->max_iterations)) goto done;
+    if (o->max_iterations && L->iterations > o->max_iterations) {
+        *reason = IR_UNROLL_ITERATION_LIMIT;
+        goto done;
+    }
 
     /* Temporales de la región: renombrables, sin usos fuera de ella. */
     size_t tc = r->temp_count;
@@ -354,7 +385,10 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
             const IrInstruction *in = &blk->instructions[i];
             IrOperand ops[2] = {in->arg1, in->arg2};
             for (int k = 0; k < 2; k++)
-                if (ops[k].kind == IR_OPERAND_TEMP && ops[k].value.temp < tc && L->isdef[ops[k].value.temp]) goto done;
+                if (ops[k].kind == IR_OPERAND_TEMP && ops[k].value.temp < tc && L->isdef[ops[k].value.temp]) {
+                    *reason = IR_UNROLL_EXTERNAL_TEMP;
+                    goto done;
+                }
         }
     }
     res = LOOP_OK;
@@ -550,6 +584,31 @@ IrUnrollOptions ir_unroll_default_options(void)
                              .max_unrolled_blocks = 256, .max_factor = 4};
 }
 
+const char *ir_unroll_reason_name(IrUnrollReason reason)
+{
+    switch (reason) {
+    case IR_UNROLL_APPLIED: return "aplicado";
+    case IR_UNROLL_NON_CONSTANT: return "inicio, limite o paso no constante";
+    case IR_UNROLL_STRUCTURE: return "estructura de control no admitida";
+    case IR_UNROLL_EFFECTS: return "llamada, intrinsica o retorno en el cuerpo";
+    case IR_UNROLL_INTERNAL_CYCLE: return "ciclo interno en el cuerpo";
+    case IR_UNROLL_CONTROL_MODIFIED: return "contador modificado o expuesto por el cuerpo";
+    case IR_UNROLL_EXTERNAL_TEMP: return "temporal del cuerpo usado fuera del loop";
+    case IR_UNROLL_ITERATION_LIMIT: return "limite de iteraciones excedido";
+    case IR_UNROLL_FACTOR_LIMIT: return "factor incompatible con las iteraciones";
+    case IR_UNROLL_BLOCK_BUDGET: return "presupuesto de bloques insuficiente";
+    case IR_UNROLL_SIZE_LIMIT: return "limite de tamanos o identidades excedido";
+    }
+    return "motivo desconocido";
+}
+
+static void notify_loop(const IrUnrollOptions *options,
+                         const IrUnrollLoopReport *report)
+{
+    if (options->observer != NULL)
+        options->observer(report, options->observer_context);
+}
+
 /** @brief Escribe un resumen legible de las métricas (para -v).
  * 
  * @param out Stream destino; no se cierra.
@@ -610,6 +669,10 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
      * inicialmente NULL para no sobrescribir un programa previo del llamador. */
     if (!ir || !opts || !out || *out != NULL)
         return fail(diag, IR_INVALID_INPUT, "ir_unroll requiere IR, opciones y salida inicialmente NULL.");
+    if ((opts->mode != IR_UNROLL_OFF && opts->mode != IR_UNROLL_AUTO &&
+         opts->mode != IR_UNROLL_FACTOR) ||
+        (opts->mode == IR_UNROLL_FACTOR && opts->factor < 2))
+        return fail(diag, IR_INVALID_INPUT, "Modo o factor de unrolling invalido.");
 
     /* El IR de entrada debe ser estructuralmente válido. No transformamos
      * IR inválido: si falla, propagamos el diagnóstico tal cual. */
@@ -646,7 +709,11 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
                  * transformable. Si lo es, llena L con toda la información
                  * necesaria (región, control, begin, step, N, temporales). */
                 LoopInfo L;
-                LoopResult res = analyze(r, h, opts, &L);
+                IrUnrollLoopReport report = {
+                    .routine = ri, .block = r->blocks[h].id,
+                    .location = last_of(&r->blocks[h])->location
+                };
+                LoopResult res = analyze(r, h, opts, &L, &report.reason);
 
                 /* Sin forma de header: no es un loop, seguir con el siguiente. */
                 if (res == LOOP_NONE) continue;
@@ -667,12 +734,15 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
                  * del control, etc. Se cuenta como rechazado y se sigue. */
                 if (res == LOOP_REJECT) {
                     stats->loops_skipped++;
+                    notify_loop(opts, &report);
                     continue;
                 }
 
                 /* Aceptado por analyze. Elegir F según modo y presupuesto.
                  * AUTO baja F hasta que quepa; FACTOR usa opts->factor. */
                 size_t F = choose_factor(r, &L, opts, L.iterations);
+                report.factor = F;
+                report.iterations = L.iterations;
 
                 /* F < 2: no se puede desenrollar (N < 2 o presupuesto
                  * insuficiente). F > N: no tiene sentido desenrollar más
@@ -680,6 +750,18 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
                  * rechaza el loop y se libera L. */
                 if (F < 2 || F > L.iterations) {
                     stats->loops_skipped++;
+                    report.reason = opts->mode == IR_UNROLL_AUTO && L.iterations >= 2
+                        ? IR_UNROLL_BLOCK_BUDGET : IR_UNROLL_FACTOR_LIMIT;
+                    if (opts->mode == IR_UNROLL_AUTO && opts->max_factor == 1)
+                        report.reason = IR_UNROLL_FACTOR_LIMIT;
+                    notify_loop(opts, &report);
+                    info_free(&L);
+                    continue;
+                }
+                if (!fits_budget(r, &L, F, opts)) {
+                    stats->loops_skipped++;
+                    report.reason = IR_UNROLL_BLOCK_BUDGET;
+                    notify_loop(opts, &report);
                     info_free(&L);
                     continue;
                 }
@@ -708,6 +790,8 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
                  * copy sigue válido. Se cuenta como rechazado y se sigue. */
                 if (res == LOOP_REJECT) {
                     stats->loops_skipped++;
+                    report.reason = IR_UNROLL_SIZE_LIMIT;
+                    notify_loop(opts, &report);
                     continue;
                 }
 
@@ -718,6 +802,8 @@ IrStatus ir_unroll(const IrProgram *ir, const IrUnrollOptions *opts,
                 stats->loops_unrolled++;
                 stats->iterations_before += (size_t)n;
                 stats->iterations_after += (size_t)(n / F + n % F);
+                report.reason = IR_UNROLL_APPLIED;
+                notify_loop(opts, &report);
             }
         }
     }
