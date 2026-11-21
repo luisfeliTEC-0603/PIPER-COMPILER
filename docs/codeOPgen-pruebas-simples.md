@@ -147,10 +147,15 @@ Asignacion de registros y scheduler siguen activos en este modo.
 
 ### C. Compilar con las optimizaciones elegidas
 
+En el IDE, **Todo** exporta además `.unroll.ir` (después de unrolling y antes
+de DCE), los tres CFG y `.regalloc.txt` con las operaciones asignadas. Todos
+los resultados quedan en la misma carpeta y en `.results.zip`.
+
 ```bash
 bin/pipoc "$fuente_prueba" -o "$salida_prueba/optimizado.bin" \
   --unroll "$factor_unroll" --dce --spill on \
   --emit-ir "$salida_prueba/original.ir" \
+  --emit-ir-unroll "$salida_prueba/tras-unrolling.ir" \
   --emit-ir-opt "$salida_prueba/optimizado.ir" \
   --emit-cfg-opt "$salida_prueba/optimizado.dot" \
   --emit-opt-report "$salida_prueba/optimizacion.json" \

@@ -308,6 +308,12 @@ const RegallocRoutineReport *regalloc_allocation_routine_report(
 RegallocStatus regalloc_allocation_write_report(FILE *output,
                                                const RegallocAllocation *allocation);
 
+/** Exportacion para estudiar la entrada real de codeOPgen: reporte de spills,
+ * colores y operaciones de maquina finales con registros fisicos y origen IR.
+ * No es una nueva IR tipada ni un ASM calendarizado. No cierra output. */
+RegallocStatus regalloc_allocation_write_assigned(FILE *output,
+                                                 const RegallocAllocation *allocation);
+
 /** Igual que allocate, con opciones explicitas no NULL. Si allow_spill=false
  * y el coloreo no basta, devuelve SPILL_REQUIRED, diagnostico y *out=NULL.
  * No modifica IR, simbolos ni sus direcciones. */

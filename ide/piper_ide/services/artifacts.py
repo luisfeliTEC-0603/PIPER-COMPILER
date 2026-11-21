@@ -9,6 +9,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import re
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from ..models.compilation import CompilationResult
 
@@ -63,6 +64,7 @@ def compilation_report(result: CompilationResult) -> dict:
         "source": str(invocation.source), "command": invocation.display_command,
         "succeeded": result.succeeded, "exit_code": result.exit_code,
         "options": asdict(options), "inspection_only": inspection,
+        "files": [path.name for path in invocation.artifacts],
         "passes": {"unrolling": unrolling, "DCE": elimination, "spilling": spilling},
         "scheduler": ("aplicado" if result.succeeded else "iniciado; compilación fallida")
                      if "[pipoc] Calendarización de " in result.stderr else "no ejecutado (solo análisis/ASM o fallo previo)",
@@ -78,6 +80,9 @@ def report_text(result: CompilationResult) -> str:
     selection = ("Solo AST y símbolos; las optimizaciones no se ejecutan."
                  if report["inspection_only"] else result.invocation.optimizations.description)
     lines = [heading, selection, f"Carpeta: {result.invocation.output_dir}", ""]
+    for path in result.invocation.artifacts:
+        if path.suffix == ".zip" and result.succeeded:
+            lines.insert(3, f"Archivo con todos los resultados: {path.name}")
     for name, item in report["passes"].items():
         lines.extend((f"{name}: {item['status']}. {item['reason']}", *item["details"], ""))
     lines.extend(report["diagnostics"])
@@ -96,11 +101,29 @@ def publish_artifacts(result: CompilationResult) -> None:
     if not result.succeeded:
         return
     reports = [path for path in result.invocation.artifacts if path.name.endswith(".opt.json")]
+    logs = [path for path in result.invocation.artifacts if path.name.endswith(".compile.log")]
+    archives = [path for path in result.invocation.artifacts if path.suffix == ".zip"]
     for path in result.invocation.artifacts:
-        if path not in reports and not path.is_file():
+        if path not in (*reports, *logs, *archives) and not path.is_file():
             raise OSError(f"Pipoc no generó el archivo esperado: {path.name}")
     for path in reports:
         path.write_text(json.dumps(compilation_report(result), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    for path in logs:
+        path.write_text("$ " + result.invocation.display_command + "\n\n"
+                        + report_text(result) + "\n\nSTDOUT:\n" + result.stdout
+                        + "\nSTDERR:\n" + result.stderr, encoding="utf-8")
+    for path in archives:
+        # Publicar el ZIP al terminar, sin incluirse a si mismo ni incorporar
+        # resultados de otras compilaciones que existan bajo build/ide.
+        temporary = path.with_suffix(".zip.tmp")
+        try:
+            with ZipFile(temporary, "w", compression=ZIP_DEFLATED) as archive:
+                for artifact in result.invocation.artifacts:
+                    if artifact not in archives:
+                        archive.write(artifact, arcname=artifact.name)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def visible_artifacts(result: CompilationResult) -> tuple[Path, ...]:

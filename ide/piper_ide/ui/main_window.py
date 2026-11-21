@@ -237,7 +237,8 @@ class MainWindow(QMainWindow):
                                ("Bundles (.bundles)", "sch"), ("Memoria (.mem)", "mem"),
                                ("AST y símbolos", "ins"), ("Todo", "all")):
             self.compile_target.addItem(title, command)
-        self.compile_target.setToolTip("Artefacto que generará bin/pipoc")
+        self.compile_target.setCurrentIndex(self.compile_target.findData("all"))
+        self.compile_target.setToolTip("Todo reúne ejecutable, IR por etapa, grafos, reportes y ZIP.")
         row.addWidget(self.compile_target)
         self.compile_button = QPushButton("Compilar  F5")
         self.compile_button.setObjectName("compileButton")

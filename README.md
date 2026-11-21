@@ -124,6 +124,12 @@ siempre se aplica a binario, memoria y bundles. El IDE ofrece controles independ
 para estas opciones; [uso y resultados](docs/IDE.md).
 Para añadir el grafo: `--emit-cfg programa.dot` (comando 34), también con `pipoc ir`.
 
+`all` reúne ahora IR original, tras unrolling y tras DCE, sus CFG, interferencias
+IR y operaciones con registros/spills. Con `-o build/pruebas/programa.bin` usa
+esa carpeta y prefijo para todas las salidas (crear la carpeta primero).
+En el IDE, Todo es la salida inicial y añade `<nombre>.results.zip` con todos
+los resultados. [Opciones y ejemplos de exportación](docs/IDE.md#exportar-desde-terminal).
+
 Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
 Fuentes, resultados esperados e instrucciones: [tests/ir/README.md](tests/ir/README.md).
 Guías: [IR](docs/IR/todoIR.md) y [CFG](docs/IR/todoCFG.md).

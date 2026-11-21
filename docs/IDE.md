@@ -19,11 +19,12 @@ Si falta el entorno: `python3 -m venv ide/.venv` y
 | DCE | Elimina código muerto después de unrolling | Desmarcado |
 | Permitir spilling | Autoriza cargas/stores cuando no alcanza la asignación de registros | Marcado |
 
-3. Elegir **Todo** para revisar todas las salidas y presionar **F5**.
+3. Mantener **Todo** (salida inicial) para revisar todas las salidas y presionar **F5**.
 4. Leer **Compilación**: decisiones, motivos de rechazo, conteos IR y
    asignación a memoria por rutina, con ubicaciones de los accesos.
 5. Seleccionar un archivo y pulsar **Abrir archivo**, o hacer doble clic.
-   Los generados se abren como texto de solo lectura; el binario no se abre.
+   Los generados se abren como texto de solo lectura. Para ubicar el binario o
+   el ZIP, pulsar **Abrir carpeta de resultados**.
 
 Las selecciones se conservan al cerrar y abrir el IDE. Durante una compilación
 los controles quedan bloqueados. **AST y símbolos** solo analiza el código:
@@ -49,19 +50,69 @@ copiable y la salida completa. Los intentos anteriores permanecen en Generados.
 Un fallo limpia la lista de resultados actuales; los archivos parciales del
 intento fallido no se anuncian como resultados válidos.
 
-**Todo** genera nueve archivos:
+**Todo** genera los siguientes archivos en la misma carpeta y los reúne en
+`<nombre>.results.zip`:
 
 | Sufijo | Contenido |
 | --- | --- |
 | `.bin`, `.asm`, `.bundles`, `.mem` | Binario, ASM, paquetes y memoria del procesador |
 | `.ast.json`, `.symbols.txt` | AST y tabla de símbolos |
 | `.ir` | IR original, antes de unrolling y DCE |
-| `.opt.ir` | IR final recibida por regalloc; igual a la original si no hay cambios |
+| `.unroll.ir` | IR después de unrolling, antes de DCE |
+| `.opt.ir` | IR después de DCE, recibida por regalloc |
+| `.original.dot` | CFG original |
+| `.unroll.dot` | CFG después de unrolling, antes de DCE |
+| `.opt.dot` | CFG final después de DCE |
+| `.interference.dot` | Interferencias de temporales de la IR final; grafo preliminar, sin colorear |
+| `.regalloc.txt` | Operaciones de máquina después de spilling, registros asignados, slots y ubicaciones |
 | `.opt.json` | Opciones, comando, decisiones y métricas reales de los módulos |
+| `.dce.json` | Reporte del módulo DCE, solo si se seleccionó DCE |
+| `.compile.log` | Comando, resumen y salida completa de esta compilación |
+| `.results.zip` | Todos los archivos anteriores, sin incluir otros intentos |
+
+Si una pasada está desactivada o no modifica el programa, su IR coincide con
+la etapa anterior. Spilling no reescribe la IR tipada: reescribe las operaciones
+de máquina; su resultado está en `.regalloc.txt` y luego en `.asm`.
+
+Los `.dot` son grafos en formato Graphviz. Para obtener una imagen:
+
+```bash
+dot -Tsvg programa.opt.dot -o programa.opt.svg
+```
+
+El IDE conserva los archivos individuales para compararlos y crea el ZIP solo
+tras completar la compilación. El paquete puede copiarse o adjuntarse a las pruebas.
 
 El IDE construye `.opt.json` a partir de los mensajes de `pipoc -v`; no es el
 JSON exclusivo de DCE que exporta `--emit-opt-report`. Cargas/stores e instrucciones
 son conteos estáticos, no ciclos ni accesos medidos durante la ejecución.
+
+## Exportar desde terminal
+
+Para obtener todas las etapas en una sola carpeta:
+
+```bash
+mkdir -p build/pruebas/matriz
+bin/pipoc all tests/codeOPgen/paso-a-paso/loop_matriz.rwt \
+  -o build/pruebas/matriz/matriz.bin --unroll auto --dce --spill on -v
+diff -u build/pruebas/matriz/matriz.ir build/pruebas/matriz/matriz.unroll.ir
+diff -u build/pruebas/matriz/matriz.unroll.ir build/pruebas/matriz/matriz.opt.ir
+```
+
+Los `diff` muestran los cambios de cada pasada; código de salida 1 significa
+que encontraron diferencias. `all -o carpeta/nombre.bin` usa esa carpeta y
+prefijo para todas las salidas, salvo las rutas `--emit-*` indicadas explícitamente.
+La terminal exporta los datos del compilador; `.opt.json`, `.compile.log` y el
+ZIP los añade el IDE.
+
+Para solicitar únicamente las IR, sin generar ejecutable:
+
+```bash
+bin/pipoc ir tests/codeOPgen/paso-a-paso/loop_matriz.rwt \
+  -o build/pruebas/matriz/original.ir --unroll auto --dce \
+  --emit-ir-unroll build/pruebas/matriz/tras-unrolling.ir \
+  --emit-ir-opt build/pruebas/matriz/tras-dce.ir
+```
 
 Para comprobar los controles, usar `tests/codeOPgen/paso-a-paso/funcion_suma.rwt`
 y `loop_matriz.rwt`. Sin pasadas, ambas IR coinciden; con DCE la función pasa de

@@ -64,6 +64,9 @@ enum {
     OPT_EMIT_IR_OPT,
     OPT_EMIT_CFG_OPT,
     OPT_EMIT_OPT_REPORT,
+    OPT_EMIT_IR_UNROLL,
+    OPT_EMIT_CFG_ORIGINAL,
+    OPT_EMIT_REGALLOC,
 };
 
 typedef enum {
@@ -93,6 +96,9 @@ typedef struct {
     const char *ir_opt_output_path;
     const char *cfg_opt_output_path;
     const char *opt_report_path;
+    const char *ir_unroll_output_path;
+    const char *cfg_original_output_path;
+    const char *regalloc_output_path;
     const char *requested_output_path;
     int keep_asm;
     int verbose;
@@ -136,7 +142,7 @@ static void print_usage(FILE *output, const char *program)
             "  mem                     Genera la imagen para $readmemh\n"
             "  ins                     Genera <fuente>.ast.json y <fuente>.symbols.txt\n"
             "  ir                      Genera únicamente IR tipada con bloques básicos\n"
-            "  all                     Genera .bin, .asm, .bundles, .mem, AST y símbolos\n"
+            "  all                     Genera ejecutable, AST, simbolos, IR por etapa, grafos y asignacion\n"
             "Opciones:\n"
             "  -o <ruta>              Salida principal (.bin/.asm/.bundles/.mem/.ir)\n"
             "  -s                      Conserva el ASM intermedio\n"
@@ -152,6 +158,9 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-regalloc-graph <ruta.dot>  Exporta interferencias IR preliminares tras las pasadas solicitadas\n"
             "  --emit-ir <ruta>        Exporta IR original, antes de unroll/DCE\n"
+            "  --emit-ir-unroll <ruta> Exporta IR despues de unrolling y antes de DCE\n"
+            "  --emit-cfg-original <ruta> Exporta CFG de la IR original\n"
+            "  --emit-regalloc <ruta>  Exporta operaciones asignadas, registros y spills\n"
             "  --unroll <N|auto|off>   Desenrolla loops constantes antes de asignar registros y emitir ASM\n"
             "  --dce                   Elimina instrucciones y rutinas innecesarias antes de generar ASM\n"
             "  --spill <on|off>        Permite spills si faltan registros (defecto on)\n"
@@ -261,6 +270,9 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"emit-ir-opt", required_argument, NULL, OPT_EMIT_IR_OPT},
         {"emit-cfg-opt", required_argument, NULL, OPT_EMIT_CFG_OPT},
         {"emit-opt-report", required_argument, NULL, OPT_EMIT_OPT_REPORT},
+        {"emit-ir-unroll", required_argument, NULL, OPT_EMIT_IR_UNROLL},
+        {"emit-cfg-original", required_argument, NULL, OPT_EMIT_CFG_ORIGINAL},
+        {"emit-regalloc", required_argument, NULL, OPT_EMIT_REGALLOC},
         {"emit-symbols", required_argument, NULL, OPT_EMIT_SYMBOLS},
         {"ll1", no_argument, NULL, OPT_LL1},
         {"ll1-expected", no_argument, NULL, OPT_LL1_EXPECTED},
@@ -326,6 +338,15 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
                 options->unroll_factor = (size_t)factor;
             }
             break;
+        case OPT_EMIT_IR_UNROLL:
+            if (!assign_once(&options->ir_unroll_output_path, optarg, "--emit-ir-unroll")) return -1;
+            break;
+        case OPT_EMIT_CFG_ORIGINAL:
+            if (!assign_once(&options->cfg_original_output_path, optarg, "--emit-cfg-original")) return -1;
+            break;
+        case OPT_EMIT_REGALLOC:
+            if (!assign_once(&options->regalloc_output_path, optarg, "--emit-regalloc")) return -1;
+            break;
         case OPT_DCE: options->dce = 1; break;
         case OPT_SPILL:
             options->spill_requested = 1;
@@ -389,7 +410,8 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         fputs("error: --emit-opt-report requiere --dce\n", stderr);
         return -1;
     }
-    if ((options->ir_output_path || options->cfg_output_path ||
+    if ((options->ir_unroll_output_path || options->cfg_original_output_path ||
+         options->regalloc_output_path || options->ir_output_path || options->cfg_output_path ||
          options->regalloc_graph_output_path || options->ir_opt_output_path ||
          options->cfg_opt_output_path || options->dce || options->spill_requested ||
          options->unroll_mode != IR_UNROLL_OFF) && (options->check_only || options->clones_min_nodes > 0 ||
@@ -398,9 +420,14 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         return -1;
     }
     if (options->command == PIPOC_COMMAND_IR && (options->keep_asm || options->print_packages ||
+        options->regalloc_output_path ||
         options->asm_output_path || options->mem_output_path || options->bundles_output_path ||
         options->json_output_path || options->symbols_output_path)) {
         fputs("error: ir solo exporta IR y CFG opcional; use --emit-ir con otro modo para otras salidas\n", stderr);
+        return -1;
+    }
+    if (options->command == PIPOC_COMMAND_INSPECT && options->regalloc_output_path) {
+        fputs("error: --emit-regalloc requiere generar ASM, binario, memoria o bundles\n", stderr);
         return -1;
     }
     /* La revisión es un modo de frontend aislado: no acepta salidas ni modos
@@ -992,7 +1019,8 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
-    if (needs_asm || options->ir_output_path != NULL || options->cfg_output_path != NULL ||
+    if (needs_asm || options->ir_unroll_output_path || options->cfg_original_output_path ||
+        options->regalloc_output_path || options->ir_output_path != NULL || options->cfg_output_path != NULL ||
         options->ir_opt_output_path != NULL || options->cfg_opt_output_path != NULL ||
         options->regalloc_graph_output_path != NULL) {
         IrDiagnostic diagnostic;
@@ -1003,6 +1031,18 @@ static int compile_piper(const cli_options_t *options)
             goto done;
         }
         active_ir = ir;
+        if (options->cfg_original_output_path) {
+            CfgProgram *original_cfg = NULL;
+            CfgDiagnostic graph_error;
+            if (cfg_build(ir, &original_cfg, &graph_error) != CFG_OK) {
+                fprintf(stderr, "error CFG original: %s\n", graph_error.message);
+                goto done;
+            }
+            exit_status = write_analysis(options->cfg_original_output_path, ir, original_cfg, NULL);
+            cfg_program_free(original_cfg);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            exit_status = PIPOC_EXIT_COMPILE_ERROR;
+        }
         /* Exportar antes de que DCE pueda modificar esta misma instancia.
          * La salida .opt.ir siempre representa la IR que recibe regalloc,
          * incluso si no se selecciono ninguna pasada opcional. */
@@ -1028,6 +1068,12 @@ static int compile_piper(const cli_options_t *options)
             }
             active_ir = ir_opt;
             if (options->verbose) ir_unroll_stats_write(stderr, &unroll_stats);
+        }
+        /* Capturar antes de que DCE cambie la IR activa en el mismo lugar. */
+        if (options->ir_unroll_output_path) {
+            exit_status = write_analysis(options->ir_unroll_output_path, active_ir, NULL, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            exit_status = PIPOC_EXIT_COMPILE_ERROR;
         }
         if (needs_asm || options->cfg_output_path != NULL || options->cfg_opt_output_path != NULL ||
             options->regalloc_graph_output_path != NULL) {
@@ -1150,6 +1196,24 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
+    if (options->regalloc_output_path) {
+        char *assigned_text = NULL;
+        size_t assigned_length = 0;
+        FILE *assigned_stream = open_memstream(&assigned_text, &assigned_length);
+        int failed = assigned_stream == NULL;
+        if (assigned_stream) {
+            if (regalloc_allocation_write_assigned(assigned_stream, allocation) != REGALLOC_OK)
+                failed = 1;
+            if (fclose(assigned_stream) != 0) failed = 1;
+        }
+        if (!failed && !write_bytes(options->regalloc_output_path, assigned_text, assigned_length)) failed = 1;
+        free(assigned_text);
+        if (failed) {
+            fputs("error: no se pudo exportar la asignacion de registros\n", stderr);
+            exit_status = PIPOC_EXIT_IO_ERROR;
+            goto done;
+        }
+    }
     emission_status = codeOPgen_generate(regalloc_allocation_view(allocation), asm_stream,
                                          NULL, &emission_error);
     if (fclose(asm_stream) != 0) {
@@ -1216,6 +1280,9 @@ done:
 
 static void report_command_outputs(const cli_options_t *options)
 {
+    if (options->ir_unroll_output_path) printf("[pipoc] ir tras unroll: %s\n", options->ir_unroll_output_path);
+    if (options->cfg_original_output_path) printf("[pipoc] cfg original: %s\n", options->cfg_original_output_path);
+    if (options->regalloc_output_path) printf("[pipoc] asignacion: %s\n", options->regalloc_output_path);
     if (options->ir_opt_output_path) printf("[pipoc] ir optimizada: %s\n", options->ir_opt_output_path);
     if (options->cfg_opt_output_path) printf("[pipoc] cfg optimizado: %s\n", options->cfg_opt_output_path);
     if (options->opt_report_path) printf("[pipoc] reporte DCE: %s\n", options->opt_report_path);
@@ -1242,8 +1309,8 @@ static void report_command_outputs(const cli_options_t *options)
 int main(int argc, char **argv)
 {
     cli_options_t options;
-    char *owned_paths[8] = {0};
-    const char *outputs[12];
+    char *owned_paths[16] = {0};
+    const char *outputs[15];
     const char *input_path;
     int parsed = parse_cli(argc, argv, &options);
     int exit_status;
@@ -1364,24 +1431,37 @@ int main(int argc, char **argv)
             goto cleanup;
         }
         break;
-    case PIPOC_COMMAND_ALL:
+    case PIPOC_COMMAND_ALL: {
+        /* -o elige tambien la carpeta y el prefijo de las salidas de Todo.
+         * Cada --emit-* explicito conserva prioridad sobre ese valor. */
+        const char *artifact_base = options.requested_output_path ? options.requested_output_path : input_path;
         options.binary_output_path = options.requested_output_path;
-        if (!default_output_path(input_path, ".bin", &options.binary_output_path,
+        if (!default_output_path(artifact_base, ".bin", &options.binary_output_path,
                                  &owned_paths[0]) ||
-            !default_output_path(input_path, ".asm", &options.asm_output_path,
+            !default_output_path(artifact_base, ".asm", &options.asm_output_path,
                                  &owned_paths[1]) ||
-            !default_output_path(input_path, ".bundles", &options.bundles_output_path,
+            !default_output_path(artifact_base, ".bundles", &options.bundles_output_path,
                                  &owned_paths[2]) ||
-            !default_output_path(input_path, ".mem", &options.mem_output_path,
+            !default_output_path(artifact_base, ".mem", &options.mem_output_path,
                                  &owned_paths[3]) ||
-            !default_output_path(input_path, ".ast.json", &options.json_output_path,
+            !default_output_path(artifact_base, ".ast.json", &options.json_output_path,
                                  &owned_paths[4]) ||
-            !default_output_path(input_path, ".symbols.txt", &options.symbols_output_path,
-                                 &owned_paths[5])) {
+            !default_output_path(artifact_base, ".symbols.txt", &options.symbols_output_path,
+                                 &owned_paths[5]) ||
+            !default_output_path(artifact_base, ".ir", &options.ir_output_path, &owned_paths[6]) ||
+            !default_output_path(artifact_base, ".opt.ir", &options.ir_opt_output_path, &owned_paths[7]) ||
+            !default_output_path(artifact_base, ".unroll.ir", &options.ir_unroll_output_path, &owned_paths[8]) ||
+            !default_output_path(artifact_base, ".original.dot", &options.cfg_original_output_path, &owned_paths[9]) ||
+            !default_output_path(artifact_base, ".unroll.dot", &options.cfg_output_path, &owned_paths[10]) ||
+            !default_output_path(artifact_base, ".opt.dot", &options.cfg_opt_output_path, &owned_paths[11]) ||
+            !default_output_path(artifact_base, ".interference.dot", &options.regalloc_graph_output_path, &owned_paths[12]) ||
+            !default_output_path(artifact_base, ".regalloc.txt", &options.regalloc_output_path, &owned_paths[13]) ||
+            (options.dce && !default_output_path(artifact_base, ".dce.json", &options.opt_report_path, &owned_paths[14]))) {
             exit_status = PIPOC_EXIT_COMPILE_ERROR;
             goto cleanup;
         }
         break;
+    }
     case PIPOC_COMMAND_DEFAULT:
         options.binary_output_path = options.requested_output_path;
         if (!default_output_path(input_path,
@@ -1412,11 +1492,15 @@ int main(int argc, char **argv)
     outputs[9] = options.cfg_opt_output_path;
     outputs[10] = options.opt_report_path;
     outputs[11] = options.regalloc_graph_output_path;
-    if (options.ir_output_path || options.cfg_output_path || options.regalloc_graph_output_path) {
+    outputs[12] = options.ir_unroll_output_path;
+    outputs[13] = options.cfg_original_output_path;
+    outputs[14] = options.regalloc_output_path;
+    {
         const char *reserved[] = {".rwt", ".bin", ".asm", ".mem", ".bundles", ".ast.json", ".symbols.txt"};
         const char *analysis_outputs[] = {options.ir_output_path, options.cfg_output_path,
             options.ir_opt_output_path, options.cfg_opt_output_path, options.opt_report_path,
-            options.regalloc_graph_output_path};
+            options.regalloc_graph_output_path, options.ir_unroll_output_path,
+            options.cfg_original_output_path, options.regalloc_output_path};
         for (size_t path = 0; path < sizeof(analysis_outputs) / sizeof(*analysis_outputs); path++)
         for (size_t i = 0; i < sizeof(reserved) / sizeof(*reserved); i++)
             if (analysis_outputs[path] && ends_with(analysis_outputs[path], reserved[i])) {
@@ -1426,6 +1510,8 @@ int main(int argc, char **argv)
             }
     }
     if ((options.ir_output_path && ends_with(options.ir_output_path, ".dot")) ||
+        (options.ir_unroll_output_path && ends_with(options.ir_unroll_output_path, ".dot")) ||
+        (options.cfg_original_output_path && ends_with(options.cfg_original_output_path, ".ir")) ||
         (options.cfg_output_path && ends_with(options.cfg_output_path, ".ir")) ||
         (options.ir_opt_output_path && ends_with(options.ir_opt_output_path, ".dot")) ||
         (options.cfg_opt_output_path && ends_with(options.cfg_opt_output_path, ".ir"))) {

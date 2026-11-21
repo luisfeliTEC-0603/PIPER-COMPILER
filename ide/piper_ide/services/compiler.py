@@ -88,6 +88,21 @@ def build_invocation(source: Path, project_root: Path,
         report = base.with_suffix(".opt.json")
         arguments.extend(("--emit-ir", str(original_ir), "--emit-ir-opt", str(active_ir)))
         artifacts.extend((original_ir, active_ir, report))
+        # Instantaneas del mismo recorrido: no recompilar el fuente por etapa.
+        for option, suffix in (("--emit-ir-unroll", ".unroll.ir"),
+                               ("--emit-cfg-original", ".original.dot"),
+                               ("--emit-cfg", ".unroll.dot"),
+                               ("--emit-cfg-opt", ".opt.dot"),
+                               ("--emit-regalloc-graph", ".interference.dot"),
+                               ("--emit-regalloc", ".regalloc.txt")):
+            path = base.with_suffix(suffix)
+            arguments.extend((option, str(path)))
+            artifacts.append(path)
+        if optimizations.dce:
+            dce_report = base.with_suffix(".dce.json")
+            arguments.extend(("--emit-opt-report", str(dce_report)))
+            artifacts.append(dce_report)
+        artifacts.extend((base.with_suffix(".compile.log"), base.with_suffix(".results.zip")))
     # `ins` termina en AST/símbolos: no presentar opciones que no ejecuta.
     if output_format != "ins":
         arguments.extend(optimizations.arguments)
