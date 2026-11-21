@@ -120,7 +120,8 @@ La IR tipada con bloques se exporta con `bin/pipoc ir programa.rwt` o
 `bin/pipoc programa.rwt --emit-ir programa.ir` (comandos 32–33). El backend
 usa ahora la IR activa: `--unroll auto|N|off`, `--dce` y `--spill on|off`
 controlan las pasadas. El spilling está permitido por defecto; el scheduler
-siempre se aplica a binario, memoria y bundles. Las checkboxes del IDE siguen pendientes.
+siempre se aplica a binario, memoria y bundles. El IDE ofrece controles independientes
+para estas opciones; [uso y resultados](docs/IDE.md).
 Para añadir el grafo: `--emit-cfg programa.dot` (comando 34), también con `pipoc ir`.
 
 Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.

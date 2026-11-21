@@ -150,7 +150,7 @@ Asignacion de registros y scheduler siguen activos en este modo.
 ```bash
 bin/pipoc "$fuente_prueba" -o "$salida_prueba/optimizado.bin" \
   --unroll "$factor_unroll" --dce --spill on \
-  --emit-ir "$salida_prueba/antes-dce.ir" \
+  --emit-ir "$salida_prueba/original.ir" \
   --emit-ir-opt "$salida_prueba/optimizado.ir" \
   --emit-cfg-opt "$salida_prueba/optimizado.dot" \
   --emit-opt-report "$salida_prueba/optimizacion.json" \
@@ -166,7 +166,7 @@ diff -u "tests/codeOPgen/paso-a-paso/esperados/$nombre_prueba.optimizado.ir" \
 ```
 
 Esperado: ambos `diff` sin diferencias. En ambos casos, DCE informa una instruccion
-eliminada. `antes-dce.ir` ya incluye unrolling si se selecciono; `inicial.ir` no.
+eliminada. `original.ir` e `inicial.ir` son iguales: ambos preceden unrolling y DCE.
 El reporte de regalloc indica **cero spills** en estas dos pruebas.
 
 ### D. Verificar que binario y memoria contienen las mismas instrucciones

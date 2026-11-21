@@ -151,7 +151,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-bundles <ruta>   Emite los bundles en formato legible\n"
             "  --emit-cfg <ruta>       Exporta el grafo de bloques como DOT\n"
             "  --emit-regalloc-graph <ruta.dot>  Exporta interferencias IR preliminares tras las pasadas solicitadas\n"
-            "  --emit-ir <ruta>        Exporta IR además de la salida principal\n"
+            "  --emit-ir <ruta>        Exporta IR original, antes de unroll/DCE\n"
             "  --unroll <N|auto|off>   Desenrolla loops constantes antes de asignar registros y emitir ASM\n"
             "  --dce                   Elimina instrucciones y rutinas innecesarias antes de generar ASM\n"
             "  --spill <on|off>        Permite spills si faltan registros (defecto on)\n"
@@ -387,11 +387,6 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     options->binary_output_path = NULL;
     if (!options->dce && options->opt_report_path) {
         fputs("error: --emit-opt-report requiere --dce\n", stderr);
-        return -1;
-    }
-    if (!options->dce && options->unroll_mode == IR_UNROLL_OFF &&
-        (options->ir_opt_output_path || options->cfg_opt_output_path)) {
-        fputs("error: las salidas optimizadas requieren --dce o --unroll\n", stderr);
         return -1;
     }
     if ((options->ir_output_path || options->cfg_output_path ||
@@ -1008,6 +1003,15 @@ static int compile_piper(const cli_options_t *options)
             goto done;
         }
         active_ir = ir;
+        /* Exportar antes de que DCE pueda modificar esta misma instancia.
+         * La salida .opt.ir siempre representa la IR que recibe regalloc,
+         * incluso si no se selecciono ninguna pasada opcional. */
+        if (options->ir_output_path != NULL) {
+            exit_status = write_analysis(options->ir_output_path, ir, NULL, NULL);
+            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
+            if (options->verbose) fprintf(stderr, "[pipoc] IR: %s\n", options->ir_output_path);
+            exit_status = PIPOC_EXIT_COMPILE_ERROR;
+        }
         if (options->unroll_mode != IR_UNROLL_OFF) {
             IrUnrollOptions unroll = ir_unroll_default_options();
             IrUnrollStats unroll_stats;
@@ -1033,11 +1037,6 @@ static int compile_piper(const cli_options_t *options)
                 fprintf(stderr, "error CFG en rutina %zu: %s\n", graph_error.routine, graph_error.message);
                 goto done;
             }
-        }
-        if (options->ir_output_path != NULL) {
-            exit_status = write_analysis(options->ir_output_path, active_ir, NULL, NULL);
-            if (exit_status != PIPOC_EXIT_SUCCESS) goto done;
-            if (options->verbose) fprintf(stderr, "[pipoc] IR: %s\n", options->ir_output_path);
         }
         if (options->cfg_output_path != NULL) {
             exit_status = write_analysis(options->cfg_output_path, active_ir, cfg, NULL);

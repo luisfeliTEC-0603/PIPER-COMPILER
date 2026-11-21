@@ -170,8 +170,8 @@ make check-codeOPgen-sim
 
 `--spill off` permite las otras optimizaciones, pero rechaza la compilación si el
 coloreo requiere derrames y pide habilitar «Permitir spilling». `-v` muestra las
-decisiones de unroll, DCE y el reporte de asignación. Las checkboxes del IDE siguen
-pendientes; el servicio actual del IDE ya usa el nuevo backend al compilar.
+decisiones de unroll, DCE y el reporte de asignación. El [IDE](IDE.md) permite
+seleccionar las opciones junto a Compilar y muestra esos resultados en su panel.
 
 Las pruebas usan C y Bash. La primera orden de pruebas valida la API, determinismo,
 errores IO y emisión/ensamblado/calendarización. La segunda además ejecuta PORYGON
