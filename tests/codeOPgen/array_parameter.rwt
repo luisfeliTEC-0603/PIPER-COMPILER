@@ -1,0 +1,6 @@
+routine B32 pick[B16|2| data, B32 index] { output data|index|. }
+routine B32 main[] {
+    create B16|2| data.
+    data store [-7,12].
+    output pick[data,1].
+}

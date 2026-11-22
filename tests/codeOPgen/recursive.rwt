@@ -1,0 +1,5 @@
+routine B32 factorial[B32 n] {
+    when [n < 2] { output 1. }
+    output n * factorial[n - 1].
+}
+routine B32 main[] { output factorial[5]. }

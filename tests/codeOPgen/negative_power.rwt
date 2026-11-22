@@ -1,0 +1,2 @@
+routine B32 power[B32 exponent] { output 2 ^ exponent. }
+routine B32 main[] { output power[-1]. }

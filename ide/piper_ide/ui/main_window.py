@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QSizePolicy, QSplitter, QToolButton, QVBoxLayout, QWidget,
 )
@@ -17,10 +17,13 @@ from PySide6.QtWidgets import (
 from ..editor.code_editor import CodeEditor
 from ..editor.completion import CompletionController
 from ..models.project import Project
+from ..models.compilation import OptimizationOptions
+from ..infrastructure.settings import load_optimizations, save_optimizations
 from ..services.compiler import CompilerConfigurationError, CompilerService
 from .appearance_panel import AppearancePanel
 from .clone_controller import CloneController
 from .clone_panel import ClonePanel
+from .compilation_panel import CompilationPanel
 from .document_controller import DocumentController
 from .diagnostic_controller import DiagnosticController
 from .explorer import Explorer
@@ -103,6 +106,8 @@ class MainWindow(QMainWindow):
         # documentos y editor con los diagnósticos, sin acoplarse a ellos.
         self.clone_panel = ClonePanel(self)
         self.output_panel.addTab(self.clone_panel, "Clones")
+        self.compilation_panel = CompilationPanel(self)
+        self.compilation_page = self.output_panel.addTab(self.compilation_panel, "Compilación")
         self.clones = CloneController(self.documents, self.editor, self.clone_panel, self)
         self._menus()
         self._connect_components()
@@ -146,6 +151,10 @@ class MainWindow(QMainWindow):
         self.compiler.outputReceived.connect(self.output_panel.append_process_output)
         self.compiler.finished.connect(self._compilation_finished)
         self.compiler.failed.connect(self._compilation_failed)
+        self.compilation_panel.artifactRequested.connect(self.documents.open_file)
+        self.compile_target.currentIndexChanged.connect(self._update_optimization_controls)
+        for checkbox in (self.unroll_checkbox, self.dce_checkbox, self.spill_checkbox):
+            checkbox.toggled.connect(self._optimization_selection_changed)
         self.completion.unavailable.connect(self._completion_unavailable)
         self.diagnostics.message.connect(self.output_panel.append_message)
         # Los mensajes del detector se muestran en la misma consola y barra
@@ -158,8 +167,10 @@ class MainWindow(QMainWindow):
         """Construye la barra amplia del diseño gráfico original."""
         bar = QFrame()
         bar.setObjectName("topbar")
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(16, 10, 16, 10)
+        layout = QVBoxLayout(bar)
+        layout.setContentsMargins(16, 10, 16, 10)
+        row = QHBoxLayout()
+        layout.addLayout(row)
         row.setSpacing(8)
         mascot = QLabel()
         mascot.setAccessibleName("Rowlet, mascota de Piper")
@@ -191,6 +202,32 @@ class MainWindow(QMainWindow):
         self.save_button = QPushButton("Guardar  Ctrl+S")
         self.save_button.setToolTip("Guardar el archivo activo")
         row.addWidget(self.save_button)
+        # Segunda fila para conservar espacio al reducir la ventana. Las
+        # opciones viven junto a Compilar y no se mezclan con la navegación.
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        layout.addLayout(row)
+        options = load_optimizations()
+        self.unroll_checkbox = QCheckBox("Loop unrolling")
+        self.unroll_checkbox.setChecked(options.unroll)
+        self.unroll_checkbox.setToolTip("El módulo valida cada loop y elige automáticamente el factor\n"
+                                       "según sus iteraciones y el presupuesto de tamaño del código.")
+        row.addWidget(self.unroll_checkbox)
+        self.dce_checkbox = QCheckBox("DCE")
+        self.dce_checkbox.setChecked(options.dce)
+        self.dce_checkbox.setToolTip("Eliminar código muerto después de loop unrolling.")
+        row.addWidget(self.dce_checkbox)
+        self.spill_checkbox = QCheckBox("Permitir spilling")
+        self.spill_checkbox.setChecked(options.allow_spill)
+        self.spill_checkbox.setToolTip("Permitir guardar temporales en memoria si no caben en registros.\n"
+                                      "Si se desactiva y hace falta memoria, la compilación indica que debés habilitarlo.")
+        row.addWidget(self.spill_checkbox)
+        self.scheduler_label = QLabel("Scheduler automático")
+        self.scheduler_label.setToolTip("Siempre se calendarizan binario, memoria y bundles.\n"
+                                        "La salida ASM sola no genera paquetes para el procesador.")
+        self.scheduler_label.setProperty("role", "muted")
+        row.addWidget(self.scheduler_label)
+        row.addStretch()
         target_label = QLabel("Salida")
         target_label.setProperty("role", "muted")
         row.addWidget(target_label)
@@ -200,7 +237,8 @@ class MainWindow(QMainWindow):
                                ("Bundles (.bundles)", "sch"), ("Memoria (.mem)", "mem"),
                                ("AST y símbolos", "ins"), ("Todo", "all")):
             self.compile_target.addItem(title, command)
-        self.compile_target.setToolTip("Artefacto que generará bin/pipoc")
+        self.compile_target.setCurrentIndex(self.compile_target.findData("all"))
+        self.compile_target.setToolTip("Todo reúne ejecutable, IR por etapa, grafos, reportes y ZIP.")
         row.addWidget(self.compile_target)
         self.compile_button = QPushButton("Compilar  F5")
         self.compile_button.setObjectName("compileButton")
@@ -424,11 +462,28 @@ class MainWindow(QMainWindow):
         )
         self.compile_button.setEnabled(compilable)
         self.compile_target.setEnabled(not self.compiler.running)
+        self._update_optimization_controls()
         self.actions["compile"].setEnabled(compilable)
         # La detección de clones solo tiene sentido con al menos un archivo .rwt
         # analizable. No se desactiva por estar en un buffer no-Piper: el
         # controlador recorre todo el proyecto, no solo el activo.
         self.actions["detect_clones"].setEnabled(self._has_piper_files())
+
+    def _selected_optimizations(self) -> OptimizationOptions:
+        return OptimizationOptions(
+            unroll=self.unroll_checkbox.isChecked(),
+            dce=self.dce_checkbox.isChecked(), allow_spill=self.spill_checkbox.isChecked(),
+        )
+
+    def _optimization_selection_changed(self):
+        save_optimizations(self._selected_optimizations())
+        self._update_optimization_controls()
+
+    def _update_optimization_controls(self):
+        enabled = not self.compiler.running and self.compile_target.currentData() != "ins"
+        for control in (self.unroll_checkbox, self.dce_checkbox, self.spill_checkbox):
+            control.setEnabled(enabled)
+        self.scheduler_label.setText("Solo análisis" if self.compile_target.currentData() == "ins" else "Scheduler automático")
 
     def _has_piper_files(self) -> bool:
         """Indica si hay al menos un .rwt abierto o en el proyecto."""
@@ -467,7 +522,7 @@ class MainWindow(QMainWindow):
             self.open_folder(project_root)
         try:
             started = self.compiler.compile(
-                source, project_root, self.compile_target.currentData()
+                source, project_root, self.compile_target.currentData(), self._selected_optimizations()
             )
         except (CompilerConfigurationError, OSError) as error:
             self._show_error(str(error))
@@ -480,6 +535,9 @@ class MainWindow(QMainWindow):
         """Bloquea una segunda ejecución y muestra el comando reproducible."""
         self.panel_action.setChecked(True)
         self.output_panel.begin_compilation(invocation.display_command)
+        self.compilation_panel.begin(invocation)
+        self.output_panel.append_message("Solo AST y símbolos." if invocation.output_format == "ins"
+                                         else invocation.optimizations.description)
         self.compile_button.setText("Compilando…")
         self._message(f"Pipoc: compilando {invocation.source.name} [{invocation.output_format}]")
         self._update_actions()
@@ -492,6 +550,8 @@ class MainWindow(QMainWindow):
         # la identidad/versionado del controlador, nunca el buffer a ciegas.
         self.diagnostics.check_now()
         self.explorer.refresh()
+        self.compilation_panel.finish(result)
+        self.show_output_page(self.compilation_page)
         if result.succeeded:
             artifacts = [path for path in result.invocation.artifacts if path.exists()]
             names = ", ".join(path.name for path in artifacts) or "sin artefactos"
@@ -505,6 +565,8 @@ class MainWindow(QMainWindow):
     def _compilation_failed(self, message: str):
         """Informa fallos de arranque como permisos o ejecutable ausente."""
         self.compile_button.setText("Compilar  F5")
+        self.compilation_panel.fail(message)
+        self.show_output_page(self.compilation_page)
         self.output_panel.append_message("No se pudo iniciar pipoc: " + message)
         self._message("Error al iniciar pipoc")
         self._update_actions()

@@ -1,0 +1,2 @@
+routine B32 divide[B32 divisor] { output 7 / divisor. }
+routine B32 main[] { output divide[0]. }

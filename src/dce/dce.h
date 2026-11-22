@@ -72,8 +72,9 @@ DceStatus dce_run_pass(IrProgram *ir, const CfgProgram *cfg, size_t *removed_cou
  * report es obligatorio; se publica solo en exito. No confundir IR con ISA. */
 DceStatus dce_optimize(IrProgram *ir, const CfgProgram *cfg, DceReport *report,
                         LivenessDiagnostic *analysis_diagnostic);
-/* Escribe JSON en un stream prestado; no lo cierra. Metricas ISA no disponibles
- * quedan explicitamente en null hasta conectar la emision desde IR. */
+/* Cero eliminaciones es exito; changed en JSON indica si hubo cambios.
+ * Escribe JSON en un stream prestado; no lo cierra. Metricas ISA no disponibles
+ * quedan explicitamente en null: la medicion de ISA/ciclos no pertenece a DCE. */
 bool dce_write_report(FILE *output, const DceReport *report);
 
 #endif

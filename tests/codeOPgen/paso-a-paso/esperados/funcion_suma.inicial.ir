@@ -1,0 +1,29 @@
+function sumar_y_duplicar(a:B32, b:B32) -> B32
+    variables: local suma:B32, local doble:B32, local descartado:B32
+    temporales: t0:B32, t1:B32, t2:B32, t3:B32, t4:B32, t5:B32
+    constantes: 99:B32, 2:B32
+B0:
+    descartado = 99
+    t0 = a
+    t1 = b
+    t2 = t0 + t1 ; comprueba rango del resultado B32, puede fallar
+    suma = t2
+    t3 = suma
+    t4 = t3 * 2 ; comprueba rango del resultado B32, puede fallar
+    doble = t4
+    t5 = doble
+    return t5
+
+function main() -> B32
+    variables: local x:B32, local y:B32, local resultado:B32
+    temporales: t0:B32, t1:B32, t2:B32, t3:B32
+    constantes: 4:B32, 3:B32
+B0:
+    x = 4
+    y = 3
+    t0 = x
+    t1 = y
+    t2 = call sumar_y_duplicar(t0, t1) ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar
+    resultado = t2
+    t3 = resultado
+    return t3

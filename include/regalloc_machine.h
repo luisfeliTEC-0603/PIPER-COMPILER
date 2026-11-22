@@ -17,7 +17,8 @@
  * que su expansion sobre la comparacion unsigned de la ISA use solo r5.
  * La aritmetica comprobada usa r5/r6 reservados y conserva MAY_TRAP.
  * ADDR/CHECK_BOUNDS/LOAD/STORE cubren accesos indexados y la familia CRYPTO
- * expone sus efectos y registros fijos. Todavia no hay emisor ASM de esta IR.
+ * expone sus efectos y registros fijos. codeOPgen emite ASM desde la vista
+ * asignada de este modelo, sin volver a recorrer el AST.
  */
 #include "regalloc.h"
 
@@ -109,8 +110,9 @@ typedef enum {
  * call_arg_index; CALL lleva symbol=callee. El emisor guarda r1..r6 antes de
  * tocar r1..r4 y restaura despues del retorno; CALL_RESULT publica def al
  * final. Los argumentos i>=4 se guardan despues del call record de 32 bytes.
- * Ningun CALL_ARG crea un temporal nuevo entre la primera escritura fisica
- * de argumento y el salto. Las intrinsecas usan immediate/immediate2 para
+ * Los argumentos de pila se colocan primero. El grafo protege los registros
+ * de argumentos ya escritos frente a definiciones/recargas posteriores.
+ * Las intrinsecas usan immediate/immediate2 para
  * indices de 2 bits; CRYPTO_WORD lleva el indice de palabra en immediate.
  * CRYPTO_FEISTEL toma la direccion B32[2] en use1 y usa r1/r2/r3 fijos. */
 typedef struct {
@@ -168,8 +170,8 @@ typedef struct RegallocMachineProgram {
  * limpia el resultado parcial y deja *out=NULL. Requiere un analisis preparado
  * sobre IR/CFG aun vivos; analysis->liveness puede ser NULL.
  *
- * El modelo no se integra aun con el CLI. regalloc_allocate consume esta
- * bajada y entrega colores/spills para el subconjunto admitido. */
+ * regalloc_allocate consume esta bajada y entrega colores/spills al emisor
+ * codeOPgen, tanto en la CLI como en las pruebas del backend. */
 RegallocStatus regalloc_lower_scalar(const RegallocAnalysis *analysis,
                                     RegallocMachineProgram **out,
                                     RegallocDiagnostic *diagnostic);
@@ -279,9 +281,51 @@ size_t regalloc_assigned_spill_offset(const RegallocAssignedProgram *assigned,
  * simbolos siguen prestados desde analysis y deben permanecer vivos. */
 typedef struct RegallocAllocation RegallocAllocation;
 
+typedef struct {
+    bool allow_spill; /**< false: falla si el coloreo deja valores sin registro. */
+} RegallocOptions;
+
+RegallocOptions regalloc_default_options(void);
+
+/** Una identidad virtual derramada por slot. No es un Symbol del frontend. */
+typedef struct {
+    IrId temp;
+    size_t slot;
+} RegallocSpill;
+
+/** Conteos estaticos de la maquina final; no son accesos dinamicos por ciclo.
+ * spills se presta desde la asignacion y vive hasta allocation_free. */
+typedef struct {
+    size_t spilled_temporaries, spill_slots, spill_loads, spill_stores, frame_bytes;
+    const RegallocSpill *spills;
+} RegallocRoutineReport;
+
+const RegallocRoutineReport *regalloc_allocation_routine_report(
+    const RegallocAllocation *allocation, size_t routine);
+
+/** Reporte legible por rutina y acceso: temporal/slot/offset y ubicacion final
+ * (bloque/instruccion), origen IR y ubicacion fuente. No cierra output. */
+RegallocStatus regalloc_allocation_write_report(FILE *output,
+                                               const RegallocAllocation *allocation);
+
+/** Exportacion para estudiar la entrada real de codeOPgen: reporte de spills,
+ * colores y operaciones de maquina finales con registros fisicos y origen IR.
+ * No es una nueva IR tipada ni un ASM calendarizado. No cierra output. */
+RegallocStatus regalloc_allocation_write_assigned(FILE *output,
+                                                 const RegallocAllocation *allocation);
+
+/** Igual que allocate, con opciones explicitas no NULL. Si allow_spill=false
+ * y el coloreo no basta, devuelve SPILL_REQUIRED, diagnostico y *out=NULL.
+ * No modifica IR, simbolos ni sus direcciones. */
+RegallocStatus regalloc_allocate_with_options(const RegallocAnalysis *analysis,
+                                              const RegallocOptions *options,
+                                              RegallocAllocation **out,
+                                              RegallocDiagnostic *diagnostic);
+
 /** Baja el subconjunto IR admitido, repite liveness/grafo/coloreo y reescribe
  * los valores sin color con SPILL_LOAD/STORE hasta entregar todos los operandos
- * en r1..r4. Ante fallo libera el trabajo parcial y deja *out == NULL. */
+ * en r1..r4. Permite spilling por defecto. Ante fallo libera el trabajo
+ * parcial y deja *out == NULL. */
 RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
                                  RegallocAllocation **out,
                                  RegallocDiagnostic *diagnostic);

@@ -13,7 +13,7 @@ CFLAGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic \
 
 ANALYSIS_SRC    = $(wildcard src/analysis/*.c)
 LL1_SRC         = $(wildcard src/analysis/ll1/*.c)
-CODEGEN_SRC     = $(wildcard src/codegen/*.c)
+CODEOPGEN_SRC   = $(wildcard src/codeOPgen/*.c)
 ASSEMBLER_SRC   = $(wildcard src/assembler/*.c)
 SCHEDULER_SRC   = $(wildcard src/scheduler/*.c)
 EMIT_SRC        = $(wildcard src/emit/*.c)
@@ -25,7 +25,7 @@ DCE_SRC         = $(wildcard src/dce/*.c)
 
 ANALYSIS_OBJ    = $(patsubst src/analysis/%.c,build/analysis/%.o,$(ANALYSIS_SRC))
 LL1_OBJ         = $(patsubst src/analysis/ll1/%.c,build/analysis/ll1/%.o,$(LL1_SRC))
-CODEGEN_OBJ     = $(patsubst src/codegen/%.c,build/codegen/%.o,$(CODEGEN_SRC))
+CODEOPGEN_OBJ   = $(patsubst src/codeOPgen/%.c,build/codeOPgen/%.o,$(CODEOPGEN_SRC))
 ASSEMBLER_OBJ   = $(patsubst src/assembler/%.c,build/assembler/%.o,$(ASSEMBLER_SRC))
 SCHEDULER_OBJ   = $(patsubst src/scheduler/%.c,build/scheduler/%.o,$(SCHEDULER_SRC))
 EMIT_OBJ        = $(patsubst src/emit/%.c,build/emit/%.o,$(EMIT_SRC))
@@ -56,7 +56,7 @@ OBJ = build/parser.o \
       build/main.o \
       $(ANALYSIS_OBJ) \
       $(LL1_OBJ) \
-      $(CODEGEN_OBJ) \
+      $(CODEOPGEN_OBJ) \
       $(ASSEMBLER_OBJ) \
       $(SCHEDULER_LIB_OBJ) \
       $(EMIT_OBJ) \
@@ -70,6 +70,19 @@ OBJ = build/parser.o \
 .PHONY: all generate ll1-table check-regalloc-machine-graph check-regalloc-assignment check-regalloc-coloring check-regalloc-lower-symbols check-regalloc-lower-calls check-regalloc-lower-order check-regalloc-lower-checked check-regalloc-lower-checked-unary check-regalloc-pipeline run clean
 
 all: $(TARGET) bin/porygon-schedule
+
+.PHONY: check-codeOPgen check-codeOPgen-sim
+check-codeOPgen: $(TARGET) build/runs/codeOPgen/test_contract
+	build/runs/codeOPgen/test_contract
+	bash tests/codeOPgen/check.sh
+
+check-codeOPgen-sim: $(TARGET) build/runs/codeOPgen/test_contract
+	build/runs/codeOPgen/test_contract
+	bash tests/codeOPgen/check.sh --sim
+
+build/runs/codeOPgen/test_contract: tests/codeOPgen/test_contract.c $(filter-out build/main.o,$(OBJ))
+	@mkdir -p build/runs/codeOPgen
+	$(CC) $(CFLAGS) $^ -o $@
 
 run: all
 	@mkdir -p build
@@ -223,8 +236,8 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
               include/ast.h include/symbol_table.h include/semantic.h \
-              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h \
-              include/codegen.h include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h src/dce/dce.h \
+              include/codeOPgen.h include/regalloc_machine.h include/ir_unroll.h \
+              include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h src/dce/dce.h \
               src/assembler/asm_program_parser.h \
               src/scheduler/scheduler.h \
               src/emit/binary_format.h \
@@ -234,7 +247,7 @@ build/main.o: src/main.c \
 	$(CC) $(CFLAGS) -c src/main.c -o $@
 
 # --- Reglas de patrón por etapa ---------------------------------------------
-build/ir/%.o: src/ir/%.c include/ir.h src/ir/ir_internal.h src/ir/ir_format.h include/ast.h include/symbol_table.h
+build/ir/%.o: src/ir/%.c include/ir.h include/ir_unroll.h src/ir/ir_internal.h src/ir/ir_format.h include/ast.h include/symbol_table.h
 	@mkdir -p build/ir
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -266,9 +279,9 @@ build/analysis/%.o: src/analysis/%.c $(wildcard include/*.h)
 	@mkdir -p build/analysis
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/codegen/%.o: src/codegen/%.c src/codegen/codegen_internal.h \
+build/codeOPgen/%.o: src/codeOPgen/%.c src/codeOPgen/internal.h \
                    $(wildcard include/*.h)
-	@mkdir -p build/codegen
+	@mkdir -p build/codeOPgen
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/assembler/%.o: src/assembler/%.c $(wildcard src/assembler/*.h)

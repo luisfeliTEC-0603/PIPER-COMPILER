@@ -3,11 +3,14 @@
 import os
 from pathlib import Path
 import shutil
+import tempfile
+from dataclasses import replace
 
 from PySide6.QtCore import QObject, Signal
 
 from ..infrastructure.processes import ProcessRunner
-from ..models.compilation import CompilationInvocation, CompilationResult
+from ..models.compilation import CompilationInvocation, CompilationResult, OptimizationOptions
+from .artifacts import publish_artifacts
 
 
 FORMATS = ("bin", "asm", "sch", "mem", "ins", "all")
@@ -40,7 +43,8 @@ def find_compiler(project_root: Path) -> Path:
 
 
 def build_invocation(source: Path, project_root: Path,
-                     output_format: str) -> CompilationInvocation:
+                     output_format: str, optimizations: OptimizationOptions = OptimizationOptions(),
+                     *, run_directory: Path | None = None) -> CompilationInvocation:
     """Resuelve rutas explícitas bajo build/ide sin escribir todavía."""
     source = source.resolve()
     project_root = project_root.resolve()
@@ -53,6 +57,8 @@ def build_invocation(source: Path, project_root: Path,
     except ValueError:
         relative = Path(source.stem)
     base = project_root / "build" / "ide" / relative
+    if run_directory is not None:
+        base = run_directory / source.stem
     output_dir = base.parent
     compiler = find_compiler(project_root)
     arguments: list[str] = [] if output_format == "bin" else [output_format]
@@ -77,10 +83,33 @@ def build_invocation(source: Path, project_root: Path,
                           "--emit-bundles", str(bundles),
                           "--emit-mem", str(memory)))
         artifacts[0:0] = (binary, assembly, bundles, memory)
+        original_ir = base.with_suffix(".ir")
+        active_ir = base.with_suffix(".opt.ir")
+        report = base.with_suffix(".opt.json")
+        arguments.extend(("--emit-ir", str(original_ir), "--emit-ir-opt", str(active_ir)))
+        artifacts.extend((original_ir, active_ir, report))
+        # Instantaneas del mismo recorrido: no recompilar el fuente por etapa.
+        for option, suffix in (("--emit-ir-unroll", ".unroll.ir"),
+                               ("--emit-cfg-original", ".original.dot"),
+                               ("--emit-cfg", ".unroll.dot"),
+                               ("--emit-cfg-opt", ".opt.dot"),
+                               ("--emit-regalloc-graph", ".interference.dot"),
+                               ("--emit-regalloc", ".regalloc.txt")):
+            path = base.with_suffix(suffix)
+            arguments.extend((option, str(path)))
+            artifacts.append(path)
+        if optimizations.dce:
+            dce_report = base.with_suffix(".dce.json")
+            arguments.extend(("--emit-opt-report", str(dce_report)))
+            artifacts.append(dce_report)
+        artifacts.extend((base.with_suffix(".compile.log"), base.with_suffix(".results.zip")))
+    # `ins` termina en AST/símbolos: no presentar opciones que no ejecuta.
+    if output_format != "ins":
+        arguments.extend(optimizations.arguments)
     arguments.extend(("-v", str(source)))
     return CompilationInvocation(
         compiler, source, project_root, output_dir, output_format,
-        tuple(arguments), tuple(artifacts),
+        tuple(arguments), tuple(artifacts), optimizations,
     )
 
 
@@ -104,11 +133,17 @@ class CompilerService(QObject):
     def running(self) -> bool:
         return self.runner.running
 
-    def compile(self, source: Path, project_root: Path, output_format: str) -> bool:
+    def compile(self, source: Path, project_root: Path, output_format: str,
+                optimizations: OptimizationOptions = OptimizationOptions()) -> bool:
         if self.running:
             return False
-        invocation = build_invocation(source, project_root, output_format)
+        invocation = build_invocation(source, project_root, output_format, optimizations)
         invocation.output_dir.mkdir(parents=True, exist_ok=True)
+        # Una carpeta por ejecución evita confundir archivos anteriores con
+        # los de un intento fallido. Permanece para poder repetir el comando.
+        run_directory = Path(tempfile.mkdtemp(prefix=source.stem + "-", dir=invocation.output_dir))
+        invocation = build_invocation(source, project_root, output_format, optimizations,
+                                      run_directory=run_directory)
         self._invocation = invocation
         if not self.runner.start(invocation.compiler, invocation.arguments,
                                  invocation.project_root):
@@ -127,6 +162,10 @@ class CompilerService(QObject):
         result = CompilationResult(
             invocation, exit_code, stdout, stderr
         )
+        try:
+            publish_artifacts(result)
+        except OSError as error:
+            result = replace(result, artifact_error=str(error))
         self.finished.emit(result)
 
     def _failed(self, message: str):

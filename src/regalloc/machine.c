@@ -519,8 +519,8 @@ static RegallocStatus lower_indirect(LowerContext *ctx,
 }
 
 /* La IR ya evaluo los argumentos de izquierda a derecha. Materializarlos
- * antes de CALL_SAVE evita crear definiciones entre TO_ARG y CALL: los
- * registros fisicos con argumentos quedan intactos hasta el salto. CALL_SAVE
+ * antes de CALL_SAVE separa evaluacion y colocacion. El grafo protege tambien
+ * las recargas de spill entre CALL_ARG y CALL. CALL_SAVE
  * conserva los colores del llamador; CALL los restaura y publica def al final.
  * Los valores que cruzan un TO_ARG reciben su restriccion en el grafo. */
 static RegallocStatus lower_call(LowerContext *ctx,
@@ -574,7 +574,11 @@ static RegallocStatus lower_call(LowerContext *ctx,
         .flags = IR_WRITE_MEMORY, .location = source->location
     });
     if (status != REGALLOC_OK) return status;
-    for (size_t i = 0; i < count; i++) {
+    /* Colocar primero los argumentos de pila. Asi nunca se necesita una
+     * recarga nueva despues de ocupar los cuatro colores como argumentos. */
+    size_t stack_args = count > REGALLOC_REGISTER_ARGS ? count - REGALLOC_REGISTER_ARGS : 0;
+    for (size_t position = 0; position < count; position++) {
+        size_t i = position < stack_args ? REGALLOC_REGISTER_ARGS + position : position - stack_args;
         bool register_arg = i < REGALLOC_REGISTER_ARGS;
         status = emit(ctx, (RegallocMachineInstruction){
             .op = REGALLOC_M_CALL_ARG, .def = IR_NO_ID, .use1 = args[i],

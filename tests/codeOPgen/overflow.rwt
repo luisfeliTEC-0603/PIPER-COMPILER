@@ -1,0 +1,2 @@
+routine B32 next[B32 a] { output a + 1. }
+routine B32 main[] { output next[2147483647]. }

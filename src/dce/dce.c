@@ -82,6 +82,7 @@ static void compact_instructions(IrProgram *ir, const bool *remove)
 DceStatus dce_run_pass(IrProgram *ir, const CfgProgram *cfg, size_t *removed_count,
                         LivenessDiagnostic *analysis_diagnostic)
 {
+    if (removed_count == NULL) return DCE_ANALYSIS_ERROR;
     *removed_count = 0;
     bool *remove = NULL;
     DceStatus status = DCE_OUT_OF_MEMORY;
@@ -117,7 +118,9 @@ cleanup:
 DceStatus dce_optimize(IrProgram *ir, const CfgProgram *cfg, DceReport *report,
                         LivenessDiagnostic *analysis_diagnostic)
 {
+    if (report == NULL) return DCE_ANALYSIS_ERROR;
     *report = (DceReport){0};
+    if (ir == NULL || cfg == NULL) return DCE_ANALYSIS_ERROR;
     size_t before;
     if (!count_instructions(ir, &before))
         return DCE_OUT_OF_MEMORY;
@@ -137,10 +140,13 @@ DceStatus dce_optimize(IrProgram *ir, const CfgProgram *cfg, DceReport *report,
 
 bool dce_write_report(FILE *output, const DceReport *report)
 {
+    if (output == NULL || report == NULL) return false;
     fprintf(output, "{\n  \"pass\": \"dce\",\n  \"representation\": \"typed_ir\",\n"
+        "  \"changed\": %s,\n"
         "  \"instructions_before\": %zu,\n  \"instructions_after\": %zu,\n"
         "  \"removed_instructions\": %zu,\n  \"removed_routines\": %zu,\n"
         "  \"optimization_cpu_seconds\": ",
+        report->removed_instructions != 0 || report->removed_routines != 0 ? "true" : "false",
         report->instructions_before, report->instructions_after,
         report->removed_instructions, report->removed_routines);
     if (report->optimization_seconds < 0)
@@ -151,6 +157,6 @@ bool dce_write_report(FILE *output, const DceReport *report)
     if (report->compilation_seconds < 0) fputs("null", output);
     else fprintf(output, "%.9f", report->compilation_seconds);
     fputs(",\n  \"target_code_bytes\": null,\n  \"simulator_cycles\": null,\n"
-        "  \"target_metrics_status\": \"requires_backend_consuming_optimized_ir\"\n}\n", output);
+        "  \"target_metrics_status\": \"requires_target_metrics_collection\"\n}\n", output);
     return !ferror(output);
 }

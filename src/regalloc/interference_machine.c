@@ -123,6 +123,12 @@ RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machin
                 live, routine, b, i, LIVENESS_AFTER);
             add_live_pairs(graph, before);
             add_live_pairs(graph, after);
+            /* Incluso un resultado muerto escribe su registro: no puede
+             * destruir otro valor que sigue vivo despues de la instruccion. */
+            IrId def = block->instructions[i].def;
+            if (def != IR_NO_ID)
+                for (IrId t = 0; t < count; t++)
+                    if (liveness_set_contains(after, t)) add_edge(graph, def, t);
 
             /* Un valor que cruza una escritura fija no puede ocupar ese
              * registro. El resultado nuevo de la instruccion no cruza el
@@ -134,6 +140,21 @@ RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machin
                     if (liveness_set_contains(before, t) &&
                         liveness_set_contains(after, t))
                         graph->forbidden_colors[t] |= writes;
+        }
+        /* Los argumentos fisicos viven entre CALL_ARG y CALL, aunque el
+         * temporal original ya murio. Una recarga de spill en ese intervalo
+         * tampoco puede definir un color ocupado por un argumento anterior.
+         * Las secuencias de llamada estan contenidas en un solo bloque. */
+        unsigned arguments = 0;
+        for (size_t i = block->instruction_count; i-- > 0;) {
+            const RegallocMachineInstruction *in = &block->instructions[i];
+            if (in->op == REGALLOC_M_CALL_RESULT || in->op == REGALLOC_M_CALL_VOID) {
+                arguments = in->fixed_reads & REGALLOC_COLOR_MASK;
+                continue; /* el resultado se define DESPUES del retorno */
+            }
+            if (in->op == REGALLOC_M_CALL_ARG) arguments &= ~in->fixed_writes;
+            if (in->def != IR_NO_ID) graph->forbidden_colors[in->def] |= arguments;
+            if (in->op == REGALLOC_M_CALL_SAVE) arguments = 0;
         }
     }
 

@@ -20,19 +20,18 @@
 | Ruta | Qué encontrarás |
 | --- | --- |
 | [`src/`](src/) | CLI, lexer, parser, AST, análisis semántico, tabla de símbolos y formato binario. |
-| [`src/codegen/`](src/codegen/) | Generación de ASM: expresiones, control de flujo, llamadas, arreglos e intrínsecas. |
+| [`src/codeOPgen/`](src/codeOPgen/) | Emisión ASM desde la máquina asignada: aritmética, memoria, llamadas y control. [Guía del módulo](docs/codeOPgen.md). |
 | [`include/`](include/) | Encabezados y contratos compartidos del compilador. |
-| [`porygon_assembler/`](porygon_assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
-| [`scheduler/`](scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
+| [`src/assembler/`](src/assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
+| [`src/scheduler/`](src/scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
 | [`tools/`](tools/) | Herramientas auxiliares, incluido el generador de la tabla LL(1). |
-| [`tests/codegen/`](tests/codegen/) | Los tres programas Piper de ejemplo (`.rwt`). |
-| [`tests/codegen/generated/`](tests/codegen/generated/) | ASM lineal (`.asm`) y memoria de instrucciones (`.mem`) de cada ejemplo. |
+| [`tests/codeOPgen/`](tests/codeOPgen/) | Programas de regresión del emisor y comprobaciones C/Bash, con simulación opcional. |
 | [`docs/`](docs/) | PDF de [especificaciones](docs/specs.pdf), [sintaxis Piper](docs/piper_sintaxis.pdf) e imágenes. |
 | [`Makefile`](Makefile) | Reglas para compilar con `make all` y limpiar con `make clean`. |
 
 Para seguir el flujo del compilador, empezar en [`src/main.c`](src/main.c):
-coordina el [lexer](src/lexer.l), el [parser](src/parser.y), la
-[semántica](src/semantic.c) y la [generación de código](src/codegen/codegen.c),
+coordina el [lexer](src/analysis/lexer.l), el [parser](src/analysis/parser.y), la
+[semántica](src/analysis/semantic.c), la IR y asignación, y la [emisión ASM](src/codeOPgen/codeOPgen.c),
 antes de ensamblar, calendarizar y emitir el binario.
 
 `build/` y `bin/` se crean localmente durante la compilación y están ignorados
@@ -109,16 +108,27 @@ Ajustar dirección y tamaño al dato que se quiera recuperar.
 
 ## Flujo completo
 
-Piper pasa por lexer, parser Bison, AST y análisis semántico. El codegen actual
-traduce el AST a ASM; el [ensamblador](src/assembler/) construye el programa
+Piper pasa por lexer, parser Bison, AST, semántica e IR. Unrolling y DCE son
+opcionales; regalloc asigna registros y agrega spills cuando hacen falta.
+[codeOPgen](docs/codeOPgen.md) traduce la máquina asignada a ASM;
+el [ensamblador](src/assembler/) construye el programa
 máquina y el [scheduler](src/scheduler/) reordena y empaqueta instrucciones en
 bundles con NOPs. Se emiten `.bin` y, al solicitarlo, `.mem` para ejecutar en
 PORYGON y recuperar resultados de registros y memoria.
 
 La IR tipada con bloques se exporta con `bin/pipoc ir programa.rwt` o
 `bin/pipoc programa.rwt --emit-ir programa.ir` (comandos 32–33). El backend
-actual sigue usando AST y símbolos; la optimización sigue pendiente.
+usa ahora la IR activa: `--unroll auto|N|off`, `--dce` y `--spill on|off`
+controlan las pasadas. El spilling está permitido por defecto; el scheduler
+siempre se aplica a binario, memoria y bundles. El IDE ofrece controles independientes
+para estas opciones; [uso y resultados](docs/IDE.md).
 Para añadir el grafo: `--emit-cfg programa.dot` (comando 34), también con `pipoc ir`.
+
+`all` reúne ahora IR original, tras unrolling y tras DCE, sus CFG, interferencias
+IR y operaciones con registros/spills. Con `-o build/pruebas/programa.bin` usa
+esa carpeta y prefijo para todas las salidas (crear la carpeta primero).
+En el IDE, Todo es la salida inicial y añade `<nombre>.results.zip` con todos
+los resultados. [Opciones y ejemplos de exportación](docs/IDE.md#exportar-desde-terminal).
 
 Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
 Fuentes, resultados esperados e instrucciones: [tests/ir/README.md](tests/ir/README.md).
