@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
         self.compiler.failed.connect(self._compilation_failed)
         self.compilation_panel.artifactRequested.connect(self.documents.open_file)
         self.compile_target.currentIndexChanged.connect(self._update_optimization_controls)
-        for checkbox in (self.unroll_checkbox, self.dce_checkbox, self.spill_checkbox):
+        for checkbox in self.optimization_checkboxes:
             checkbox.toggled.connect(self._optimization_selection_changed)
         self.completion.unavailable.connect(self._completion_unavailable)
         self.diagnostics.message.connect(self.output_panel.append_message)
@@ -217,11 +217,17 @@ class MainWindow(QMainWindow):
         self.dce_checkbox.setChecked(options.dce)
         self.dce_checkbox.setToolTip("Eliminar código muerto después de loop unrolling.")
         row.addWidget(self.dce_checkbox)
+        self.rename_checkbox = QCheckBox("Rename (renombrar registros)")
+        self.rename_checkbox.setChecked(options.rename)
+        self.rename_checkbox.setToolTip("Renombrar registros locales para evitar dependencias falsas entre instrucciones.")
+        row.addWidget(self.rename_checkbox)
         self.spill_checkbox = QCheckBox("Permitir spilling")
         self.spill_checkbox.setChecked(options.allow_spill)
         self.spill_checkbox.setToolTip("Permitir guardar temporales en memoria si no caben en registros.\n"
                                       "Si se desactiva y hace falta memoria, la compilación indica que debés habilitarlo.")
         row.addWidget(self.spill_checkbox)
+        self.optimization_checkboxes = (self.unroll_checkbox, self.dce_checkbox,
+                                       self.rename_checkbox, self.spill_checkbox)
         self.scheduler_label = QLabel("Scheduler automático")
         self.scheduler_label.setToolTip("Siempre se calendarizan binario, memoria y bundles.\n"
                                         "La salida ASM sola no genera paquetes para el procesador.")
@@ -472,7 +478,9 @@ class MainWindow(QMainWindow):
     def _selected_optimizations(self) -> OptimizationOptions:
         return OptimizationOptions(
             unroll=self.unroll_checkbox.isChecked(),
-            dce=self.dce_checkbox.isChecked(), allow_spill=self.spill_checkbox.isChecked(),
+            dce=self.dce_checkbox.isChecked(),
+            rename=self.rename_checkbox.isChecked(),
+            allow_spill=self.spill_checkbox.isChecked(),
         )
 
     def _optimization_selection_changed(self):
@@ -481,7 +489,7 @@ class MainWindow(QMainWindow):
 
     def _update_optimization_controls(self):
         enabled = not self.compiler.running and self.compile_target.currentData() != "ins"
-        for control in (self.unroll_checkbox, self.dce_checkbox, self.spill_checkbox):
+        for control in self.optimization_checkboxes:
             control.setEnabled(enabled)
         self.scheduler_label.setText("Solo análisis" if self.compile_target.currentData() == "ins" else "Scheduler automático")
 

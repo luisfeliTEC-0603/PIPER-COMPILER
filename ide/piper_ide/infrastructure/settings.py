@@ -18,6 +18,7 @@ def load_optimizations() -> OptimizationOptions:
         return OptimizationOptions(
             unroll=settings.value("compilation/unroll", False, type=bool),
             dce=settings.value("compilation/dce", False, type=bool),
+            rename=settings.value("compilation/rename", False, type=bool),
             allow_spill=settings.value("compilation/spill", True, type=bool),
         )
     except (ValueError, TypeError):
@@ -30,5 +31,5 @@ def save_optimizations(options: OptimizationOptions) -> None:
     settings.remove("compilation/useFactor")
     settings.remove("compilation/factor")
     for key, value in (("unroll", options.unroll), ("dce", options.dce),
-                       ("spill", options.allow_spill)):
+                       ("rename", options.rename), ("spill", options.allow_spill)):
         settings.setValue("compilation/" + key, value)

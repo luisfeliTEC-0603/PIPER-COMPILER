@@ -12,6 +12,7 @@ class OptimizationOptions:
     unroll: bool = False
     dce: bool = False
     allow_spill: bool = True
+    rename: bool = False
 
     @property
     def unroll_argument(self) -> str:
@@ -20,11 +21,16 @@ class OptimizationOptions:
     @property
     def arguments(self) -> tuple[str, ...]:
         args = ("--unroll", self.unroll_argument, "--spill", "on" if self.allow_spill else "off")
-        return (*args, "--dce") if self.dce else args
+        if self.dce:
+            args += ("--dce",)
+        if self.rename:
+            args += ("--rename",)
+        return args
 
     @property
     def description(self) -> str:
         return (f"Unrolling: {self.unroll_argument} · DCE: {'sí' if self.dce else 'no'} · "
+                f"Rename: {'sí' if self.rename else 'no'} · "
                 f"Permitir spilling: {'sí' if self.allow_spill else 'no'} · Scheduler: automático")
 
 
