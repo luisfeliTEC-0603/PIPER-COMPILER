@@ -1,5 +1,11 @@
 ~~ math_ops.rwt: modulo auxiliar con rutinas de nivel superior
 
+routine B32 resta[B32 x] {    
+    create B32 res.
+    res store x - 1.
+    output res.
+}
+
 routine B32 cuadrado[B32 x] {
     create B32 resultado.
     resultado store x * x.

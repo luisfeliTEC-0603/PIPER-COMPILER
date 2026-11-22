@@ -1,6 +1,6 @@
 ~~ main.rwt: programa principal que enlaza con math_ops.rwt
 
-bring cuadrado from "../math_ops.rwt".
+bring cuadrado from "math_ops.rwt".
 
 routine B32 main[] {
     create B32 i.
@@ -10,7 +10,7 @@ routine B32 main[] {
     suma store 0.
 
     loop[i & 1 -> 4 & 1] {
-        val store cuadrado[i].
+        val store resta[2].
         suma store suma + val.
     }
 
