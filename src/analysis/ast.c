@@ -289,6 +289,7 @@ AstNode *ast_new_call(char *routine_name, AstNodeList *arguments,
 
     node->data.call_expression.routine_name = routine_name;
     node->data.call_expression.arguments = arguments;
+    node->data.call_expression.module_target_missing = false;
 
     return node;
 }

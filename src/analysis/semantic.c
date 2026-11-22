@@ -52,6 +52,7 @@ static const char *node_file(const AstNode *n);
  * esperado y loops cuenta los ciclos que contienen la sentencia actual. */
 typedef struct {
     SymbolTable *table;
+    const char *root_source_file;
     ArrayDeclaration *arrays;
     KnownInteger *known;
     InitializedSymbol *initialized;
@@ -232,6 +233,19 @@ static Symbol *lookup(Visitor *v, AstNode *n, const char *name)
               "El identificador '%s' no ha sido declarado en este ámbito.", name);
     else {
         Scope *owner = symbol_scope(v, s);
+        if (owner->is_global && s->symbol_class != SYMBOL_FUNC &&
+            n->source_file && v->root_source_file &&
+            strcmp(n->source_file, v->root_source_file) != 0) {
+            error(v, n, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+                  "Una rutina importada no puede acceder a la variable global '%s'. Pásela como parámetro.", name);
+            return NULL;
+        }
+        if (owner->is_global && n->kind == AST_CALL_EXPRESSION &&
+            n->data.call_expression.module_target_missing) {
+            error(v, n, DIAGNOSTIC_CODE_UNDECLARED_IDENTIFIER,
+                  "La rutina '%s' no está declarada ni importada en este módulo.", name);
+            return NULL;
+        }
         /* Cada rutina tiene su propio r7. Sin un enlace al marco exterior,
          * una rutina anidada no puede acceder a locales de otra rutina. */
         if (s->symbol_class != SYMBOL_FUNC && !owner->is_global &&
@@ -1303,6 +1317,7 @@ int analyze_semantics_with_trace(AstNode *root, SymbolTable *symbol_table,
         error(&v, root, DIAGNOSTIC_CODE_GENERIC, "El AST y la tabla de símbolos son obligatorios.");
         return 0;
     }
+    v.root_source_file = root->source_file;
     v.table = symbol_table_create();
     if (!v.table) { error(&v, root, DIAGNOSTIC_CODE_GENERIC, "No se pudo crear la tabla semántica."); return 0; }
     success(&v, root, "Inicio del análisis: tabla semántica creada en el ámbito global %d.", v.table->global_scope->scope_id);

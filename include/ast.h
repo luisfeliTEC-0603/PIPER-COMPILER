@@ -145,6 +145,8 @@ struct AstNode {
         struct {
             char *routine_name;
             AstNodeList *arguments;
+            /* El cargador no encontró una rutina global visible desde el módulo. */
+            bool module_target_missing;
         } call_expression;
 
         struct {

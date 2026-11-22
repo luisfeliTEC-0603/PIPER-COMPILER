@@ -69,15 +69,15 @@ static const char *base_name(const char *path)
     return slash ? slash + 1 : path;
 }
 
-static void report(const char *file, SourceLocation location, const char *format, ...)
+static void report(const char *file, SourceLocation location, DiagnosticCode code,
+                   const char *format, ...)
 {
     char message[512];
     va_list args;
     va_start(args, format);
     vsnprintf(message, sizeof message, format, args);
     va_end(args);
-    diagnostics_record(DIAGNOSTIC_SEMANTIC, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
-                       location, "%s", message);
+    diagnostics_record(DIAGNOSTIC_SEMANTIC, code, location, "%s", message);
     fprintf(stderr, "%s:%d:%d: error: %s\n", base_name(file),
             location.first_line, location.first_column, message);
 }
@@ -157,6 +157,16 @@ static size_t find_routine(const AstNodeList *list, const char *name)
     return SIZE_MAX;
 }
 
+static const AstNode *find_duplicate_routine(const AstNodeList *list)
+{
+    for (size_t i = 0; i < list->count; i++) {
+        const AstNode *routine = list->items[i];
+        if (is_routine(routine) && find_routine(list, routine_name(routine)) != i)
+            return routine;
+    }
+    return NULL;
+}
+
 static int register_routines(Loader *l, const AstNode *program, const char *path)
 {
     const AstNodeList *list = program->data.program.elements;
@@ -176,9 +186,13 @@ static void release_module(Loader *l, AstNode *module)
 
 /* ------------------------------------------------------- cierre de llamadas */
 
-typedef struct { const AstNodeList *routines; unsigned char *needed; } Closure;
+typedef struct {
+    const AstNodeList *routines;
+    unsigned char *needed;
+    const char *source_file;
+} Closure;
 
-static void mark_node(Closure *c, const AstNode *node);
+static void mark_node(Closure *c, AstNode *node);
 
 static void mark_list(Closure *c, const AstNodeList *list)
 {
@@ -194,7 +208,7 @@ static void mark_routine(Closure *c, size_t index)
 }
 
 /* Recorre los mismos hijos que ast_free; solo las llamadas generan trabajo. */
-static void mark_node(Closure *c, const AstNode *n)
+static void mark_node(Closure *c, AstNode *n)
 {
     if (n == NULL) return;
     switch (n->kind) {
@@ -233,7 +247,11 @@ static void mark_node(Closure *c, const AstNode *n)
         break;
     case AST_CALL_EXPRESSION: {
         size_t index = find_routine(c->routines, n->data.call_expression.routine_name);
-        if (index != SIZE_MAX) mark_routine(c, index);
+        /* Una llamada importada ya se comprobó en su archivo de origen. */
+        if (n->source_file == c->source_file)
+            n->data.call_expression.module_target_missing = index == SIZE_MAX;
+        if (index != SIZE_MAX && !n->data.call_expression.module_target_missing)
+            mark_routine(c, index);
         mark_list(c, n->data.call_expression.arguments);
         break;
     }
@@ -301,7 +319,8 @@ static void report_cycle(const char *self, SourceLocation location,
     while (depth-- > 0 && used < sizeof chain)
         used += (size_t)snprintf(chain + used, sizeof chain - used, "'%s' -> ",
                                  base_name(stack[depth]->path));
-    report(self, location, "importación circular detectada: %s'%s'", chain, base_name(target));
+    report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+           "importación circular detectada: %s'%s'", chain, base_name(target));
 }
 
 /* ----------------------------------------------------------- resolución real */
@@ -324,10 +343,12 @@ static void splice_routine(Loader *l, AstNodeList *old, AstNodeList *out,
         const char *other = origin_get(l, scopes[s]->items[index]);
         if (other == incoming) return;
         if (other == self || other == NULL)
-            report(self, location, "conflicto de nombres: '%s' ya está declarado en '%s' y fue importado desde '%s'",
+            report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+                   "conflicto de nombres: '%s' ya está declarado en '%s' y fue importado desde '%s'",
                    name, base_name(self), base_name(path));
         else
-            report(self, location, "conflicto de nombres: '%s' fue importado tanto desde '%s' como desde '%s'",
+            report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+                   "conflicto de nombres: '%s' fue importado tanto desde '%s' como desde '%s'",
                    name, base_name(other), base_name(path));
         raise_status(l, MODULE_FATAL);
         return;
@@ -355,7 +376,8 @@ static void import_one(Loader *l, AstNodeList *old, AstNodeList *out,
 
     free(found);
     if (!exists) {
-        report(self, location, "no se encontró el archivo '%s'", literal);
+        report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+               "no se encontró el archivo '%s'", literal);
         raise_status(l, MODULE_ERRORS);
         return;
     }
@@ -368,8 +390,18 @@ static void import_one(Loader *l, AstNodeList *old, AstNodeList *out,
         }
     module = parse_module(path, path);
     if (!module) {
-        report(self, location, "no se pudo analizar el módulo '%s'", literal);
+        report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+               "no se pudo analizar el módulo '%s'", literal);
         raise_status(l, MODULE_ERRORS);
+        return;
+    }
+    const AstNode *duplicate = find_duplicate_routine(module->data.program.elements);
+    if (duplicate) {
+        report(self, location, DIAGNOSTIC_CODE_DUPLICATE_DECLARATION,
+               "declaración duplicada de la rutina '%s' en '%s', línea %d",
+               routine_name(duplicate), literal, duplicate->location.first_line);
+        raise_status(l, MODULE_FATAL);
+        ast_free(module);
         return;
     }
     if (!register_routines(l, module, path)) raise_status(l, MODULE_FATAL);
@@ -379,10 +411,11 @@ static void import_one(Loader *l, AstNodeList *old, AstNodeList *out,
     routines = module->data.program.elements;
     target = find_routine(routines, symbol);
     if (target == SIZE_MAX || strcmp(symbol, "main") == 0) {
-        report(self, location, "no se encontró el símbolo '%s' en el archivo '%s'", symbol, literal);
+        report(self, location, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED,
+               "no se encontró el símbolo '%s' en el archivo '%s'", symbol, literal);
         raise_status(l, MODULE_ERRORS);
     } else {
-        Closure closure = {routines, calloc(routines->count, 1)};
+        Closure closure = {routines, calloc(routines->count, 1), path};
         if (!closure.needed) raise_status(l, MODULE_FATAL);
         else {
             mark_routine(&closure, target);
