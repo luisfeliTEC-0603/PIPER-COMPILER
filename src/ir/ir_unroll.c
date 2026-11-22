@@ -158,6 +158,20 @@ fail:
 
 /* ---------- análisis ---------- */
 
+/* Rango representable del control según su tipo. */
+static bool control_range(PiperType t, int64_t *lo, int64_t *hi)
+{
+    switch (t) {
+    case PIPER_TYPE_B8:   *lo = INT8_MIN;  *hi = INT8_MAX;   return true;
+    case PIPER_TYPE_UB8:  *lo = 0;         *hi = UINT8_MAX;  return true;
+    case PIPER_TYPE_B16:  *lo = INT16_MIN; *hi = INT16_MAX;  return true;
+    case PIPER_TYPE_UB16: *lo = 0;         *hi = UINT16_MAX; return true;
+    case PIPER_TYPE_B32:  *lo = INT32_MIN; *hi = INT32_MAX;  return true;
+    case PIPER_TYPE_UB32: *lo = 0;         *hi = UINT32_MAX; return true;
+    default: return false;
+    }
+}
+
 /** @brief Analiza el bloque h como posible header de un loop contado.
  * 
  * @param r Rutina a analizar (prestada).
@@ -356,6 +370,19 @@ static LoopResult analyze(const IrRoutine *r, size_t h, const IrUnrollOptions *o
         goto done;
     }
     L->iterations = (diff + step - 1) / step;
+
+    /* N solo describe el loop original si el contador nunca envuelve:
+     * begin y el último valor escrito por el advance (begin + N*step)
+     * deben caber en el tipo del control. Si no, el original depende de
+     * truncamiento y desenrollar cambiaría su comportamiento. */
+    int64_t lo, hi;
+    if (!control_range(L->control->declared_type, &lo, &hi) ||
+        L->begin < lo || L->begin > hi ||
+        L->iterations * step > (uint64_t)(hi - L->begin)) {
+        *reason = IR_UNROLL_SIZE_LIMIT;
+        goto done;
+    }
+
     if (o->max_iterations && L->iterations > o->max_iterations) {
         *reason = IR_UNROLL_ITERATION_LIMIT;
         goto done;
