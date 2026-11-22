@@ -36,6 +36,7 @@ typedef struct {
     int end_line;
     int end_column;
     int node_count;   /* número de nodos del subárbol (para filtrar ruido) */
+    const char *file_path;
 } CloneLocation;
 
 /** Grupo de fragmentos idénticos. */

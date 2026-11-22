@@ -1,0 +1,5 @@
+bring cuadrado from "math_ops.rwt".
+
+routine B32 main[] {
+    output cuadrado[6].
+}

@@ -138,7 +138,25 @@ class DiagnosticService(QObject):
         process.finished.connect(lambda code, status: self._finished(process, code, status))
         process.errorOccurred.connect(lambda error: self._process_error(process, error))
         timer.timeout.connect(lambda: self._timeout(process))
-        process.start(str(compiler), ["--check", "--diagnostics-json", str(source)])
+
+        args = ["--check", "--diagnostics-json"]
+        # Rutas absolutas: pipoc corre con project_root como carpeta de trabajo,
+        # así que un -I relativo se resolvería contra otra carpeta y no hallaría
+        # los módulos. El temporal no se incluye: ahí solo está buffer.rwt.
+        temp_dir = Path(directory.name).resolve()
+        candidates = []
+        if snapshot.source is not None:
+            candidates.append(snapshot.source.resolve().parent)
+        candidates.append(snapshot.project_root.resolve())
+        search_dirs: list[Path] = []
+        for candidate in candidates:
+            if candidate != temp_dir and candidate not in search_dirs:
+                search_dirs.append(candidate)
+        for inc_dir in search_dirs:
+            args.extend(["-I", str(inc_dir)])
+        # El fuente se agrega UNA sola vez: pipoc exige exactamente uno.
+        args.append(str(source))
+        process.start(str(compiler), args)
         timer.start()
 
     def cancel(self):

@@ -45,6 +45,9 @@ typedef struct CallUsage {
     struct CallUsage *next;
 } CallUsage;
 
+/* Function forwarding */
+static const char *node_file(const AstNode *n);
+
 /* Estado compartido por el recorrido recursivo. function identifica el retorno
  * esperado y loops cuenta los ciclos que contienen la sentencia actual. */
 typedef struct {
@@ -66,9 +69,14 @@ static void error(Visitor *v, AstNode *n, DiagnosticCode code,
                   const char *format, ...)
 {
     va_list args;
+    const char *file = node_file(n);
     v->errors++;
-    fprintf(stderr, "[Error Semántico] Línea %d: ",
-            n ? n->location.first_line : 0);
+    if (file)
+        fprintf(stderr, "[Error Semántico] %s:%d: ",
+                file, n ? n->location.first_line : 0);
+    else
+        fprintf(stderr, "[Error Semántico] Línea %d: ",
+                n ? n->location.first_line : 0);
     va_start(args, format);
     diagnostics_recordv(DIAGNOSTIC_SEMANTIC, code,
                         n ? n->location : source_location_make(0, 0, 0, 0),
@@ -83,9 +91,16 @@ static void error(Visitor *v, AstNode *n, DiagnosticCode code,
 static void success(Visitor *v, AstNode *n, const char *format, ...)
 {
     va_list args;
+    const char *file = node_file(n);
     if (!v->trace_enabled) return;
-    fprintf(stdout, "[Éxito Semántico] Línea %d [ámbito %d]: ",
-            n ? n->location.first_line : 0, v->table->current_scope->scope_id);
+    if (file)
+        fprintf(stdout, "[Éxito Semántico] %s:%d [ámbito %d]: ",
+                file, n ? n->location.first_line : 0,
+                v->table->current_scope->scope_id);
+    else
+        fprintf(stdout, "[Éxito Semántico] Línea %d [ámbito %d]: ",
+                n ? n->location.first_line : 0,
+                v->table->current_scope->scope_id);
     va_start(args, format);
     vfprintf(stdout, format, args);
     va_end(args);
@@ -791,9 +806,10 @@ static DataType visit(Visitor *v, AstNode *n)
             success(v, entry, "Entrada del programa aprobada: rutina global 'main' sin parámetros.");
         break;
     }
-    /* Sin cargar módulos no se puede validar una firma importada. */
     case AST_IMPORT_DECLARATION:
-        error(v, n, DIAGNOSTIC_CODE_IMPORT_UNRESOLVED, "No se puede resolver el import '%s': no hay cargador de módulos.", n->data.import_declaration.symbol);
+            success(v, n, "Importación '%s' desde '%s' ya procesada por el cargador de módulos.",
+                    n->data.import_declaration.symbol,
+                    n->data.import_declaration.file_path);
         break;
     case AST_VARIABLE_DECLARATION: case AST_PARAMETER: declare(v, n); break;
     /* Registrar la función antes del cuerpo permite llamadas recursivas. */
@@ -1326,4 +1342,12 @@ int analyze_semantics_with_trace(AstNode *root, SymbolTable *symbol_table,
 int analyze_semantics(AstNode *root, SymbolTable *symbol_table)
 {
     return analyze_semantics_with_trace(root, symbol_table, 0);
+}
+
+/* Helper: obtiene el nombre del archivo del nodo y lo reporta */
+static const char *node_file(const AstNode *n)
+{
+    if (!n || !n->source_file) return NULL;
+    const char *slash = strrchr(n->source_file, '/');
+    return slash ? slash + 1 : n->source_file;
 }
