@@ -71,6 +71,22 @@ OBJ = build/parser.o \
 
 all: $(TARGET) bin/porygon-schedule
 
+.PHONY: check-rename check-rename-sim
+check-rename-sim: RENAME_TEST_ARGS = --sim
+check-rename check-rename-sim: all build/runs/rename/test_rename build/runs/rename/asm_hazards
+	build/runs/rename/test_rename
+	$(PYTHON) tests/rename/check.py $(RENAME_TEST_ARGS)
+
+build/runs/rename/test_rename: tests/regalloc/regalloc_rename.c build/regalloc/rename.o \
+        build/regalloc/assignment.o build/regalloc/interference_machine.o \
+        build/liveness/liveness.o build/liveness/liveness_machine.o
+	@mkdir -p build/runs/rename
+	$(CC) $(CFLAGS) $^ -o $@
+
+build/runs/rename/asm_hazards: tests/rename/asm_hazards.c $(ASSEMBLER_OBJ)
+	@mkdir -p build/runs/rename
+	$(CC) $(CFLAGS) $^ -o $@
+
 .PHONY: check-codeOPgen check-codeOPgen-sim
 check-codeOPgen: $(TARGET) build/runs/codeOPgen/test_contract
 	build/runs/codeOPgen/test_contract
@@ -93,7 +109,7 @@ check-regalloc-pipeline: build/parser.o build/lexer.o $(ANALYSIS_OBJ) \
                          $(IR_OBJ) build/cfg/cfg.o build/cfg/cfg_validate.o \
                          $(REGALLOC_OBJ) $(LIVENESS_OBJ)
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_pipeline.c $^ \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_pipeline.c $^ \
 	      -o build/runs/regalloc/test_pipeline
 	build/runs/regalloc/test_pipeline
 
@@ -101,7 +117,7 @@ check-regalloc-pipeline: build/parser.o build/lexer.o $(ANALYSIS_OBJ) \
 check-regalloc-machine-graph: build/regalloc/interference_machine.o \
                               build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_machine_graph.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_machine_graph.c \
 	      build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_machine_graph
@@ -112,7 +128,7 @@ check-regalloc-assignment: build/regalloc/assignment.o \
                            build/regalloc/interference_machine.o \
                            build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_assignment.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_assignment.c \
 	      build/regalloc/assignment.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_assignment
@@ -123,7 +139,7 @@ check-regalloc-coloring: build/regalloc/color_machine.o \
                          build/regalloc/interference_machine.o \
                          build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_coloring.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_coloring.c \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
 	      -o build/runs/regalloc/test_coloring
@@ -135,7 +151,7 @@ check-regalloc-lower-symbols: build/regalloc/machine.o build/regalloc/assignment
                               build/regalloc/interference_machine.o \
                               build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_lower_symbols.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_lower_symbols.c \
 	      build/regalloc/machine.o build/regalloc/assignment.o \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
@@ -148,7 +164,7 @@ check-regalloc-lower-calls: build/regalloc/machine.o build/regalloc/assignment.o
                            build/regalloc/interference_machine.o \
                            build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_lower_calls.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_lower_calls.c \
 	      build/regalloc/machine.o build/regalloc/assignment.o \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
@@ -161,7 +177,7 @@ check-regalloc-lower-order: build/regalloc/machine.o build/regalloc/assignment.o
                            build/regalloc/interference_machine.o \
                            build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_lower_order.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_lower_order.c \
 	      build/regalloc/machine.o build/regalloc/assignment.o \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
@@ -174,7 +190,7 @@ check-regalloc-lower-checked: build/regalloc/machine.o build/regalloc/assignment
                              build/regalloc/interference_machine.o \
                              build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_lower_checked.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_lower_checked.c \
 	      build/regalloc/machine.o build/regalloc/assignment.o \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \
@@ -187,7 +203,7 @@ check-regalloc-lower-checked-unary: build/regalloc/machine.o build/regalloc/assi
                                    build/regalloc/interference_machine.o \
                                    build/liveness/liveness.o build/liveness/liveness_machine.o
 	@mkdir -p build/runs/regalloc
-	$(CC) $(CFLAGS) tests/regalloc_lower_checked_unary.c \
+	$(CC) $(CFLAGS) tests/regalloc/regalloc_lower_checked_unary.c \
 	      build/regalloc/machine.o build/regalloc/assignment.o \
 	      build/regalloc/color_machine.o build/regalloc/interference_machine.o \
 	      build/liveness/liveness.o build/liveness/liveness_machine.o \

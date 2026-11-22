@@ -60,6 +60,7 @@ enum {
     OPT_CLONES_RENAMED,
     OPT_UNROLL,
     OPT_DCE,
+    OPT_RENAME,
     OPT_SPILL,
     OPT_EMIT_IR_OPT,
     OPT_EMIT_CFG_OPT,
@@ -114,6 +115,7 @@ typedef struct {
     IrUnrollMode unroll_mode;  /* --unroll */
     size_t unroll_factor;
     int dce;
+    int rename;
     int allow_spill;
     int spill_requested;
 } cli_options_t;
@@ -160,9 +162,10 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-ir <ruta>        Exporta IR original, antes de unroll/DCE\n"
             "  --emit-ir-unroll <ruta> Exporta IR despues de unrolling y antes de DCE\n"
             "  --emit-cfg-original <ruta> Exporta CFG de la IR original\n"
-            "  --emit-regalloc <ruta>  Exporta operaciones asignadas, registros y spills\n"
+            "  --emit-regalloc <ruta>  Exporta operaciones, spills y cambios de registro con --rename\n"
             "  --unroll <N|auto|off>   Desenrolla loops constantes antes de asignar registros y emitir ASM\n"
             "  --dce                   Elimina instrucciones y rutinas innecesarias antes de generar ASM\n"
+            "  --rename                Renombra registros locales para evitar WAR/WAW (defecto off)\n"
             "  --spill <on|off>        Permite spills si faltan registros (defecto on)\n"
             "  --emit-ir-opt <ruta>     Exporta IR tras unroll/DCE\n"
             "  --emit-cfg-opt <ruta>    Exporta CFG tras unroll/DCE\n"
@@ -266,6 +269,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"emit-ir", required_argument, NULL, OPT_EMIT_IR},
         {"unroll", required_argument, NULL, OPT_UNROLL},
         {"dce", no_argument, NULL, OPT_DCE},
+        {"rename", no_argument, NULL, OPT_RENAME},
         {"spill", required_argument, NULL, OPT_SPILL},
         {"emit-ir-opt", required_argument, NULL, OPT_EMIT_IR_OPT},
         {"emit-cfg-opt", required_argument, NULL, OPT_EMIT_CFG_OPT},
@@ -348,6 +352,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
             if (!assign_once(&options->regalloc_output_path, optarg, "--emit-regalloc")) return -1;
             break;
         case OPT_DCE: options->dce = 1; break;
+        case OPT_RENAME: options->rename = 1; break;
         case OPT_SPILL:
             options->spill_requested = 1;
             if (strcmp(optarg, "on") == 0) options->allow_spill = 1;
@@ -413,21 +418,21 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     if ((options->ir_unroll_output_path || options->cfg_original_output_path ||
          options->regalloc_output_path || options->ir_output_path || options->cfg_output_path ||
          options->regalloc_graph_output_path || options->ir_opt_output_path ||
-         options->cfg_opt_output_path || options->dce || options->spill_requested ||
+         options->cfg_opt_output_path || options->dce || options->rename || options->spill_requested ||
          options->unroll_mode != IR_UNROLL_OFF) && (options->check_only || options->clones_min_nodes > 0 ||
         options->asm_input_path || options->binary_input_path || options->ll1 || options->ll1_expected)) {
-        fputs("error: --emit-ir/--emit-cfg/--emit-regalloc-graph requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
+        fputs("error: las opciones de IR, CFG y asignación de registros requieren compilación Piper, sin --check/clones/LL(1)/-x/conversión\n", stderr);
         return -1;
     }
     if (options->command == PIPOC_COMMAND_IR && (options->keep_asm || options->print_packages ||
-        options->regalloc_output_path ||
+        options->regalloc_output_path || options->rename ||
         options->asm_output_path || options->mem_output_path || options->bundles_output_path ||
         options->json_output_path || options->symbols_output_path)) {
         fputs("error: ir solo exporta IR y CFG opcional; use --emit-ir con otro modo para otras salidas\n", stderr);
         return -1;
     }
-    if (options->command == PIPOC_COMMAND_INSPECT && options->regalloc_output_path) {
-        fputs("error: --emit-regalloc requiere generar ASM, binario, memoria o bundles\n", stderr);
+    if (options->command == PIPOC_COMMAND_INSPECT && (options->regalloc_output_path || options->rename)) {
+        fputs("error: --rename y --emit-regalloc requieren generar ASM, binario, memoria o bundles\n", stderr);
         return -1;
     }
     /* La revisión es un modo de frontend aislado: no acepta salidas ni modos
@@ -943,11 +948,11 @@ static int compile_piper(const cli_options_t *options)
         return PIPOC_EXIT_IO_ERROR;
     }
     if (options->verbose) {
-        fprintf(stderr, "[pipoc] Opciones: unroll=%s factor=%zu DCE=%s spilling=%s\n",
+        fprintf(stderr, "[pipoc] Opciones: unroll=%s factor=%zu DCE=%s spilling=%s rename=%s\n",
                 options->unroll_mode == IR_UNROLL_OFF ? "off" :
                 options->unroll_mode == IR_UNROLL_AUTO ? "auto" : "factor",
                 options->unroll_factor, options->dce ? "on" : "off",
-                options->allow_spill ? "on" : "off");
+                options->allow_spill ? "on" : "off", options->rename ? "on" : "off");
         fprintf(stderr, "[pipoc] Fase léxica/sintáctica\n");
     }
     yyrestart(input);
@@ -1186,6 +1191,7 @@ static int compile_piper(const cli_options_t *options)
     RegallocOptions allocation_options = regalloc_default_options();
     RegallocDiagnostic allocation_error;
     allocation_options.allow_spill = options->allow_spill != 0;
+    allocation_options.rename = options->rename != 0;
     if (regalloc_allocate_with_options(regalloc, &allocation_options, &allocation,
                                       &allocation_error) != REGALLOC_OK) {
         fprintf(stderr, "error asignacion, rutina %zu: %s\n",

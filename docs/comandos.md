@@ -44,11 +44,12 @@ Resumen de comandos ejecutables para PIPER-COMPILER
 | 38 | `bin/pipoc programa.rwt --unroll 4` | Desenrolla donde sea valido, con resto; el resultado alimenta asignacion y codeOPgen. | Implementado |
 | 39 | `bin/pipoc programa.rwt --unroll auto` | Selecciona factor mediante heuristica y presupuesto; `--unroll off` omite la pasada. | Implementado |
 | 39a | `bin/pipoc programa.rwt --spill off` | Prohibe derrames; si faltan registros, falla e indica habilitar «Permitir spilling». Por defecto `--spill on`. Las otras optimizaciones siguen independientes. | Implementado |
+| 39b | `bin/pipoc programa.rwt --rename` | Recolorea temporales de un solo bloque después de asignar registros y resolver los spills. Busca eliminar WAR y WAW entre temporales distintos. Está desactivado por defecto y se puede combinar con `--dce`, `--unroll` y `--spill`. | Implementado |
 | 40 | `bin/pipoc programa.rwt --reorder` | Propuesto: selecciona reordenamiento seguro, exigido por el enunciado. El scheduler ya reordena: reutilizarlo no exige reescribir su algoritmo; esta bandera aún no existe. | Pendiente |
 | 41 | `bin/pipoc ir programa.rwt --dce --emit-ir-opt salida.opt.ir` | Exporta la IR activa final tras las pasadas seleccionadas. `--emit-ir` exporta la original, antes de unroll/DCE. Sin pasadas, las dos IR son iguales. | Implementado |
 | 42 | `bin/pipoc ir programa.rwt --dce --emit-cfg-opt salida.opt.dot` | Exporta CFG de las rutinas conservadas con instrucciones optimizadas; la poda reconstruye el CFG y la DCE por liveness conserva bloques y terminadores. | Implementado |
 | 43 | `bin/pipoc ir programa.rwt --dce --emit-opt-report optimizaciones.json` | Exporta conteos IR antes/despues, instrucciones y rutinas eliminadas, y tiempo CPU de ambas pasadas DCE (incluida la reconstruccion de CFG) y de compilacion a IR. El conteo de instrucciones eliminadas incluye los cuerpos de las rutinas eliminadas. Bytes ISA y ciclos del simulador quedan en null hasta implementar su recoleccion; el backend ya consume la IR activa. | Implementado con metricas ISA pendientes |
-| 44 | `bin/pipoc programa.rwt --emit-regalloc registros.txt` | Exporta operaciones de máquina finales, operandos con registro físico, slots/offsets de spilling y ubicaciones fuente/IR. No mide valores ni intervalos dinámicos. Requiere una salida ejecutable o ASM. | Implementado |
+| 44 | `bin/pipoc programa.rwt --emit-regalloc registros.txt` | Exporta operaciones de máquina finales, registros, spills y ubicaciones fuente/IR. Con `--rename` incluye rutina, bloque, temporal, registro anterior, registro nuevo y el total de operaciones afectadas. | Implementado |
 | 45 | `bin/pipoc all programa.rwt --unroll auto --dce --spill on -o build/pruebas/programa.bin` | Reúne el ejecutable con las IR y CFG de cada etapa, interferencias IR, reporte DCE y asignación de registros bajo build/pruebas (crear la carpeta primero). El IDE añade su reporte, log y ZIP. | Implementado |
 | 46 | `make -C ../PORYGON sim PROG=../PIPER-COMPILER/programa.mem MAX_CYCLES=200` | Simula la imagen en PORYGON con límite de 200 ciclos; guarda volcado de memoria, ondas VCD, resultados y logs en `../PORYGON/build/sim/programa/`. | Implementado |
 | 47 | `../PORYGON/tools/sim.sh programa.mem --data datos.mem --max-cycles 1000 --out simulacion --expect r1=14 --expect errors=0` | Simula con memoria inicial y directorio explícitos; verifica el valor de retorno y el contador de errores. | Implementado |
@@ -58,3 +59,18 @@ Resumen de comandos ejecutables para PIPER-COMPILER
 | 51 | `ide/.venv/bin/python -m piper_ide` | Abre el IDE usando el entorno virtual preparado. | Implementado |
 | 52 | `bin/pipoc ir programa.rwt --unroll auto --emit-ir-unroll tras-unrolling.ir` | Captura la IR después de unrolling y antes de DCE, en el mismo recorrido del compilador. | Implementado |
 | 53 | `bin/pipoc ir programa.rwt --emit-cfg-original original.dot` | Exporta el CFG original antes de las pasadas. `--emit-cfg` exporta el CFG después de unrolling y antes de DCE. | Implementado |
+
+## Comparar una asignación con y sin renombramiento
+
+Desde la raíz de Piper podés generar las dos variantes del mismo fuente y seguir sus operandos hasta los bundles.
+
+```bash
+make all
+mkdir -p build/runs/rename/war
+bin/pipoc all tests/rename/war.rwt --unroll off --spill off -o build/runs/rename/war/base.bin
+bin/pipoc all tests/rename/war.rwt --unroll off --spill off --rename -o build/runs/rename/war/rename.bin
+```
+
+Una línea como `[rename] main B0 t2 r1 -> r3` indica que todas las definiciones y lecturas de `t2` pasaron a `r3`. El campo `operaciones_de_maquina_afectadas` cuenta **operaciones virtuales estáticas de la máquina asignada**, después de insertar spills y antes de emitir ASM. Una operación suma uno si cambió cualquiera de sus operandos, aunque cambien dos o el destino sea también lectura. El emisor puede expandir una operación en varias instrucciones físicas u omitir una copia. Los `.bundles` contienen las instrucciones físicas efectivamente emitidas.
+
+`make check-rename` prueba el asignador y compara reporte, ASM, bundles e imagen. `make check-rename-sim` además ejecuta ambas versiones de cuatro programas con el simulador de la carpeta hermana `../PORYGON`. Guarda la comparación en `build/runs/rename/simulacion.tsv` y los `results.txt` e `indicators.json` por caso y variante. [Programas y comprobaciones](../tests/rename)

@@ -1,0 +1,15 @@
+routine B32 digitos[B32 a, B32 b, B32 c, B32 d, B32 e, B32 f] {
+    output a * 100000 + b * 10000 + c * 1000 + d * 100 + e * 10 + f.
+}
+
+routine B32 main[] {
+    create B32 i.
+    create B32 suma.
+    create B32 descartado.
+    descartado store 99.
+    suma store 0.
+    loop [i & 0 -> 4 & 1] {
+        suma store suma + i.
+    }
+    output digitos[1,2,3,4,5,suma].
+}

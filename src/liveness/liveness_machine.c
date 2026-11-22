@@ -80,6 +80,12 @@ static bool instruction_shape(RegallocMachineOp op, MachineShape *shape)
     return false;
 }
 
+bool regalloc_machine_reads_def(RegallocMachineOp op)
+{
+    MachineShape shape;
+    return instruction_shape(op, &shape) && shape.def_is_use;
+}
+
 static LivenessStatus machine_error(LivenessDiagnostic *diagnostic,
                                     LivenessStatus status, size_t routine,
                                     IrId block, const char *message)

@@ -13,6 +13,7 @@ struct RegallocAllocation {
     RegallocAssignedRoutine *routines;
     RegallocRoutineReport *reports;
     RegallocAssignedProgram view;
+    bool rename;
 };
 
 static RegallocStatus allocation_error(RegallocDiagnostic *diagnostic,
@@ -36,8 +37,10 @@ void regalloc_allocation_free(RegallocAllocation *allocation)
             free((void *)allocation->routines[r].register_for_temp);
     free(allocation->routines);
     if (allocation->reports != NULL)
-        for (size_t r = 0; r < allocation->view.routine_count; r++)
+        for (size_t r = 0; r < allocation->view.routine_count; r++) {
             free((void *)allocation->reports[r].spills);
+            free((void *)allocation->reports[r].renames);
+        }
     free(allocation->reports);
     regalloc_machine_program_free(allocation->machine);
     free(allocation);
@@ -47,23 +50,6 @@ const RegallocAssignedProgram *regalloc_allocation_view(
     const RegallocAllocation *allocation)
 {
     return allocation == NULL ? NULL : &allocation->view;
-}
-
-static bool def_is_use(RegallocMachineOp op)
-{
-    switch (op) {
-    case REGALLOC_M_ADD: case REGALLOC_M_SUB: case REGALLOC_M_MUL:
-    case REGALLOC_M_CHECKED_ADD: case REGALLOC_M_CHECKED_SUB:
-    case REGALLOC_M_CHECKED_MUL:
-    case REGALLOC_M_DIV: case REGALLOC_M_MOD: case REGALLOC_M_POW:
-    case REGALLOC_M_ADDI: case REGALLOC_M_SUBI:
-    case REGALLOC_M_AND: case REGALLOC_M_OR: case REGALLOC_M_XOR:
-    case REGALLOC_M_EQ: case REGALLOC_M_LT: case REGALLOC_M_GT:
-    case REGALLOC_M_BOOL_NOT:
-        return true;
-    default:
-        return false;
-    }
 }
 
 static size_t block_index(const RegallocMachineRoutine *routine, IrId id)
@@ -136,7 +122,7 @@ static RegallocStatus spill_costs(const RegallocMachineRoutine *routine,
             if (in->op == REGALLOC_M_STORE_INDIRECT)
                 add_cost(costs, in->use2, weight);
             add_cost(costs, in->def, weight);
-            if (def_is_use(in->op)) add_cost(costs, in->def, weight);
+            if (regalloc_machine_reads_def(in->op)) add_cost(costs, in->def, weight);
         }
     }
     for (IrId t = 0; t < count; t++)
@@ -254,7 +240,7 @@ static RegallocStatus rewrite_spill(RegallocMachineProgram *machine, size_t r,
             bool spilled_use = in.use1 == victim;
             bool spilled_use2 = in.op == REGALLOC_M_STORE_INDIRECT &&
                                 in.use2 == victim;
-            bool old_def = spilled_def && def_is_use(in.op);
+            bool old_def = spilled_def && regalloc_machine_reads_def(in.op);
             IrId def_temp = IR_NO_ID;
             if (old_def) {
                 def_temp = next_temp++;
@@ -322,6 +308,7 @@ RegallocStatus regalloc_allocate_with_options(const RegallocAnalysis *analysis,
                                                   diagnostic);
     if (status != REGALLOC_OK) goto failed;
     result->view.machine = result->machine;
+    result->rename = options->rename;
     result->view.routine_count = result->machine->routine_count;
     result->routines = calloc(result->view.routine_count,
                               sizeof(*result->routines));
@@ -357,22 +344,23 @@ RegallocStatus regalloc_allocate_with_options(const RegallocAnalysis *analysis,
             RegallocMachineGraph *graph = NULL;
             status = regalloc_build_machine_graph(result->machine, live, r,
                                                   &graph, diagnostic);
-            liveness_result_free(live);
-            if (status != REGALLOC_OK) {
-                free(protected);
-                goto failed;
+            if (!options->rename) {
+                liveness_result_free(live);
+                live = NULL;
             }
             uint64_t *costs = NULL;
-            status = spill_costs(routine, protected, &costs, r, diagnostic);
-            if (status != REGALLOC_OK) {
-                regalloc_machine_graph_free(graph);
-                free(protected);
-                goto failed;
-            }
             RegallocColoring *coloring = NULL;
-            status = regalloc_color_machine_graph_costed(graph, costs,
-                                                         &coloring, diagnostic);
+            if (status == REGALLOC_OK)
+                status = spill_costs(routine, protected, &costs, r, diagnostic);
+            if (status == REGALLOC_OK)
+                status = regalloc_color_machine_graph_costed(graph, costs, &coloring, diagnostic);
+            if (status == REGALLOC_OK && options->rename && coloring->uncolored_count == 0 &&
+                !regalloc_rename_locals(routine, live, graph, coloring->colors, &result->reports[r]))
+                status = allocation_error(diagnostic, REGALLOC_OUT_OF_MEMORY, r, IR_NO_ID,
+                                          "Sin memoria para renombrar registros.");
+            liveness_result_free(live);
             if (status != REGALLOC_OK) {
+                regalloc_coloring_free(coloring);
                 free(costs);
                 regalloc_machine_graph_free(graph);
                 free(protected);
@@ -464,7 +452,7 @@ failed:
 
 RegallocOptions regalloc_default_options(void)
 {
-    return (RegallocOptions){.allow_spill = true};
+    return (RegallocOptions){.allow_spill = true, .rename = false};
 }
 
 RegallocStatus regalloc_allocate(const RegallocAnalysis *analysis,
@@ -486,6 +474,7 @@ RegallocStatus regalloc_allocation_write_report(FILE *output,
                                                const RegallocAllocation *allocation)
 {
     if (output == NULL || allocation == NULL) return REGALLOC_INVALID_INPUT;
+    size_t total_renames = 0, total_affected = 0;
     for (size_t r = 0; r < allocation->view.routine_count; r++) {
         const RegallocRoutineReport *report = &allocation->reports[r];
         const RegallocMachineRoutine *routine = &allocation->machine->routines[r];
@@ -508,6 +497,18 @@ RegallocStatus regalloc_allocation_write_report(FILE *output,
                         in->slot, in->origin_instruction, in->location.first_line,
                         in->location.first_column);
             }
+        const Symbol *function = allocation->machine->source->routines[routine->ir_routine].symbol;
+        for (size_t n = 0; n < report->rename_count; n++) {
+            const RegallocRename *change = &report->renames[n];
+            fprintf(output, "[rename] %s B%zu t%zu r%u -> r%u\n",
+                    function ? function->name : "<startup>", change->block, change->temp,
+                    change->old_register, change->new_register);
+        }
+        total_renames += report->rename_count;
+        total_affected += report->affected_operations;
     }
+    if (allocation->rename)
+        fprintf(output, "[rename] temporales=%zu operaciones_de_maquina_afectadas=%zu\n",
+                total_renames, total_affected);
     return ferror(output) ? REGALLOC_IO_ERROR : REGALLOC_OK;
 }

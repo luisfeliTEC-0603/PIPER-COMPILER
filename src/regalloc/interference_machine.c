@@ -44,6 +44,16 @@ bool regalloc_machine_graph_has_edge(const RegallocMachineGraph *graph,
             (UINT64_C(1) << (b % GRAPH_WORD_BITS))) != 0;
 }
 
+unsigned regalloc_available_colors(const RegallocMachineGraph *graph,
+                                   IrId temp, const uint8_t *colors)
+{
+    unsigned allowed = REGALLOC_COLOR_MASK & ~graph->forbidden_colors[temp];
+    for (IrId other = 0; other < graph->temp_count; other++)
+        if (colors[other] != 0 && regalloc_machine_graph_has_edge(graph, temp, other))
+            allowed &= ~(1u << colors[other]);
+    return allowed;
+}
+
 /* Los IDs ya son validos por el contrato de liveness de maquina. */
 static void add_edge(RegallocMachineGraph *graph, IrId a, IrId b)
 {

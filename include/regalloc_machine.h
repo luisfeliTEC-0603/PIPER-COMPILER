@@ -83,6 +83,9 @@ typedef enum {
     REGALLOC_M_RETURN        /**< Retorno; lee r1 si hay valor. */
 } RegallocMachineOp;
 
+/** Mismo uso implicito de def que analiza liveness en una operacion de dos direcciones. */
+bool regalloc_machine_reads_def(RegallocMachineOp op);
+
 /** IR_NO_ID significa que no hay def/use1. use2 solo se interpreta para
  * STORE_INDIRECT: la direccion y el valor han de estar vivos simultaneamente.
  * En una operacion de dos direcciones
@@ -206,6 +209,9 @@ RegallocStatus regalloc_build_machine_graph(const RegallocMachineProgram *machin
                                            RegallocDiagnostic *diagnostic);
 bool regalloc_machine_graph_has_edge(const RegallocMachineGraph *graph,
                                     IrId a, IrId b);
+/** Colores permitidos por los registros fijos y los vecinos ya coloreados. */
+unsigned regalloc_available_colors(const RegallocMachineGraph *graph,
+                                   IrId temp, const uint8_t *colors);
 void regalloc_machine_graph_free(RegallocMachineGraph *graph);
 
 /** Una entrada por temporal, en el orden en que se retira del grafo activo.
@@ -283,6 +289,7 @@ typedef struct RegallocAllocation RegallocAllocation;
 
 typedef struct {
     bool allow_spill; /**< false: falla si el coloreo deja valores sin registro. */
+    bool rename;      /**< Recoloreo local posterior al ultimo spill. Por defecto false. */
 } RegallocOptions;
 
 RegallocOptions regalloc_default_options(void);
@@ -293,12 +300,27 @@ typedef struct {
     size_t slot;
 } RegallocSpill;
 
+typedef struct {
+    IrId block, temp;
+    uint8_t old_register, new_register;
+} RegallocRename;
+
 /** Conteos estaticos de la maquina final; no son accesos dinamicos por ciclo.
  * spills se presta desde la asignacion y vive hasta allocation_free. */
 typedef struct {
     size_t spilled_temporaries, spill_slots, spill_loads, spill_stores, frame_bytes;
     const RegallocSpill *spills;
+    size_t rename_count, affected_operations;
+    const RegallocRename *renames; /**< Prestado, igual que spills. */
 } RegallocRoutineReport;
+
+/** Requiere el coloreo completo y liveness del mismo grafo, con los campos de
+ * renombramiento del reporte en cero. Actualiza el mapa y registra los cambios
+ * frente a la entrada. El llamador libera report->renames. Si falla una reserva
+ * devuelve false y conserva el mapa original. */
+bool regalloc_rename_locals(const RegallocMachineRoutine *routine,
+                            const LivenessResult *live, const RegallocMachineGraph *graph,
+                            uint8_t *colors, RegallocRoutineReport *report);
 
 const RegallocRoutineReport *regalloc_allocation_routine_report(
     const RegallocAllocation *allocation, size_t routine);

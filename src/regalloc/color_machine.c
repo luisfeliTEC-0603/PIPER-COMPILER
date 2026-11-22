@@ -114,11 +114,7 @@ RegallocStatus regalloc_color_machine_graph_costed(
 
     for (size_t top = count; top != 0; top--) {
         size_t t = result->steps[top - 1].temp;
-        unsigned allowed = REGALLOC_COLOR_MASK & ~graph->forbidden_colors[t];
-        for (size_t neighbor = 0; neighbor < count; neighbor++)
-            if (result->colors[neighbor] != 0 &&
-                regalloc_machine_graph_has_edge(graph, t, neighbor))
-                allowed &= ~(1u << result->colors[neighbor]);
+        unsigned allowed = regalloc_available_colors(graph, t, result->colors);
         for (unsigned c = 1; c <= REGALLOC_COLOR_COUNT; c++)
             if ((allowed & (1u << c)) != 0) {
                 result->colors[t] = (uint8_t)c;
