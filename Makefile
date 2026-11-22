@@ -80,6 +80,10 @@ check-codeOPgen-sim: $(TARGET) build/runs/codeOPgen/test_contract
 	build/runs/codeOPgen/test_contract
 	bash tests/codeOPgen/check.sh --sim
 
+.PHONY: check-import
+check-import: $(TARGET)
+	bash tests/import/check.sh
+
 build/runs/codeOPgen/test_contract: tests/codeOPgen/test_contract.c $(filter-out build/main.o,$(OBJ))
 	@mkdir -p build/runs/codeOPgen
 	$(CC) $(CFLAGS) $^ -o $@
@@ -235,7 +239,7 @@ build/lexer.o: build/lexer.c build/parser.h include/ast.h include/diagnostic.h
 
 # --- main.c: orquestador. Depende de todos los headers públicos de etapa. ----
 build/main.o: src/main.c \
-              include/ast.h include/symbol_table.h include/semantic.h \
+              include/ast.h include/symbol_table.h include/semantic.h include/module_loader.h \
               include/codeOPgen.h include/regalloc_machine.h include/ir_unroll.h \
               include/ast_to_json.h include/diagnostic.h include/ir.h include/cfg.h include/regalloc.h src/dce/dce.h \
               src/assembler/asm_program_parser.h \
@@ -274,6 +278,8 @@ build/analysis/ll1/%.o: src/analysis/ll1/%.c \
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/analysis/ll1/grammar.o: $(LL1_GENERATED_DATA)
+
+build/analysis/module_loader.o: build/parser.h
 
 build/analysis/%.o: src/analysis/%.c $(wildcard include/*.h)
 	@mkdir -p build/analysis

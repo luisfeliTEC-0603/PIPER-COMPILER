@@ -993,15 +993,13 @@ static int compile_piper(const cli_options_t *options)
     mod_status = module_resolve_imports(
         ast, options->source_path, options->include_dirs,
         options->include_dir_count, &sources);
-    if (mod_status == MODULE_FATAL) {
-        source_map_free(sources);
-        goto done;
-    }
+    if (mod_status == MODULE_FATAL) goto done;
     if (options->verbose) fprintf(stderr, "[pipoc] Fase semántica\n");
     if (!analyze_semantics_with_trace(ast, symbols, 0)) {
         fputs("error: la verificación semántica falló\n", stderr);
         goto done;
     }
+    if (mod_status != MODULE_OK) goto done;
     if (options->clones_min_nodes > 0) {
         CloneMode mode = options->clones_mode == 0 ? CLONE_MODE_EXACT
                                                    : CLONE_MODE_RENAMED;
