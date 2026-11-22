@@ -28,6 +28,7 @@ static AstNode *ast_node_create(AstKind kind, SourceLocation location)
     node->element_type = TYPE_VOID;
     node->array_rank = 0;
     node->array_rows = node->array_cols = 0;
+    node->source_file = NULL;
 
     return node;
 }
@@ -1358,4 +1359,95 @@ DataType ast_node_inferred_type(const AstNode *node)
 {
     assert(node != NULL);
     return node->inferred_type;
+}
+
+/* Funcion auxiliar para la asignacion de archivo fuente a un nodo especifico y sus hijos */
+void ast_set_source_file(AstNode *root, const char *file_path)
+{
+    if (root == NULL) return;
+    root->source_file = file_path;
+
+    switch (root->kind) {
+    case AST_PROGRAM:
+        if (root->data.program.elements) {
+            for (size_t i = 0; i < root->data.program.elements->count; i++)
+                ast_set_source_file(root->data.program.elements->items[i], file_path);
+        }
+        break;
+    case AST_ROUTINE_DECLARATION:
+        if (root->data.routine_declaration.parameters) {
+            for (size_t i = 0; i < root->data.routine_declaration.parameters->count; i++)
+                ast_set_source_file(root->data.routine_declaration.parameters->items[i], file_path);
+        }
+        ast_set_source_file(root->data.routine_declaration.body, file_path);
+        break;
+    case AST_BLOCK:
+        if (root->data.block.statements) {
+            for (size_t i = 0; i < root->data.block.statements->count; i++)
+                ast_set_source_file(root->data.block.statements->items[i], file_path);
+        }
+        break;
+    case AST_VARIABLE_DECLARATION:
+        if (root->data.variable_declaration.dimensions) {
+            for (size_t i = 0; i < root->data.variable_declaration.dimensions->count; i++)
+                ast_set_source_file(root->data.variable_declaration.dimensions->items[i], file_path);
+        }
+        break;
+    case AST_PARAMETER:
+        if (root->data.parameter.dimensions) {
+            for (size_t i = 0; i < root->data.parameter.dimensions->count; i++)
+                ast_set_source_file(root->data.parameter.dimensions->items[i], file_path);
+        }
+        break;
+    case AST_OUTPUT_STATEMENT:
+        ast_set_source_file(root->data.output_statement.value, file_path);
+        break;
+    case AST_CALL_EXPRESSION:
+        if (root->data.call_expression.arguments) {
+            for (size_t i = 0; i < root->data.call_expression.arguments->count; i++)
+                ast_set_source_file(root->data.call_expression.arguments->items[i], file_path);
+        }
+        break;
+    case AST_ARRAY_LITERAL:
+        if (root->data.array_literal.elements) {
+            for (size_t i = 0; i < root->data.array_literal.elements->count; i++)
+                ast_set_source_file(root->data.array_literal.elements->items[i], file_path);
+        }
+        break;
+    case AST_INDEX_EXPRESSION:
+        ast_set_source_file(root->data.index_expression.base, file_path);
+        if (root->data.index_expression.indices) {
+            for (size_t i = 0; i < root->data.index_expression.indices->count; i++)
+                ast_set_source_file(root->data.index_expression.indices->items[i], file_path);
+        }
+        break;
+    case AST_UNARY_EXPRESSION:
+        ast_set_source_file(root->data.unary_expression.operand, file_path);
+        break;
+    case AST_BINARY_EXPRESSION:
+        ast_set_source_file(root->data.binary_expression.left, file_path);
+        ast_set_source_file(root->data.binary_expression.right, file_path);
+        break;
+    case AST_ASSIGNMENT:
+        ast_set_source_file(root->data.assignment.target, file_path);
+        ast_set_source_file(root->data.assignment.value, file_path);
+        break;
+    case AST_WHEN_STATEMENT:
+        ast_set_source_file(root->data.when_statement.condition, file_path);
+        ast_set_source_file(root->data.when_statement.then_block, file_path);
+        ast_set_source_file(root->data.when_statement.fallback_block, file_path);
+        break;
+    case AST_ALWHEN_STATEMENT:
+        ast_set_source_file(root->data.alwhen_statement.condition, file_path);
+        ast_set_source_file(root->data.alwhen_statement.body, file_path);
+        break;
+    case AST_LOOP_STATEMENT:
+        ast_set_source_file(root->data.loop_statement.begin, file_path);
+        ast_set_source_file(root->data.loop_statement.end, file_path);
+        ast_set_source_file(root->data.loop_statement.step, file_path);
+        ast_set_source_file(root->data.loop_statement.body, file_path);
+        break;
+    default:
+        break;
+    }
 }

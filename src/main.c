@@ -16,6 +16,7 @@
 #include "assembler/asm_program_parser.h"   // antes "porygon_assembler/..."
 #include "scheduler/scheduler.h"            // antes "scheduler/..." (sin prefijo)
 #include "emit/binary_format.h"             // antes "binary_format.h" desde include/
+#include "module_loader.h"
 #include "semantic.h"
 #include "clone_detector.h"
 #include "diagnostic.h"
@@ -116,6 +117,8 @@ typedef struct {
     int dce;
     int allow_spill;
     int spill_requested;
+    const char **include_dirs;
+    size_t include_dir_count;
 } cli_options_t;
 
 typedef porygon_schedule_result_t (*schedule_writer_t)(
@@ -150,6 +153,7 @@ static void print_usage(FILE *output, const char *program)
             "  -t                      Imprime el AST legible\n"
             "  -m                      Imprime símbolos y distribución de memoria\n"
             "  -x <entrada.asm>        Ensambla directamente, sin frontend Piper\n"
+            "  -I, --include <dir>     Agrega directorio de búsqueda para importaciones\n"
             "  -p                      Imprime paquetes numéricos y mnemónicos\n"
             "  --ast-json <ruta>       Exporta el AST como JSON\n"
             "  --emit-asm <ruta>       Conserva el ASM en la ruta indicada\n"
@@ -254,6 +258,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"ast", no_argument, NULL, 't'},
         {"symbols", no_argument, NULL, 'm'},
         {"assemble", required_argument, NULL, 'x'},
+        {"include", required_argument, NULL, 'I'},
         {"packages", no_argument, NULL, 'p'},
         {"ast-json", required_argument, NULL, OPT_AST_JSON},
         {"emit-mem", required_argument, NULL, OPT_EMIT_MEM},
@@ -289,7 +294,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     has_command = argc > 1 && parse_command(argv[1], &options->command);
     opterr = 0;
     optind = has_command ? 2 : 1;
-    while ((opt = getopt_long(argc, argv, "o:svtmx:ph", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "o:svtmx:I:ph", long_options, NULL)) != -1) {
         switch (opt) {
         case 'o':
             if (!assign_once(&options->binary_output_path, optarg, "-o")) return -1;
@@ -302,6 +307,14 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         case 'x':
             if (!assign_once(&options->asm_input_path, optarg, "-x")) return -1;
             break;
+        case 'I': {
+            const char **resized = realloc(options->include_dirs,
+                (options->include_dir_count + 1) * sizeof(*options->include_dirs));
+            if (!resized) return -1;
+            options->include_dirs = resized;
+            options->include_dirs[options->include_dir_count++] = optarg;
+            break;
+        }
         case OPT_AST_JSON:
             if (!assign_once(&options->json_output_path, optarg, "--ast-json")) return -1;
             break;
@@ -936,6 +949,9 @@ static int compile_piper(const cli_options_t *options)
     int parse_status;
     int exit_status = PIPOC_EXIT_COMPILE_ERROR;
 
+    SourceMap *sources = NULL;
+    ModuleStatus mod_status = MODULE_OK;
+
     input = fopen(options->source_path, "rb");
     if (input == NULL) {
         fprintf(stderr, "error: no se pudo abrir '%s': %s\n",
@@ -970,6 +986,15 @@ static int compile_piper(const cli_options_t *options)
     input = NULL;
     if (parse_status != 0 || ast == NULL) {
         if (parse_status == 0) fputs("error interno: el parser no produjo un AST\n", stderr);
+        goto done;
+    }
+    ast_set_source_file(ast, options->source_path);
+    if (options->verbose) fprintf(stderr, "[pipoc] Resolución de módulos\n");
+    mod_status = module_resolve_imports(
+        ast, options->source_path, options->include_dirs,
+        options->include_dir_count, &sources);
+    if (mod_status == MODULE_FATAL) {
+        source_map_free(sources);
         goto done;
     }
     if (options->verbose) fprintf(stderr, "[pipoc] Fase semántica\n");
@@ -1274,6 +1299,7 @@ done:
     ir_program_free(ir_opt);
     ir_program_free(ir);
     ast_free(ast);
+    source_map_free(sources);
     symbol_table_destroy(symbols);
     return exit_status;
 }
@@ -1316,6 +1342,7 @@ int main(int argc, char **argv)
     int exit_status;
     if (parsed == 0) return PIPOC_EXIT_SUCCESS;
     if (parsed < 0) {
+        free((void *)options.include_dirs);        
         print_usage(stderr, argv[0]);
         return PIPOC_EXIT_USAGE;
     }
@@ -1342,6 +1369,7 @@ int main(int argc, char **argv)
             if (has_diagnostics) exit_status = PIPOC_EXIT_COMPILE_ERROR;
         }
         diagnostics_end();
+        free((void *)options.include_dirs);
         return exit_status;
     }
     if (options.ll1) {
@@ -1540,5 +1568,6 @@ int main(int argc, char **argv)
 cleanup:
     for (size_t index = 0; index < sizeof(owned_paths) / sizeof(owned_paths[0]); ++index)
         free(owned_paths[index]);
+    free((void *)options.include_dirs);
     return exit_status;
 }

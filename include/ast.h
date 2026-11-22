@@ -100,6 +100,11 @@ struct AstNode {
     int array_rank;
     int array_rows, array_cols;
 
+    /* Inlcusion de atributo de archivo fuente 
+     * para correcta identificacion de origen durante 
+     * importacion de modulos externos... */
+    const char *source_file;
+
     union {
         struct {
             AstNodeList *elements;
@@ -199,6 +204,8 @@ struct AstNode {
         } loop_statement;
     } data;
 };
+
+void ast_set_source_file(AstNode *root, const char *file_path);
 
 /* -------------------------------------------------------------------------
  * Ubicaciones

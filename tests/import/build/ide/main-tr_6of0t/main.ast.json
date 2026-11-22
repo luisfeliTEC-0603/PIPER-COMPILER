@@ -1,0 +1,293 @@
+{
+  "kind": "Program",
+  "location": {"first_line": 1, "first_column": 1, "last_line": 22, "last_column": 2},
+  "resolved_symbol": null,
+  "elements": [
+        {
+      "kind": "RoutineDeclaration",
+      "location": {"first_line": 3, "first_column": 1, "last_line": 7, "last_column": 2},
+      "resolved_symbol": {"name": "cuadrado", "type": "B32", "declaration_line": 3},
+      "return_type": "B32",
+      "name": "cuadrado",
+      "parameters": [
+                {
+          "kind": "Parameter",
+          "location": {"first_line": 3, "first_column": 22, "last_line": 3, "last_column": 27},
+          "resolved_symbol": {"name": "x", "type": "B32", "declaration_line": 3},
+          "type": "B32",
+          "name": "x",
+          "dimensions": []
+        }
+      ],
+      "body":       {
+        "kind": "Block",
+        "location": {"first_line": 3, "first_column": 29, "last_line": 7, "last_column": 2},
+        "resolved_symbol": null,
+        "statements": [
+                    {
+            "kind": "VariableDeclaration",
+            "location": {"first_line": 4, "first_column": 5, "last_line": 4, "last_column": 25},
+            "resolved_symbol": {"name": "resultado", "type": "B32", "declaration_line": 4},
+            "type": "B32",
+            "name": "resultado",
+            "dimensions": []
+          },
+                    {
+            "kind": "Assignment",
+            "location": {"first_line": 5, "first_column": 5, "last_line": 5, "last_column": 26},
+            "resolved_symbol": null,
+            "target":             {
+              "kind": "IdentifierExpression",
+              "location": {"first_line": 5, "first_column": 5, "last_line": 5, "last_column": 14},
+              "resolved_symbol": {"name": "resultado", "type": "B32", "declaration_line": 4},
+              "name": "resultado"
+            },
+            "value":             {
+              "kind": "BinaryExpression",
+              "location": {"first_line": 5, "first_column": 21, "last_line": 5, "last_column": 26},
+              "resolved_symbol": null,
+              "operator": "multiply",
+              "left":               {
+                "kind": "IdentifierExpression",
+                "location": {"first_line": 5, "first_column": 21, "last_line": 5, "last_column": 22},
+                "resolved_symbol": {"name": "x", "type": "B32", "declaration_line": 3},
+                "name": "x"
+              },
+              "right":               {
+                "kind": "IdentifierExpression",
+                "location": {"first_line": 5, "first_column": 25, "last_line": 5, "last_column": 26},
+                "resolved_symbol": {"name": "x", "type": "B32", "declaration_line": 3},
+                "name": "x"
+              }
+
+            }
+
+          },
+                    {
+            "kind": "OutputStatement",
+            "location": {"first_line": 6, "first_column": 5, "last_line": 6, "last_column": 21},
+            "resolved_symbol": null,
+            "value":             {
+              "kind": "IdentifierExpression",
+              "location": {"first_line": 6, "first_column": 12, "last_line": 6, "last_column": 21},
+              "resolved_symbol": {"name": "resultado", "type": "B32", "declaration_line": 4},
+              "name": "resultado"
+            }
+
+          }
+        ]
+      }
+
+    },
+        {
+      "kind": "RoutineDeclaration",
+      "location": {"first_line": 5, "first_column": 1, "last_line": 22, "last_column": 2},
+      "resolved_symbol": {"name": "main", "type": "B32", "declaration_line": 5},
+      "return_type": "B32",
+      "name": "main",
+      "parameters": [],
+      "body":       {
+        "kind": "Block",
+        "location": {"first_line": 5, "first_column": 20, "last_line": 22, "last_column": 2},
+        "resolved_symbol": null,
+        "statements": [
+                    {
+            "kind": "VariableDeclaration",
+            "location": {"first_line": 6, "first_column": 5, "last_line": 6, "last_column": 17},
+            "resolved_symbol": {"name": "i", "type": "B32", "declaration_line": 6},
+            "type": "B32",
+            "name": "i",
+            "dimensions": []
+          },
+                    {
+            "kind": "VariableDeclaration",
+            "location": {"first_line": 7, "first_column": 5, "last_line": 7, "last_column": 20},
+            "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+            "type": "B32",
+            "name": "suma",
+            "dimensions": []
+          },
+                    {
+            "kind": "VariableDeclaration",
+            "location": {"first_line": 8, "first_column": 5, "last_line": 8, "last_column": 19},
+            "resolved_symbol": {"name": "val", "type": "B32", "declaration_line": 8},
+            "type": "B32",
+            "name": "val",
+            "dimensions": []
+          },
+                    {
+            "kind": "Assignment",
+            "location": {"first_line": 10, "first_column": 5, "last_line": 10, "last_column": 17},
+            "resolved_symbol": null,
+            "target":             {
+              "kind": "IdentifierExpression",
+              "location": {"first_line": 10, "first_column": 5, "last_line": 10, "last_column": 9},
+              "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+              "name": "suma"
+            },
+            "value":             {
+              "kind": "IntegerLiteral",
+              "location": {"first_line": 10, "first_column": 16, "last_line": 10, "last_column": 17},
+              "resolved_symbol": null,
+              "value": 0
+            }
+
+          },
+                    {
+            "kind": "LoopStatement",
+            "location": {"first_line": 12, "first_column": 5, "last_line": 15, "last_column": 6},
+            "resolved_symbol": {"name": "i", "type": "B32", "declaration_line": 6},
+            "control_name": "i",
+            "begin":             {
+              "kind": "IntegerLiteral",
+              "location": {"first_line": 12, "first_column": 14, "last_line": 12, "last_column": 15},
+              "resolved_symbol": null,
+              "value": 1
+            },
+            "end":             {
+              "kind": "IntegerLiteral",
+              "location": {"first_line": 12, "first_column": 19, "last_line": 12, "last_column": 20},
+              "resolved_symbol": null,
+              "value": 4
+            },
+            "step":             {
+              "kind": "IntegerLiteral",
+              "location": {"first_line": 12, "first_column": 23, "last_line": 12, "last_column": 24},
+              "resolved_symbol": null,
+              "value": 1
+            },
+            "body":             {
+              "kind": "Block",
+              "location": {"first_line": 12, "first_column": 26, "last_line": 15, "last_column": 6},
+              "resolved_symbol": null,
+              "statements": [
+                                {
+                  "kind": "Assignment",
+                  "location": {"first_line": 13, "first_column": 9, "last_line": 13, "last_column": 30},
+                  "resolved_symbol": null,
+                  "target":                   {
+                    "kind": "IdentifierExpression",
+                    "location": {"first_line": 13, "first_column": 9, "last_line": 13, "last_column": 12},
+                    "resolved_symbol": {"name": "val", "type": "B32", "declaration_line": 8},
+                    "name": "val"
+                  },
+                  "value":                   {
+                    "kind": "CallExpression",
+                    "location": {"first_line": 13, "first_column": 19, "last_line": 13, "last_column": 30},
+                    "resolved_symbol": {"name": "cuadrado", "type": "B32", "declaration_line": 3},
+                    "routine_name": "cuadrado",
+                    "arguments": [
+                                            {
+                        "kind": "IdentifierExpression",
+                        "location": {"first_line": 13, "first_column": 28, "last_line": 13, "last_column": 29},
+                        "resolved_symbol": {"name": "i", "type": "B32", "declaration_line": 6},
+                        "name": "i"
+                      }
+                    ]
+                  }
+
+                },
+                                {
+                  "kind": "Assignment",
+                  "location": {"first_line": 14, "first_column": 9, "last_line": 14, "last_column": 30},
+                  "resolved_symbol": null,
+                  "target":                   {
+                    "kind": "IdentifierExpression",
+                    "location": {"first_line": 14, "first_column": 9, "last_line": 14, "last_column": 13},
+                    "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+                    "name": "suma"
+                  },
+                  "value":                   {
+                    "kind": "BinaryExpression",
+                    "location": {"first_line": 14, "first_column": 20, "last_line": 14, "last_column": 30},
+                    "resolved_symbol": null,
+                    "operator": "add",
+                    "left":                     {
+                      "kind": "IdentifierExpression",
+                      "location": {"first_line": 14, "first_column": 20, "last_line": 14, "last_column": 24},
+                      "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+                      "name": "suma"
+                    },
+                    "right":                     {
+                      "kind": "IdentifierExpression",
+                      "location": {"first_line": 14, "first_column": 27, "last_line": 14, "last_column": 30},
+                      "resolved_symbol": {"name": "val", "type": "B32", "declaration_line": 8},
+                      "name": "val"
+                    }
+
+                  }
+
+                }
+              ]
+            }
+
+          },
+                    {
+            "kind": "WhenStatement",
+            "location": {"first_line": 17, "first_column": 5, "last_line": 21, "last_column": 6},
+            "resolved_symbol": null,
+            "condition":             {
+              "kind": "BinaryExpression",
+              "location": {"first_line": 17, "first_column": 11, "last_line": 17, "last_column": 20},
+              "resolved_symbol": null,
+              "operator": "greater",
+              "left":               {
+                "kind": "IdentifierExpression",
+                "location": {"first_line": 17, "first_column": 11, "last_line": 17, "last_column": 15},
+                "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+                "name": "suma"
+              },
+              "right":               {
+                "kind": "IntegerLiteral",
+                "location": {"first_line": 17, "first_column": 18, "last_line": 17, "last_column": 20},
+                "resolved_symbol": null,
+                "value": 10
+              }
+
+            },
+            "then_block":             {
+              "kind": "Block",
+              "location": {"first_line": 17, "first_column": 22, "last_line": 19, "last_column": 6},
+              "resolved_symbol": null,
+              "statements": [
+                                {
+                  "kind": "OutputStatement",
+                  "location": {"first_line": 18, "first_column": 9, "last_line": 18, "last_column": 20},
+                  "resolved_symbol": null,
+                  "value":                   {
+                    "kind": "IdentifierExpression",
+                    "location": {"first_line": 18, "first_column": 16, "last_line": 18, "last_column": 20},
+                    "resolved_symbol": {"name": "suma", "type": "B32", "declaration_line": 7},
+                    "name": "suma"
+                  }
+
+                }
+              ]
+            },
+            "fallback_block":             {
+              "kind": "Block",
+              "location": {"first_line": 19, "first_column": 16, "last_line": 21, "last_column": 6},
+              "resolved_symbol": null,
+              "statements": [
+                                {
+                  "kind": "OutputStatement",
+                  "location": {"first_line": 20, "first_column": 9, "last_line": 20, "last_column": 17},
+                  "resolved_symbol": null,
+                  "value":                   {
+                    "kind": "IntegerLiteral",
+                    "location": {"first_line": 20, "first_column": 16, "last_line": 20, "last_column": 17},
+                    "resolved_symbol": null,
+                    "value": 0
+                  }
+
+                }
+              ]
+            }
+
+          }
+        ]
+      }
+
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+
+================================ Tabla de simbolos ================================
+
+Scope 5 (local, base r7)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+
+Scope 4 (local, base r7)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+
+Scope 3 (local, base r7)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+
+Scope 2 (local, base r7)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+  val                var        B32              4     r7 + 0x0008             
+  suma               var        B32              4     r7 + 0x0004             
+  i                  var        B32              4     r7 + 0x0000             
+
+Scope 1 (local, base r7)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+  resultado          var        B32              4     r7 + 0x0004             
+  x                  param      B32              4     r7 + 0x0000             
+
+Scope 0 (global)
+  nombre             clase      tipo             bytes mem_dir
+  ------------------ ---------- ---------------- ----- ------------------------
+  main               func       B32              0     etiqueta main                
+  cuadrado           func       B32              0     etiqueta cuadrado            
+
+Base física de datos: 0x00010000
+Siguiente global: offset 0x0000 / física 0x00010000
+===================================================================================

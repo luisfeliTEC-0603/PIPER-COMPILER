@@ -1,0 +1,83 @@
+{
+  "producer": "Piper IDE (mensajes reales de pipoc -v)",
+  "source": "/home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/main.rwt",
+  "command": "/home/void/Proyects/P2026S2/PIPER-COMPILER/bin/pipoc all -o /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.bin --ast-json /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.ast.json --emit-symbols /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.symbols.txt --emit-asm /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.asm --emit-bundles /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.bundles --emit-mem /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.mem --emit-ir /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.ir --emit-ir-opt /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.opt.ir --emit-ir-unroll /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.unroll.ir --emit-cfg-original /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.original.dot --emit-cfg /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.unroll.dot --emit-cfg-opt /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.opt.dot --emit-regalloc-graph /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.interference.dot --emit-regalloc /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.regalloc.txt --emit-opt-report /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/build/ide/main-tr_6of0t/main.dce.json --unroll off --spill on --dce -v /home/void/Proyects/P2026S2/PIPER-COMPILER/tests/import/main.rwt",
+  "succeeded": true,
+  "exit_code": 0,
+  "options": {
+    "unroll": false,
+    "dce": true,
+    "allow_spill": true
+  },
+  "inspection_only": false,
+  "files": [
+    "main.bin",
+    "main.asm",
+    "main.bundles",
+    "main.mem",
+    "main.ast.json",
+    "main.symbols.txt",
+    "main.ir",
+    "main.opt.ir",
+    "main.opt.json",
+    "main.unroll.ir",
+    "main.original.dot",
+    "main.unroll.dot",
+    "main.opt.dot",
+    "main.interference.dot",
+    "main.regalloc.txt",
+    "main.dce.json",
+    "main.compile.log",
+    "main.results.zip"
+  ],
+  "passes": {
+    "unrolling": {
+      "status": "omitida",
+      "reason": "Desactivada por el usuario",
+      "details": []
+    },
+    "DCE": {
+      "status": "sin cambios",
+      "reason": "Consultar decisiones del módulo",
+      "details": [
+        "[pipoc] DCE: 30 -> 30 instrucciones IR (0 eliminadas, 0 rutinas eliminadas)"
+      ],
+      "instructions": {
+        "before": 30,
+        "after": 30,
+        "removed": 0,
+        "removed_routines": 0
+      }
+    },
+    "spilling": {
+      "status": "sin cambios",
+      "reason": "La asignación cabe en registros; no requiere spilling",
+      "details": [
+        "[regalloc] rutina 0: temporales=0 slots=0 frame=8 cargas=0 stores=0",
+        "[regalloc] rutina 1: temporales=0 slots=0 frame=12 cargas=0 stores=0"
+      ],
+      "allowed": true,
+      "routines": [
+        {
+          "routine": 0,
+          "spilled_temporaries": 0,
+          "slots": 0,
+          "stack_bytes": 8,
+          "loads": 0,
+          "stores": 0
+        },
+        {
+          "routine": 1,
+          "spilled_temporaries": 0,
+          "slots": 0,
+          "stack_bytes": 12,
+          "loads": 0,
+          "stores": 0
+        }
+      ]
+    }
+  },
+  "scheduler": "aplicado",
+  "artifact_error": null,
+  "diagnostics": []
+}

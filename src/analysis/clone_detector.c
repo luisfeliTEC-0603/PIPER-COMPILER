@@ -38,6 +38,14 @@
  * Poner 0 para exigir que los tipos coincidan. */
 #define TYPE2_IGNORES_DATA_TYPES 1
 
+/* Funcion auxilar para identificacion de localidad de clones en 
+* archivos distintos */
+static int same_file(const CloneLocation *a, const CloneLocation *b)
+{
+    if (!a->file_path || !b->file_path) return 1;
+    return strcmp(a->file_path, b->file_path) == 0;
+}
+
 /* ============================================================
  * 1. Hashing (FNV-1a de 64 bits)
  * ============================================================ */
@@ -428,13 +436,15 @@ static void buckets_free(HashBucket *buckets)
 
 static int range_equal(const CloneLocation *a, const CloneLocation *b)
 {
-    return a->start_line == b->start_line && a->start_column == b->start_column &&
+    return same_file(a, b) &&
+           a->start_line == b->start_line && a->start_column == b->start_column &&
            a->end_line == b->end_line && a->end_column == b->end_column;
 }
 
 /* outer contiene a inner (incluye igualdad). */
 static int range_contains(const CloneLocation *outer, const CloneLocation *inner)
 {
+    if (!same_file(outer, inner)) return 0;
     if (outer->start_line == 0 || inner->start_line == 0) return 0;
     return (outer->start_line < inner->start_line ||
             (outer->start_line == inner->start_line &&
@@ -536,7 +546,8 @@ CloneReport *clone_detect(const AstNode *root, int min_nodes,
                 f->node->location.first_column,
                 f->node->location.last_line,
                 f->node->location.last_column,
-                f->node_count
+                f->node_count,
+                f->node->source_file ? f->node->source_file : file_path
             };
         }
         if (raw_tail) raw_tail->next = group; else raw_head = group;
@@ -660,11 +671,20 @@ void clone_report_write_json(FILE *output, const CloneReport *report,
         for (size_t i = 0; i < g->location_count; ++i) {
             if (i) fputc(',', output);
             const CloneLocation *loc = &g->locations[i];
-            fprintf(output,
-                    "\n        {\"start_line\": %d, \"start_column\": %d, "
-                    "\"end_line\": %d, \"end_column\": %d, \"node_count\": %d}",
-                    loc->start_line, loc->start_column,
-                    loc->end_line, loc->end_column, loc->node_count);
+
+        fputs("\n        {\"file\": \"", output);
+        const char *loc_file = loc->file_path ? loc->file_path : (file_path ? file_path : "");
+        for (const char *c = loc_file; *c; ++c) {
+            unsigned char u = (unsigned char)*c;
+            if (u == '"' || u == '\\') { fputc('\\', output); fputc(u, output); }
+            else if (u >= 0x20 && u < 0x7f) { fputc(u, output); }
+            else { fputc('?', output); }
+        }
+
+        fprintf(output, "\", \"start_line\": %d, \"start_column\": %d, "
+                "\"end_line\": %d, \"end_column\": %d, \"node_count\": %d}",
+                loc->start_line, loc->start_column,
+                loc->end_line, loc->end_column, loc->node_count);
         }
         fputs("\n      ]\n    }", output);
     }

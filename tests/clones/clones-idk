@@ -1,0 +1,15 @@
+routine B32 suma_0[B32|10| valores] {
+    create B32 i.
+    create B32 total.
+    i store 0.
+    total store 0.
+    alwhen [i < 10] {
+        total store total + valores|i|.
+        i store i + 1.
+    }
+    output total.
+}
+
+routine B32 main[] {
+    output 0.
+}

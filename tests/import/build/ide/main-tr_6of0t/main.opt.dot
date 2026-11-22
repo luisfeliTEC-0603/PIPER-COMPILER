@@ -1,0 +1,36 @@
+digraph CFG {
+  rankdir=TB;
+  node [shape=box, fontname="monospace"];
+  subgraph cluster_r0 {
+    label="function cuadrado(x:B32) -> B32\l    variables: local resultado:B32\l    temporales: t0:B32, t1:B32, t2:B32, t3:B32\l    constantes:\l";
+    labelloc="t";
+    r0_entry [shape=oval, label="ENTRY"];
+    r0_b0 [label="B0:\l    t0 = x\l    t1 = x\l    t2 = t0 * t1 ; comprueba rango del resultado B32, puede fallar\l    resultado = t2\l    t3 = resultado\l    return t3\l"];
+    r0_exit [shape=oval, label="EXIT"];
+    r0_entry -> r0_b0 [label="ENTRY"];
+    r0_b0 -> r0_exit [label="RETURN"];
+  }
+  subgraph cluster_r1 {
+    label="function main() -> B32\l    variables: local i:B32, local suma:B32, local val:B32\l    temporales: t0:B32, t1:bool, t2:B32, t3:B32, t4:B32, t5:B32, t6:B32, t7:B32, t8:B32, t9:B32, t10:bool, t11:B32\l    constantes: 0:B32, 1:B32, 4:B32, 10:B32\l";
+    labelloc="t";
+    r1_entry [shape=oval, label="ENTRY"];
+    r1_b0 [label="B0:\l    suma = 0\l    i = 1\l    jump B1\l"];
+    r1_b1 [label="B1:\l    t0 = i\l    t1 = t0 < 4\l    if t1 jump B2 else B3\l"];
+    r1_b2 [label="B2:\l    t2 = i\l    t3 = call cuadrado(t2) ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar\l    val = t3\l    t4 = suma\l    t5 = val\l    t6 = t4 + t5 ; comprueba rango del resultado B32, puede fallar\l    suma = t6\l    jump B4\l"];
+    r1_b3 [label="B3:\l    t9 = suma\l    t10 = t9 > 10\l    if t10 jump B5 else B6\l"];
+    r1_b4 [label="B4:\l    t7 = i\l    t8 = t7 + 1\l    i = t8\l    jump B1\l"];
+    r1_b5 [label="B5:\l    t11 = suma\l    return t11\l"];
+    r1_b6 [label="B6:\l    return 0\l"];
+    r1_exit [shape=oval, label="EXIT"];
+    r1_entry -> r1_b0 [label="ENTRY"];
+    r1_b0 -> r1_b1 [label="JUMP"];
+    r1_b1 -> r1_b2 [label="TRUE"];
+    r1_b1 -> r1_b3 [label="FALSE"];
+    r1_b2 -> r1_b4 [label="JUMP"];
+    r1_b3 -> r1_b5 [label="TRUE"];
+    r1_b3 -> r1_b6 [label="FALSE"];
+    r1_b4 -> r1_b1 [label="JUMP"];
+    r1_b5 -> r1_exit [label="RETURN"];
+    r1_b6 -> r1_exit [label="RETURN"];
+  }
+}
