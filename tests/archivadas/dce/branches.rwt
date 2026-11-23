@@ -1,0 +1,22 @@
+create B32 contador.
+
+routine B32 registrar[B32 valor] {
+    contador store valor.
+    output valor.
+}
+
+routine B32 main[] {
+    create bool elegir.
+    create B32 muerto.
+    create B32 resultado.
+    elegir store true.
+    muerto store 100.
+    when [elegir] {
+        resultado store registrar[3].
+        muerto store 200.
+    } fallback {
+        resultado store registrar[4].
+        muerto store 300.
+    }
+    output resultado + contador.
+}

@@ -1,0 +1,22 @@
+~~ main.rwt: programa principal que enlaza con math_ops.rwt
+
+bring cuadrado from "math_ops.rwt".
+
+routine B32 main[] {
+    create B32 i.
+    create B32 suma.
+    create B32 val.
+
+    suma store 0.
+
+    loop[i & 1 -> 4 & 1] {
+        val store resta[2].
+        suma store suma + val.
+    }
+
+    when [suma > 10] {
+        output suma.
+    } fallback {
+        output 0.
+    }
+}

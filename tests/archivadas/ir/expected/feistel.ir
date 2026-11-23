@@ -1,0 +1,20 @@
+function main() -> B32
+    variables: local bloque:B32[2x1]
+    temporales: t0:&B32, t1:&B32, t2:&B32, t3:&B32, t4:B32, t5:&B32, t6:B32
+    constantes: 10:B32, 4:B32, 20:B32, 1:B32, 2:B32, 3:B32, 5:B32, 0:B32
+B0:
+    t0 = &bloque
+    *t0 = 10 ; escribe memoria
+    t1 = t0 + 4
+    *t1 = 20 ; escribe memoria
+    crypto_auth(1, 2, 3, 4) ; lee estado criptográfico, escribe estado criptográfico, puede fallar
+    crypto_write_key(5, 0, 1) ; lee estado criptográfico, escribe estado criptográfico, puede fallar
+    t2 = &bloque
+    crypto_feistel(t2, 0, 1) ; lee memoria, escribe memoria, lee estado criptográfico, escribe estado criptográfico, puede fallar
+    crypto_revoke() ; escribe estado criptográfico
+    check 0 <= 0 < 2 ; puede fallar
+    t3 = &bloque
+    t4 = 0 * 4
+    t5 = t3 + t4
+    t6 = *t5 ; lee memoria
+    return t6

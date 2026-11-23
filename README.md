@@ -12,144 +12,127 @@
 
 **Ir a:** [Directorios](#directorios-del-repositorio) ·
 [Uso del compilador](#salida-del-compilador) ·
-[Ejemplos y salidas](#ejemplos-incluidos) ·
 [Ejecución en PORYGON](#ejecución-integrada-en-porygon) ·
-[Ensamblador](#ensamblador-porygon)
+[Flujo completo](#flujo-completo)
 
 ## Directorios del repositorio
 
 | Ruta | Qué encontrarás |
 | --- | --- |
 | [`src/`](src/) | CLI, lexer, parser, AST, análisis semántico, tabla de símbolos y formato binario. |
-| [`src/codegen/`](src/codegen/) | Generación de ASM: expresiones, control de flujo, llamadas, arreglos e intrínsecas. |
+| [`src/codeOPgen/`](src/codeOPgen/) | Emisión ASM desde la máquina asignada: aritmética, memoria, llamadas y control. [Guía del módulo](docs/codeOPgen.md). |
 | [`include/`](include/) | Encabezados y contratos compartidos del compilador. |
-| [`porygon_assembler/`](porygon_assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
-| [`scheduler/`](scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
-| [`tools/`](tools/) | Punto de entrada de la herramienta de calendarización independiente. |
-| [`tests/codegen/`](tests/codegen/) | Los tres programas Piper de ejemplo (`.rwt`). |
-| [`tests/codegen/generated/`](tests/codegen/generated/) | ASM lineal (`.asm`) y memoria de instrucciones (`.mem`) de cada ejemplo. |
+| [`src/assembler/`](src/assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
+| [`src/scheduler/`](src/scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
+| [`tools/`](tools/) | Herramientas auxiliares, incluido el generador de la tabla LL(1). |
+| [`tests/pruebas_defensa/`](tests/pruebas_defensa/) | Quince programas Piper, tres por familia de optimización del enunciado. |
+| [`tests/archivadas/codeOPgen/`](tests/archivadas/codeOPgen/) | Programas de regresión del emisor y comprobaciones C/Bash, con simulación opcional. |
 | [`docs/`](docs/) | PDF de [especificaciones](docs/specs.pdf), [sintaxis Piper](docs/piper_sintaxis.pdf) e imágenes. |
 | [`Makefile`](Makefile) | Reglas para compilar con `make all` y limpiar con `make clean`. |
 
 Para seguir el flujo del compilador, empezar en [`src/main.c`](src/main.c):
-coordina el [lexer](src/lexer.l), el [parser](src/parser.y), la
-[semántica](src/semantic.c) y la [generación de código](src/codegen/codegen.c),
+coordina el [lexer](src/analysis/lexer.l), el [parser](src/analysis/parser.y), la
+[semántica](src/analysis/semantic.c), la IR y asignación, y la [emisión ASM](src/codeOPgen/codeOPgen.c),
 antes de ensamblar, calendarizar y emitir el binario.
 
 `build/` y `bin/` se crean localmente durante la compilación y están ignorados
 por Git. `make clean` elimina ambas carpetas, incluidos los resultados en
 `build/runs/`.
 
+### Gramática predictiva LL(1)
+
+La gramática [piper.ll1](src/analysis/ll1/piper.ll1) genera FIRST, FOLLOW y la
+tabla predictiva durante `make`. Los archivos quedan en `build/analysis/ll1/`.
+Para consultar la tabla: `bin/pipoc --ll1` (comando 24 de [comandos.md](docs/comandos.md)).
+El parser Bison construye el AST; LL(1) también permite consultar terminales esperados.
+
+Para verla como una matriz de no terminales por terminales, con las
+producciones en las celdas, ejecutar:
+
+```sh
+make ll1-table
+```
+
+Abrir `build/analysis/ll1/table.html` en un navegador. El reporte incluye
+desplazamiento, filtros por fila/columna y los conjuntos nullable, FIRST y
+FOLLOW. No necesita servidor ni conexión a Internet. Se genera con el mismo
+análisis que produce los datos C.
+
+La [guía de LL(1)](docs/ll1-guide.md) explica el código del generador, los
+cálculos por punto fijo, la representación de epsilon y los conflictos, con
+ejemplos para practicar y defender el diseño. También distingue esta tabla
+del parser de Bison que construye el AST durante la compilación.
+
 ## Salida del compilador
 
-### Extensión de VS Code
-
-Hay una [extensión local de Piper](editors/vscode/README.md) con colores para
-`.rwt`, snippets y comandos de compilación con errores en el panel Problemas.
-Para empaquetarla e instalarla desde la raíz del repositorio:
+Para instalar y abrir el IDE desde la raíz del repositorio (Python 3.11 o superior):
 
 ```sh
-python3 editors/vscode/package.py
-code --install-extension build/vscode-extension/piper-language-0.1.0.vsix
+python3 -m venv ide/.venv
+ide/.venv/bin/python -m pip install -e ./ide
+ide/.venv/bin/python -m piper_ide
 ```
 
-Para compilar desde el editor, ejecutar primero `make all`. La extensión busca
-`bin/pipoc` en el proyecto o `pipoc` en PATH y guarda las salidas en
-`build/vscode/`. También se puede configurar `piper.compilerPath`.
+La creación del entorno y la instalación se hacen una vez; el comando 51 abre el IDE
+(comandos 49–51 en la tabla).
+Ejecutar `make all` antes de compilar desde el IDE.
 
-Todo programa debe declarar una rutina global `main[]`, sin parámetros.
-Por ejemplo: `routine B32 main[] { output 0. }`.
-El analizador semántico rechaza archivos sin esa entrada, incluso si contienen
-sentencias globales. Los fixtures que solo declaran rutinas necesitan agregar
-`main[]` para pasar el análisis semántico.
-
-La invocación mínima ejecuta el pipeline completo y genera `archivo.bin`:
-
-```sh
-bin/pipoc archivo.rwt
-```
-
-Para pedir un artefacto concreto existen cinco comandos simples:
-
-| Comando | Archivos generados |
-| --- | --- |
-| `bin/pipoc asm archivo.rwt` | `archivo.asm`, sin calendarizar |
-| `bin/pipoc sch archivo.rwt` | `archivo.bundles`, calendarizado por slots |
-| `bin/pipoc mem archivo.rwt` | `archivo.mem`, compatible con `$readmemh` |
-| `bin/pipoc ins archivo.rwt` | `archivo.ast.json` y `archivo.symbols.txt` |
-| `bin/pipoc all archivo.rwt` | Todos los anteriores y `archivo.bin` |
-
-En `asm`, `sch` y `mem`, `-o` cambia la ruta del único artefacto. `ins` acepta
-`--ast-json` y `--emit-symbols` porque produce dos archivos. En `all`, `-o`
-solo cambia la ruta del `.bin`; las demás rutas pueden controlarse con
-`--emit-asm`, `--emit-bundles`, `--emit-mem`, `--ast-json` y
-`--emit-symbols`.
-
-Las opciones de diagnóstico `-t`, `-m`, `-p` y `-v` continúan disponibles, al
-igual que la interfaz avanzada mostrada por `bin/pipoc --help`.
-
-## Ejemplos incluidos
-
-| Ejemplo | Fuente Piper | ASM generado | Memoria de instrucciones |
-| --- | --- | --- | --- |
-| Factorial | [factorial.rwt](tests/codegen/factorial.rwt) | [factorial.asm](tests/codegen/generated/factorial.asm) | [factorial.mem](tests/codegen/generated/factorial.mem) |
-| Búsqueda en matriz | [busqueda_matriz.rwt](tests/codegen/busqueda_matriz.rwt) | [busqueda_matriz.asm](tests/codegen/generated/busqueda_matriz.asm) | [busqueda_matriz.mem](tests/codegen/generated/busqueda_matriz.mem) |
-| Autenticación y cuatro rondas Feistel | [crypto_feistel_pipeline.rwt](tests/codegen/crypto_feistel_pipeline.rwt) | [crypto_feistel_pipeline.asm](tests/codegen/generated/crypto_feistel_pipeline.asm) | [crypto_feistel_pipeline.mem](tests/codegen/generated/crypto_feistel_pipeline.mem) |
-
-Sus archivos `.asm` y `.mem` generados se conservan en
-`tests/codegen/generated/`. Esta carpeta no está ignorada por Git y se conserva
-al ejecutar `make clean`. Para regenerarlos desde la raíz del repositorio:
-
-```sh
-make all
-mkdir -p tests/codegen/generated
-for programa in factorial busqueda_matriz crypto_feistel_pipeline; do
-  bin/pipoc mem -o "tests/codegen/generated/$programa.mem" \
-    --emit-asm "tests/codegen/generated/$programa.asm" \
-    "tests/codegen/$programa.rwt"
-done
-```
+Las salidas disponibles, incluida IR, y las opciones futuras de CFG y optimización están
+numeradas en [comandos.md](docs/comandos.md), con su estado de implementación.
 
 ## Ejecución integrada en PORYGON
 
-Desde la raíz del compilador, un solo comando compila Piper, genera la memoria
-de instrucciones y ejecuta el procesador:
-
-El ejemplo `call_simple.rwt` se conserva fuera del repositorio. Para usarlo en
-esta sección, definir `PIPER_TESTS_DIR` con la ruta a la carpeta externa de pruebas.
+Desde la raíz de PIPER-COMPILER, con PORYGON en la carpeta hermana. El archivo
+`programa.rwt` debe declarar una rutina global `main[]` sin parámetros.
+Se requieren GCC, Flex, Bison, Python 3 e Icarus Verilog (`iverilog` y `vvp`).
 
 ```sh
-./run.sh "$PIPER_TESTS_DIR/codegen/call_simple.rwt" 1000 \
-  --expect r1=10 --expect r7=0x20000 --expect errors=0
+# 1. Construir el compilador (comando 1).
+make all
+
+# 2. Compilación mínima: genera programa.bin (comando 5).
+bin/pipoc programa.rwt
+
+# 3. Convertir el binario a memoria de instrucciones (comando 29).
+bin/pipoc --bin-to-mem programa.bin -o programa.mem
+
+# 4. Ejecutar el procesador, con límite de 1000 ciclos (comando 46).
+make -C ../PORYGON sim PROG=../PIPER-COMPILER/programa.mem MAX_CYCLES=1000
+
+# 5. Extraer 32 bytes de memoria de datos desde 0x10000 (comando 48).
+../PORYGON/tools/memory/extract.sh programa 0x10000 32 resultado.bin
 ```
 
- `--data archivo.mem` inicializa la
-RAM de datos y `--expect clave=valor` valida registros `r0`–`r7`, `pc` o los
-contadores presentes en `results.txt`. Los artefactos quedan en
-`build/runs/<programa>/`. El runner detecta PORYGON en la carpeta hermana
-esperada; `PORYGON_DIR=/otra/ruta/PORYGON` permite cambiarla sin editar scripts.
+La simulación guarda `results.txt`, `memory.dump.mem`, `waves.vcd` y logs en
+`../PORYGON/build/sim/programa/`; la extracción guarda `resultado.bin` allí.
+Ajustar dirección y tamaño al dato que se quiera recuperar.
 
-La extracción pertenece a PORYGON. Después de una simulación creada con
-`make sim`, basta indicar el programa, la dirección, el tamaño y el archivo de
-salida:
+## Flujo completo
 
-```sh
-cd ../../ProyectoArqui/PORYGON
-./extract.sh programa 0x10000 32 salida.bin
-```
+Piper pasa por lexer, parser Bison, AST, semántica e IR. Unrolling y DCE son
+opcionales; regalloc asigna registros y agrega spills cuando hacen falta.
+[codeOPgen](docs/codeOPgen.md) traduce la máquina asignada a ASM;
+el [ensamblador](src/assembler/) construye el programa
+máquina y el [scheduler](src/scheduler/) reordena y empaqueta instrucciones en
+bundles con NOPs. Se emiten `.bin` y, al solicitarlo, `.mem` para ejecutar en
+PORYGON y recuperar resultados de registros y memoria.
 
-El wrapper lee `sim_output/programa/memory.dump.mem` y guarda la salida junto al
-dump. El primer argumento también puede ser una ruta explícita a cualquier dump
-`.mem`.
+La IR tipada con bloques se exporta con `bin/pipoc ir programa.rwt` o
+`bin/pipoc programa.rwt --emit-ir programa.ir` (comandos 32–33). El backend
+usa ahora la IR activa: `--unroll auto|N|off`, `--dce` y `--spill on|off`
+controlan las pasadas. El spilling está permitido por defecto; el scheduler
+siempre se aplica a binario, memoria y bundles. El IDE ofrece controles independientes
+para estas opciones; [uso y resultados](docs/IDE.md).
+Para añadir el grafo: `--emit-cfg programa.dot` (comando 34), también con `pipoc ir`.
 
-## Ensamblador PORYGON
+`all` reúne ahora IR original, tras unrolling y tras DCE, sus CFG, interferencias
+IR y operaciones con registros/spills. Con `-o build/pruebas/programa.bin` usa
+esa carpeta y prefijo para todas las salidas (crear la carpeta primero).
+En el IDE, Todo es la salida inicial y añade `<nombre>.results.zip` con todos
+los resultados. [Opciones y ejemplos de exportación](docs/IDE.md#exportar-desde-terminal).
 
-El código C del ensamblador está en [`porygon_assembler/`](porygon_assembler/).
-El `Makefile` lo compila y enlaza con `pipoc`. Su parser recibe ASM PORYGON
-lineal, escrito a mano o generado desde el AST, y construye el `MachineProgram`
-que consume el scheduler. `bin/porygon-schedule entrada.asm salida.bundles [salida.mem]`
-genera bundles con selección de ALU y, opcionalmente, la imagen hexadecimal
-para el hardware. Este pipeline también está integrado en `pipoc` mediante los
-comandos `sch`, `mem` y `all`.
+Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
+Fuentes, resultados esperados e instrucciones: [tests/archivadas/ir/README.md](tests/archivadas/ir/README.md).
+Guías: [IR](docs/IR/todoIR.md) y [CFG](docs/IR/todoCFG.md).
 
-Los demás casos de prueba se conservan fuera del repositorio.
+Ejemplos, DOT de referencia y comandos para dibujarlos: [tests/archivadas/cfg/README.md](tests/archivadas/cfg/README.md).

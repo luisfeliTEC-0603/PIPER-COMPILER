@@ -85,6 +85,11 @@ struct AstNode {
     SourceLocation location;
     /* Ámbito creado para este nodo por el análisis semántico; no es dueño. */
     Scope *semantic_scope;
+    /* Declaración resuelta por semántica: préstamo a la tabla final, no al parser.
+     * Se usa en declaraciones, identificadores, llamadas ordinarias y control de
+     * loop. NULL si no aplica, es intrínseca o no se pudo resolver. No se libera
+     * con el AST; la tabla debe seguir viva mientras se consulte esta referencia. */
+    const Symbol *resolved_symbol;
     DataType inferred_type;
     DataType element_type;
     PiperType piper_type;
@@ -94,6 +99,11 @@ struct AstNode {
     bool has_element_piper_type;
     int array_rank;
     int array_rows, array_cols;
+
+    /* Inlcusion de atributo de archivo fuente 
+     * para correcta identificacion de origen durante 
+     * importacion de modulos externos... */
+    const char *source_file;
 
     union {
         struct {
@@ -135,6 +145,8 @@ struct AstNode {
         struct {
             char *routine_name;
             AstNodeList *arguments;
+            /* El cargador no encontró una rutina global visible desde el módulo. */
+            bool module_target_missing;
         } call_expression;
 
         struct {
@@ -194,6 +206,8 @@ struct AstNode {
         } loop_statement;
     } data;
 };
+
+void ast_set_source_file(AstNode *root, const char *file_path);
 
 /* -------------------------------------------------------------------------
  * Ubicaciones

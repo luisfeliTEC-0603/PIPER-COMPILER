@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Piper",
+            "compilerPath": "gcc",
+            "cStandard": "c11",
+            "defines": ["_POSIX_C_SOURCE=200809L"],
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/build",
+                "${workspaceFolder}"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/include",
+                    "${workspaceFolder}/src",
+                    "${workspaceFolder}/build/*",
+                    "${workspaceFolder}/build/analysis/ll1/*"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

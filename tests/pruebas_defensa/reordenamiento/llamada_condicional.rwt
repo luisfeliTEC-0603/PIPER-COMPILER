@@ -1,0 +1,16 @@
+~~ El scheduler debe respetar las dos condiciones antes de llamar a echo. Resultado esperado: 7.
+routine B32 echo[B32 value] { output value. }
+routine B32 main[] {
+    create B8 small.
+    create B16 medium.
+    create B32 negative.
+    create uB32 large.
+    small store -7.
+    medium store small.
+    negative store -medium.
+    large store 4294967295.
+    when [large > negative] {
+        when [small < medium + 1] { output echo[negative]. }
+    }
+    output 0.
+}

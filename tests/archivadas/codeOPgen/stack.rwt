@@ -1,0 +1,2 @@
+routine B32 forever[] { output forever[]. }
+routine B32 main[] { output forever[]. }

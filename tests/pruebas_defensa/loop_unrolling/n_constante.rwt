@@ -1,0 +1,10 @@
+~~ Comparar unrolling apagado y automático. Resultado esperado: 10.
+routine B32 main[] {
+    create B32 i.
+    create B32 suma.
+    suma store 0.
+    loop [i & 0 -> 5 & 1] {
+        suma store suma + i.
+    }
+    output suma.
+}

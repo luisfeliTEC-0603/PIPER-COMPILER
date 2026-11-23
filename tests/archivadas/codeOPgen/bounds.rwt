@@ -1,0 +1,8 @@
+routine B32 negative[] { output -1. }
+routine B32 main[] {
+    create B16|2| data.
+    create B32 index.
+    data store [3,4].
+    index store negative[].
+    output data|index|.
+}

@@ -1,0 +1,19 @@
+routine B32 sumar_y_duplicar[B32 a, B32 b] {
+    create B32 suma.
+    create B32 doble.
+    create B32 descartado.
+    descartado store 99.
+    suma store a + b.
+    doble store suma * 2.
+    output doble.
+}
+
+routine B32 main[] {
+    create B32 x.
+    create B32 y.
+    create B32 resultado.
+    x store 4.
+    y store 3.
+    resultado store sumar_y_duplicar[x,y].
+    output resultado.
+}

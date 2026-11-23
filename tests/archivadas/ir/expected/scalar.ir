@@ -1,0 +1,12 @@
+function main() -> B32
+    variables: local a:B32, local b:B32
+    temporales: t0:B32, t1:B32, t2:B32, t3:B32
+    constantes: 2:B32, 3:B32, 4:B32
+B0:
+    a = 2
+    t0 = a
+    t1 = 3 * 4 ; comprueba rango del resultado B32, puede fallar
+    t2 = t0 + t1 ; comprueba rango del resultado B32, puede fallar
+    b = t2
+    t3 = b
+    return t3
