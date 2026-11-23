@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from ..services.metrics import TIMED_ROUNDS
+
 from PySide6.QtCore import Qt, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -13,7 +15,7 @@ METRICS = (
     ("cycles", "Ciclos", "ciclos", "Tiempo de ejecución del programa en el RTL. Fuente: contador cpu_cycles de PORYGON."),
     ("instructions", "Instrucciones", "ops", "Operaciones estáticas del programa máquina. Se excluyen literales y relleno. Fuente: pipoc."),
     ("code_bytes", "Código en ROM", "bytes", "Cada bundle ocupa ocho bytes, incluido su relleno. Fuente: calendario VLIW de pipoc."),
-    ("compile_ms", "Compilación", "ms", "Tiempo de pared del proceso pipoc. Fuente: reloj monotónico de la IDE."),
+    ("compile_ms", "Compilación (mediana)", "ms", f"Mediana de {TIMED_ROUNDS} compilaciones por variante después de un calentamiento. Base y Selección alternan el primer turno. Fuente: reloj monotónico de la IDE."),
     ("removed", "Eliminadas", "IR", "Instrucciones IR eliminadas por DCE, incluidas las de rutinas descartadas. Fuente: informe DCE."),
     ("reordered", "Reordenadas", "ops", "Operaciones emitidas antes que una operación precedente del mismo bloque. Fuente: ciclos de emisión del scheduler."),
     ("renamed", "Renombradas", "ops", "Operaciones de máquina cuyos registros físicos cambió Rename. Fuente: asignación de registros."),

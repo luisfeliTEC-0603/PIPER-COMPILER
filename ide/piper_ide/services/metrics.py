@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+from statistics import median
 import subprocess
 from tempfile import TemporaryDirectory, mkdtemp
 from time import perf_counter
@@ -13,6 +14,9 @@ from PySide6.QtCore import QThread, Signal
 
 from ..models.compilation import OptimizationOptions
 from .compiler import CompilerConfigurationError, find_compiler
+
+
+TIMED_ROUNDS = 6  # Número par para repartir el primer turno por igual.
 
 
 def simulator_for(compiler: Path, selected: str) -> Path | None:
@@ -68,26 +72,28 @@ class Measurement(QThread):
             workspace = Path(temp)
             snapshot = workspace / self.source.name
             snapshot.write_bytes(self.source.read_bytes())
+            commands = {}
+            directories = {}
+            variants = report["variants"]
             for name, options in (("Base", OptimizationOptions()), ("Selección", self.options)):
-                if self.isInterruptionRequested():
-                    raise InterruptedError("Medición cancelada.")
                 directory = workspace / ("base" if name == "Base" else "selected")
                 directory.mkdir()
-                variant = {"options": asdict(options), "values": {}, "error": ""}
-                report["variants"][name] = variant
+                directories[name] = directory
+                commands[name] = [compiler, "mem", snapshot, "-I", self.source.parent, "-o", directory / "code.mem",
+                                  "--emit-metrics", directory / "static.json", "--emit-bundles",
+                                  directory / "code.bundles", *options.arguments]
+                variants[name] = {"options": asdict(options), "values": {}, "error": "", "compile_samples_ms": []}
+            self.time_compilations(commands, variants)
+            for name, variant in variants.items():
+                if variant["error"]:
+                    continue
+                directory = directories[name]
                 try:
-                    self.progress.emit(f"Compilando · {name}")
-                    args = [compiler, "mem", snapshot, "-I", self.source.parent, "-o", directory / "code.mem",
-                            "--emit-metrics", directory / "static.json", "--emit-bundles",
-                            directory / "code.bundles", *options.arguments]
-                    start = perf_counter()
-                    self.command(args)
-                    elapsed = (perf_counter() - start) * 1000
                     values = json.loads((directory / "static.json").read_text())
                     for key in ("instructions", "code_bytes", "removed", "reordered", "renamed"):
                         if type(values.get(key)) is not int or values[key] < 0:
                             raise ValueError(f"Contador de pipoc inválido: {key}")
-                    variant["values"] = {**values, "compile_ms": elapsed}
+                    variant["values"] = {**values, "compile_ms": median(variant["compile_samples_ms"])}
                     if not simulator:
                         raise ValueError("Elegí la carpeta de PORYGON y repetí la medición para obtener ciclos.")
                     self.progress.emit(f"Simulando · {name}")
@@ -107,6 +113,29 @@ class Measurement(QThread):
         report["path"] = str(path)
         path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.ready.emit(report)
+
+    def time_compilations(self, commands, variants):
+        names = tuple(commands)
+        for round_number in range(TIMED_ROUNDS + 1):
+            stage = "Calentamiento" if round_number == 0 else f"Compilación {round_number}/{TIMED_ROUNDS}"
+            for name in (names if round_number % 2 == 0 else reversed(names)):
+                if self.isInterruptionRequested():
+                    raise InterruptedError("Medición cancelada.")
+                variant = variants[name]
+                if variant["error"]:
+                    continue
+                self.progress.emit(f"{stage} · {name}")
+                try:
+                    start = perf_counter()
+                    self.command(commands[name])
+                    elapsed_ms = (perf_counter() - start) * 1000
+                except InterruptedError:
+                    raise
+                except (OSError, ValueError) as error:
+                    variant["error"] = str(error)
+                    continue
+                if round_number:
+                    variant["compile_samples_ms"].append(elapsed_ms)
 
     def simulate(self, simulator, directory):
         labels = (directory / "code.bundles").read_text().splitlines()
