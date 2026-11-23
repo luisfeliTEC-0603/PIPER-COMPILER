@@ -15,7 +15,9 @@ Si falta el entorno: `python3 -m venv ide/.venv` y
 
 | Control | Efecto | Estado inicial |
 | --- | --- | --- |
-| Loop unrolling | El módulo valida cada loop y elige automáticamente su factor | Desmarcado |
+| Loop unrolling | Activa el desenrollado de loops válidos | Desmarcado |
+| Automático / Manual | Elegir si el compilador decide el factor o se solicita uno fijo | Automático |
+| Factor | Iteraciones por grupo, de 2 a 4096; visible solo en Manual y editable con unrolling activo | 2 |
 | DCE | Elimina código muerto después de unrolling | Desmarcado |
 | Rename | Renombra registros locales para reducir dependencias falsas | Desmarcado |
 | Permitir spilling | Autoriza cargas/stores cuando no alcanza la asignación de registros | Marcado |
@@ -31,11 +33,18 @@ Las selecciones se conservan al cerrar y abrir el IDE. Durante una compilación
 los controles quedan bloqueados. **AST y símbolos** solo analiza el código:
 deshabilita las opciones sin borrar su selección.
 
-El IDE envía `--unroll auto` al marcar la casilla y `--unroll off` al desmarcarla.
-El módulo parte de factor 2 para 2–8 iteraciones y 4 para más de 8; lo reduce
-si necesita respetar el presupuesto de tamaño. Los loops no elegibles se conservan
-y el reporte explica el motivo. El factor elegido aparece en los resultados,
-sin selector manual. La API y la CLI conservan el factor fijo para pruebas técnicas.
+Al marcar **Loop unrolling**, elegir **Automático** o **Manual**. En automático,
+el IDE envía `--unroll auto`; el módulo parte de factor 2 para 2–8 iteraciones
+y 4 para más de 8, y lo reduce si necesita respetar el presupuesto de tamaño.
+En manual, elegir el número en **Factor**: por ejemplo, 4 envía `--unroll 4`.
+Al desmarcar la casilla se envía `--unroll off`, conservando modo y factor para
+la próxima vez. Esas preferencias también se restauran al volver a abrir el IDE.
+
+El factor manual es una solicitud: si supera las iteraciones del loop, no cumple
+las condiciones de seguridad o excede el presupuesto, ese loop se conserva y
+el reporte explica el motivo. Elegir un factor igual al número de iteraciones
+no garantiza que la implementación elimine el header, los incrementos ni todos
+los saltos. El factor aplicado se muestra en el reporte de cada loop.
 
 El scheduler se aplica siempre a binario, memoria y bundles. ASM solo produce
 instrucciones lineales, sin calendarizar. No hay opción para apagar el scheduler.
@@ -136,3 +145,19 @@ y `loop_matriz.rwt`. Sin pasadas, ambas IR coinciden; con DCE la función pasa d
 a 50. `tests/archivadas/codeOPgen/arguments.rwt` requiere spilling: desmarcarlo muestra
 el diagnóstico; al marcarlo se generan los archivos. Los programas completos
 y resultados de ejecución están en [las pruebas simples](codeOPgen-pruebas-simples.md).
+
+
+## Pruebas del selector de unrolling
+
+Desde la raíz, después de `make all`:
+
+```bash
+QT_QPA_PLATFORM=offscreen PYTHONPATH=ide \
+  ide/.venv/bin/python -m unittest discover -s ide/tests -v
+```
+
+Las pruebas usan preferencias temporales y controles Qt sin pantalla. Comprueban
+apagado/automático/manual, persistencia y compatibilidad de preferencias,
+bloqueo de controles, selección AST/símbolos y compilaciones reales con reportes
+y artefactos. Para un loop de cuatro iteraciones se comprueba factor automático
+2, manual 4 y la omisión de manual 8 por superar sus iteraciones.

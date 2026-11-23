@@ -11,7 +11,7 @@ from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QSizePolicy, QSplitter, QToolButton, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QSpinBox, QSplitter, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..editor.code_editor import CodeEditor
@@ -162,6 +162,8 @@ class MainWindow(QMainWindow):
         self.compile_target.currentIndexChanged.connect(self._update_optimization_controls)
         for checkbox in self.optimization_checkboxes:
             checkbox.toggled.connect(self._optimization_selection_changed)
+        self.unroll_mode.currentIndexChanged.connect(self._optimization_selection_changed)
+        self.unroll_factor.valueChanged.connect(self._optimization_selection_changed)
         self.completion.unavailable.connect(self._completion_unavailable)
         self.diagnostics.message.connect(self.output_panel.append_message)
         # Los mensajes del detector se muestran en la misma consola y barra
@@ -219,9 +221,24 @@ class MainWindow(QMainWindow):
         options = load_optimizations()
         self.unroll_checkbox = QCheckBox("Loop unrolling")
         self.unroll_checkbox.setChecked(options.unroll)
-        self.unroll_checkbox.setToolTip("El módulo valida cada loop y elige automáticamente el factor\n"
-                                       "según sus iteraciones y el presupuesto de tamaño del código.")
+        self.unroll_checkbox.setToolTip("Desenrollar loops seguros usando factor automático o manual.")
         row.addWidget(self.unroll_checkbox)
+        self.unroll_mode = QComboBox()
+        self.unroll_mode.setAccessibleName("Modo de unrolling")
+        self.unroll_mode.addItem("Automático", "auto")
+        self.unroll_mode.addItem("Manual", "manual")
+        self.unroll_mode.setCurrentIndex(self.unroll_mode.findData(options.unroll_mode))
+        self.unroll_mode.setToolTip("Automático: el compilador elige el factor.\n"
+                                    "Manual: solicitar el factor indicado; cada loop debe seguir siendo válido.")
+        row.addWidget(self.unroll_mode)
+        self.unroll_factor = QSpinBox()
+        self.unroll_factor.setAccessibleName("Factor de unrolling")
+        self.unroll_factor.setRange(2, 4096)
+        self.unroll_factor.setPrefix("Factor ")
+        self.unroll_factor.setValue(options.unroll_factor)
+        self.unroll_factor.setToolTip("Iteraciones por grupo (2–4096). Si el loop no admite ese factor,\n"
+                                      "se conserva y el reporte explica el motivo. No garantiza eliminar todo su control.")
+        row.addWidget(self.unroll_factor)
         self.dce_checkbox = QCheckBox("DCE")
         self.dce_checkbox.setChecked(options.dce)
         self.dce_checkbox.setToolTip("Eliminar código muerto después de loop unrolling.")
@@ -237,6 +254,10 @@ class MainWindow(QMainWindow):
         row.addWidget(self.spill_checkbox)
         self.optimization_checkboxes = (self.unroll_checkbox, self.dce_checkbox,
                                        self.rename_checkbox, self.spill_checkbox)
+        row.addStretch()
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        layout.addLayout(row)
         self.scheduler_label = QLabel("Scheduler automático")
         self.scheduler_label.setToolTip("Siempre se calendarizan binario, memoria y bundles.\n"
                                         "La salida ASM sola no genera paquetes para el procesador.")
@@ -491,6 +512,8 @@ class MainWindow(QMainWindow):
             dce=self.dce_checkbox.isChecked(),
             rename=self.rename_checkbox.isChecked(),
             allow_spill=self.spill_checkbox.isChecked(),
+            unroll_mode=self.unroll_mode.currentData(),
+            unroll_factor=self.unroll_factor.value(),
         )
 
     def _optimization_selection_changed(self):
@@ -501,6 +524,11 @@ class MainWindow(QMainWindow):
         enabled = not self.compiler.running and self.compile_target.currentData() != "ins"
         for control in self.optimization_checkboxes:
             control.setEnabled(enabled)
+        self.unroll_mode.setEnabled(enabled and self.unroll_checkbox.isChecked())
+        self.unroll_factor.setVisible(self.unroll_mode.currentData() == "manual")
+        self.unroll_factor.setEnabled(
+            enabled and self.unroll_checkbox.isChecked() and self.unroll_mode.currentData() == "manual"
+        )
         self.scheduler_label.setText("Solo análisis" if self.compile_target.currentData() == "ins" else "Scheduler automático")
 
     def _has_piper_files(self) -> bool:

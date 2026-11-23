@@ -20,6 +20,8 @@ def load_optimizations() -> OptimizationOptions:
             dce=settings.value("compilation/dce", False, type=bool),
             rename=settings.value("compilation/rename", False, type=bool),
             allow_spill=settings.value("compilation/spill", True, type=bool),
+            unroll_mode="manual" if settings.value("compilation/useFactor", False, type=bool) else "auto",
+            unroll_factor=settings.value("compilation/factor", 2, type=int),
         )
     except (ValueError, TypeError):
         return OptimizationOptions()
@@ -27,9 +29,10 @@ def load_optimizations() -> OptimizationOptions:
 
 def save_optimizations(options: OptimizationOptions) -> None:
     settings = _settings()
-    # Descartar preferencias del antiguo selector manual al guardar.
-    settings.remove("compilation/useFactor")
-    settings.remove("compilation/factor")
+    # Reutilizar las claves del selector anterior y conservar el factor también
+    # en automático o con unrolling apagado.
+    settings.setValue("compilation/useFactor", options.unroll_mode == "manual")
+    settings.setValue("compilation/factor", options.unroll_factor)
     for key, value in (("unroll", options.unroll), ("dce", options.dce),
                        ("rename", options.rename), ("spill", options.allow_spill)):
         settings.setValue("compilation/" + key, value)

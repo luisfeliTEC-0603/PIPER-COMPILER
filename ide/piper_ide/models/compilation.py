@@ -13,10 +13,20 @@ class OptimizationOptions:
     dce: bool = False
     allow_spill: bool = True
     rename: bool = False
+    unroll_mode: str = "auto"
+    unroll_factor: int = 2
+
+    def __post_init__(self) -> None:
+        if self.unroll_mode not in ("auto", "manual"):
+            raise ValueError("El modo de unrolling debe ser automático o manual.")
+        if type(self.unroll_factor) is not int or not 2 <= self.unroll_factor <= 4096:
+            raise ValueError("El factor de unrolling debe ser un entero entre 2 y 4096.")
 
     @property
     def unroll_argument(self) -> str:
-        return "auto" if self.unroll else "off"
+        if not self.unroll:
+            return "off"
+        return "auto" if self.unroll_mode == "auto" else str(self.unroll_factor)
 
     @property
     def arguments(self) -> tuple[str, ...]:
@@ -29,7 +39,9 @@ class OptimizationOptions:
 
     @property
     def description(self) -> str:
-        return (f"Unrolling: {self.unroll_argument} · DCE: {'sí' if self.dce else 'no'} · "
+        unrolling = ("desactivado" if not self.unroll else "automático"
+                     if self.unroll_mode == "auto" else f"manual (factor {self.unroll_factor})")
+        return (f"Unrolling: {unrolling} · DCE: {'sí' if self.dce else 'no'} · "
                 f"Rename: {'sí' if self.rename else 'no'} · "
                 f"Permitir spilling: {'sí' if self.allow_spill else 'no'} · Scheduler: automático")
 
