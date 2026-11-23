@@ -1,0 +1,14 @@
+~~ El límite llega como parámetro. Con y sin unrolling se espera 10; la heurística puede conservar el loop.
+routine B32 acumular[B32 limite] {
+    create B32 i.
+    create B32 suma.
+    suma store 0.
+    loop [i & 0 -> limite & 1] {
+        suma store suma + i.
+    }
+    output suma.
+}
+
+routine B32 main[] {
+    output acumular[5].
+}

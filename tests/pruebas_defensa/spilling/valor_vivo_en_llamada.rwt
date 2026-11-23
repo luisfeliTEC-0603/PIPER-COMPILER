@@ -1,0 +1,8 @@
+~~ Conservar el primer resultado mientras se prepara otra llamada de seis argumentos. Con spilling se espera 42.
+routine B32 sumar[B32 a, B32 b, B32 c, B32 d, B32 e, B32 f] {
+    output a + b + c + d + e + f.
+}
+
+routine B32 main[] {
+    output sumar[1,2,3,4,5,6] + sumar[6,5,4,3,2,1].
+}

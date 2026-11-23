@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 
 out=$(mktemp -d)
 trap 'rm -rf -- "$out"' EXIT
@@ -23,13 +23,13 @@ expect_error() {
     fi
 }
 
-compile direct tests/import/basic.rwt
+compile direct tests/archivadas/import/basic.rwt
 grep -q '^function cuadrado(' "$out/direct.ir"
 test "$(grep -c '^function ' "$out/direct.ir")" -eq 2
 printf 'PASS importación directa y selectiva\n'
 
-cp tests/import/basic.rwt "$out/include.rwt"
-compile include "$out/include.rwt" -I tests/import
+cp tests/archivadas/import/basic.rwt "$out/include.rwt"
+compile include "$out/include.rwt" -I tests/archivadas/import
 printf 'PASS búsqueda con -I\n'
 
 cat >"$out/bridge.rwt" <<'RWT'
@@ -42,12 +42,12 @@ bring calcular from "bridge.rwt".
 bring cuadrado from "./math_ops.rwt".
 routine B32 main[] { output calcular[3] + cuadrado[2]. }
 RWT
-compile transitive "$out/transitive.rwt" -I tests/import
+compile transitive "$out/transitive.rwt" -I tests/archivadas/import
 grep -q '^function sumar_uno(' "$out/transitive.ir"
 test "$(grep -c '^function cuadrado(' "$out/transitive.ir")" -eq 1
 printf 'PASS importación transitiva con dependencia compartida\n'
 
-expect_error "'resta' no ha sido declarado" bin/pipoc --check tests/import/main.rwt
+expect_error "'resta' no ha sido declarado" bin/pipoc --check tests/archivadas/import/main.rwt
 printf 'PASS rechazo de una llamada a una rutina sin importar\n'
 
 cat >"$out/missing-file.rwt" <<'RWT'
@@ -64,8 +64,8 @@ for name in missing-file missing-symbol; do
     else
         expected="no se encontró el símbolo 'ausente'"
     fi
-    expect_error "$expected" bin/pipoc --check "$out/$name.rwt" -I tests/import
-    expect_error "$expected" bin/pipoc "$out/$name.rwt" -I tests/import -o "$out/$name.bin"
+    expect_error "$expected" bin/pipoc --check "$out/$name.rwt" -I tests/archivadas/import
+    expect_error "$expected" bin/pipoc "$out/$name.rwt" -I tests/archivadas/import -o "$out/$name.bin"
     test ! -e "$out/$name.bin"
     printf 'PASS %s\n' "$name"
 done
@@ -86,5 +86,5 @@ bring cuadrado from "math_ops.rwt".
 routine B32 cuadrado[B32 x] { output x. }
 routine B32 main[] { output cuadrado[6]. }
 RWT
-expect_error "conflicto de nombres: 'cuadrado'" bin/pipoc --check "$out/conflict.rwt" -I tests/import
+expect_error "conflicto de nombres: 'cuadrado'" bin/pipoc --check "$out/conflict.rwt" -I tests/archivadas/import
 printf 'PASS rechazo de conflicto de nombres\n'

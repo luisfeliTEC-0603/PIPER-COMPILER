@@ -67,10 +67,10 @@ Desde la raíz de Piper podés generar las dos variantes del mismo fuente y segu
 ```bash
 make all
 mkdir -p build/runs/rename/war
-bin/pipoc all tests/rename/war.rwt --unroll off --spill off -o build/runs/rename/war/base.bin
-bin/pipoc all tests/rename/war.rwt --unroll off --spill off --rename -o build/runs/rename/war/rename.bin
+bin/pipoc all tests/archivadas/rename/war.rwt --unroll off --spill off -o build/runs/rename/war/base.bin
+bin/pipoc all tests/archivadas/rename/war.rwt --unroll off --spill off --rename -o build/runs/rename/war/rename.bin
 ```
 
 Una línea como `[rename] main B0 t2 r1 -> r3` indica que todas las definiciones y lecturas de `t2` pasaron a `r3`. El campo `operaciones_de_maquina_afectadas` cuenta **operaciones virtuales estáticas de la máquina asignada**, después de insertar spills y antes de emitir ASM. Una operación suma uno si cambió cualquiera de sus operandos, aunque cambien dos o el destino sea también lectura. El emisor puede expandir una operación en varias instrucciones físicas u omitir una copia. Los `.bundles` contienen las instrucciones físicas efectivamente emitidas.
 
-`make check-rename` prueba el asignador y compara reporte, ASM, bundles e imagen. `make check-rename-sim` además ejecuta ambas versiones de cuatro programas con el simulador de la carpeta hermana `../PORYGON`. Guarda la comparación en `build/runs/rename/simulacion.tsv` y los `results.txt` e `indicators.json` por caso y variante. [Programas y comprobaciones](../tests/rename)
+`make check-rename` prueba el asignador y compara reporte, ASM, bundles e imagen. `make check-rename-sim` además ejecuta ambas versiones de cuatro programas con el simulador de la carpeta hermana `../PORYGON`. Guarda la comparación en `build/runs/rename/simulacion.tsv` y los `results.txt` e `indicators.json` por caso y variante. [Programas y comprobaciones](../tests/archivadas/rename)

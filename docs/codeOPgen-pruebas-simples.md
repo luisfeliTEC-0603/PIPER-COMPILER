@@ -10,7 +10,7 @@ regalloc y codeOPgen para generar el ejecutable optimizado.
 
 ## 1. Funcion con asignaciones, suma y multiplicacion
 
-Fuente: [funcion_suma.rwt](../tests/codeOPgen/paso-a-paso/funcion_suma.rwt).
+Fuente: [funcion_suma.rwt](../tests/archivadas/codeOPgen/paso-a-paso/funcion_suma.rwt).
 
 ```text
 routine B32 sumar_y_duplicar[B32 a, B32 b] {
@@ -49,8 +49,8 @@ Ejecutar los pasos de la seccion 3. Cambiar solo DCE: unrolling permanece apagad
 
 IR esperada completa:
 
-- [Inicial](../tests/codeOPgen/paso-a-paso/esperados/funcion_suma.inicial.ir).
-- [Optimizada](../tests/codeOPgen/paso-a-paso/esperados/funcion_suma.optimizado.ir).
+- [Inicial](../tests/archivadas/codeOPgen/paso-a-paso/esperados/funcion_suma.inicial.ir).
+- [Optimizada](../tests/archivadas/codeOPgen/paso-a-paso/esperados/funcion_suma.optimizado.ir).
 
 La IR inicial contiene:
 
@@ -72,7 +72,7 @@ asignacion no reduce automaticamente el espacio de variables reservado en pila.
 
 ## 2. Loop que lee una matriz
 
-Fuente: [loop_matriz.rwt](../tests/codeOPgen/paso-a-paso/loop_matriz.rwt).
+Fuente: [loop_matriz.rwt](../tests/archivadas/codeOPgen/paso-a-paso/loop_matriz.rwt).
 
 ```text
 routine B32 main[] {
@@ -104,8 +104,8 @@ Repetir los pasos de la seccion 3. Aqui se activan unrolling factor 2 y DCE.
 
 IR esperada completa:
 
-- [Inicial](../tests/codeOPgen/paso-a-paso/esperados/loop_matriz.inicial.ir).
-- [Optimizada](../tests/codeOPgen/paso-a-paso/esperados/loop_matriz.optimizado.ir).
+- [Inicial](../tests/archivadas/codeOPgen/paso-a-paso/esperados/loop_matriz.inicial.ir).
+- [Optimizada](../tests/archivadas/codeOPgen/paso-a-paso/esperados/loop_matriz.optimizado.ir).
 
 Comprobar en esos archivos:
 
@@ -120,7 +120,7 @@ Comprobar en esos archivos:
 ### A. Revisar fuente y producir IR inicial
 
 ```bash
-fuente_prueba="tests/codeOPgen/paso-a-paso/$nombre_prueba.rwt"
+fuente_prueba="tests/archivadas/codeOPgen/paso-a-paso/$nombre_prueba.rwt"
 salida_prueba="build/runs/codeOPgen/paso-a-paso/$nombre_prueba"
 mkdir -p "$salida_prueba"
 bin/pipoc --check "$fuente_prueba"
@@ -164,9 +164,9 @@ bin/pipoc "$fuente_prueba" -o "$salida_prueba/optimizado.bin" \
   --emit-bundles "$salida_prueba/optimizado.bundles" -v
 cat "$salida_prueba/optimizado.ir"
 cat "$salida_prueba/optimizacion.json"
-diff -u "tests/codeOPgen/paso-a-paso/esperados/$nombre_prueba.inicial.ir" \
+diff -u "tests/archivadas/codeOPgen/paso-a-paso/esperados/$nombre_prueba.inicial.ir" \
   "$salida_prueba/inicial.ir"
-diff -u "tests/codeOPgen/paso-a-paso/esperados/$nombre_prueba.optimizado.ir" \
+diff -u "tests/archivadas/codeOPgen/paso-a-paso/esperados/$nombre_prueba.optimizado.ir" \
   "$salida_prueba/optimizado.ir"
 ```
 

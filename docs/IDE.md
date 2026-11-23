@@ -53,10 +53,10 @@ habilitar **Permitir spilling**. Se conservan las demás selecciones para reinte
 
 | Prueba | Selección | Qué buscar |
 |---|---|---|
-| `tests/dce/calls.rwt` | Solo DCE, con spilling permitido | 3 instrucciones IR eliminadas. Ambas variantes devuelven 16 en r1. |
-| `tests/rename/war.rwt` | Solo Rename, con spilling permitido | 4 operaciones renombradas. Ambas devuelven 5. Con el RTL local se midieron 161 y 156 ciclos. |
+| `tests/pruebas_defensa/dce/llamada_con_efecto.rwt` | Solo DCE, con spilling permitido | 3 instrucciones IR eliminadas. Ambas variantes devuelven 16 en r1. |
+| `tests/pruebas_defensa/rename/war.rwt` | Solo Rename, con spilling permitido | 4 operaciones renombradas. Ambas devuelven 5. Con el RTL local se midieron 161 y 156 ciclos. |
 
-Para consultar los mismos contadores estáticos desde la terminal, usá `bin/pipoc mem tests/rename/war.rwt --rename -o build/war.mem --emit-metrics build/war.json`.
+Para consultar los mismos contadores estáticos desde la terminal, usá `bin/pipoc mem tests/pruebas_defensa/rename/war.rwt --rename -o build/war.mem --emit-metrics build/war.json`.
 
 ## Archivos y reportes
 
@@ -109,7 +109,7 @@ Para obtener todas las etapas en una sola carpeta:
 
 ```bash
 mkdir -p build/pruebas/matriz
-bin/pipoc all tests/codeOPgen/paso-a-paso/loop_matriz.rwt \
+bin/pipoc all tests/archivadas/codeOPgen/paso-a-paso/loop_matriz.rwt \
   -o build/pruebas/matriz/matriz.bin --unroll auto --dce --spill on -v
 diff -u build/pruebas/matriz/matriz.ir build/pruebas/matriz/matriz.unroll.ir
 diff -u build/pruebas/matriz/matriz.unroll.ir build/pruebas/matriz/matriz.opt.ir
@@ -124,15 +124,15 @@ ZIP los añade el IDE.
 Para solicitar únicamente las IR, sin generar ejecutable:
 
 ```bash
-bin/pipoc ir tests/codeOPgen/paso-a-paso/loop_matriz.rwt \
+bin/pipoc ir tests/archivadas/codeOPgen/paso-a-paso/loop_matriz.rwt \
   -o build/pruebas/matriz/original.ir --unroll auto --dce \
   --emit-ir-unroll build/pruebas/matriz/tras-unrolling.ir \
   --emit-ir-opt build/pruebas/matriz/tras-dce.ir
 ```
 
-Para comprobar los controles, usar `tests/codeOPgen/paso-a-paso/funcion_suma.rwt`
+Para comprobar los controles, usar `tests/archivadas/codeOPgen/paso-a-paso/funcion_suma.rwt`
 y `loop_matriz.rwt`. Sin pasadas, ambas IR coinciden; con DCE la función pasa de
 18 a 17 instrucciones. Con unrolling automático (elige factor 2) y DCE, la matriz pasa de 34 a 51 y luego
-a 50. `tests/codeOPgen/arguments.rwt` requiere spilling: desmarcarlo muestra
+a 50. `tests/archivadas/codeOPgen/arguments.rwt` requiere spilling: desmarcarlo muestra
 el diagnóstico; al marcarlo se generan los archivos. Los programas completos
 y resultados de ejecución están en [las pruebas simples](codeOPgen-pruebas-simples.md).

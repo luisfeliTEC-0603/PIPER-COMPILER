@@ -7,7 +7,7 @@ import sys
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("piper_ll1_generator", ROOT / "tools/generate_ll1.py")
 generator = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = generator

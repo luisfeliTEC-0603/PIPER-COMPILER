@@ -3,6 +3,7 @@
 
 # Directorios de compilación
 /build/
+/tests/**/build/ide/
 /bin/
 
 # Archivos generados por el compilador de C

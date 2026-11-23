@@ -361,7 +361,7 @@ El ejemplo completo de fuente, AST, tabla semántica, recorrido y salidas está 
 | IR-T4 | Media | Matriz B16 de 2×3; escribir fila 1, columna 0 y sumar con fila 0, columna 2. | Límites por dimensión, orden por filas, ancho B16, LOAD/STORE y resultado 10. |
 | IR-T5 | Media | Bloque B32 de dos elementos, auth, carga de clave, Feistel y revoke; leer primer elemento al final. | IR_INTRINSIC sin resultado, base por referencia, índices y efectos criptográficos/memoria. No simular cifrado. |
 
-Fuentes y salidas esperadas: `tests/ir/`. Construir con `make all`, exportar con `bin/pipoc ir fuente.rwt -o salida.ir` y revisar los archivos desde terminal. Comparar opcionalmente con `diff -u`; los resultados numéricos de los casos describen la ejecución esperada, no una ejecución del archivo .ir. Las comprobaciones automáticas se usaron durante el desarrollo y no se conserva runner Python. Instrucciones completas: [pruebas de IR](../../tests/ir/README.md).
+Fuentes y salidas esperadas: `tests/archivadas/ir/`. Construir con `make all`, exportar con `bin/pipoc ir fuente.rwt -o salida.ir` y revisar los archivos desde terminal. Comparar opcionalmente con `diff -u`; los resultados numéricos de los casos describen la ejecución esperada, no una ejecución del archivo .ir. Las comprobaciones automáticas se usaron durante el desarrollo y no se conserva runner Python. Instrucciones completas: [pruebas de IR](../../tests/archivadas/ir/README.md).
 
 ## 9. Referencias de implementación
 

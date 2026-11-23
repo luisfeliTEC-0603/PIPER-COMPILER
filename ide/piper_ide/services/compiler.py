@@ -24,7 +24,7 @@ def find_compiler(project_root: Path) -> Path:
     """Busca Pipoc junto al proyecto, sus padres, el código del IDE o el PATH.
 
     Permite iniciar el IDE desde otra carpeta o abrir directamente un archivo
-    bajo tests/codegen. El IDE y Pipoc usan las rutas del mismo entorno Linux/WSL.
+    bajo tests/archivadas/codegen. El IDE y Pipoc usan las rutas del mismo entorno Linux/WSL.
     """
     root = project_root.resolve()
     cwd = Path.cwd()

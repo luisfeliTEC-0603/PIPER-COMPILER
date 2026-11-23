@@ -1,0 +1,20 @@
+~~ Con DCE, conservar las escrituras de registrar en cada vuelta. Resultado esperado: 2.
+create B32 contador.
+
+routine B32 registrar[B32 valor] {
+    contador store valor.
+    output valor.
+}
+
+routine B32 main[] {
+    create B32 i.
+    create B32 muerto.
+    i store 0.
+    muerto store 99.
+    alwhen [i < 3] {
+        muerto store registrar[i].
+        muerto store 88.
+        i store i + 1.
+    }
+    output contador.
+}

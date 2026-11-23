@@ -25,7 +25,8 @@
 | [`src/assembler/`](src/assembler/) | Lectura del ASM y codificación de instrucciones PORYGON. |
 | [`src/scheduler/`](src/scheduler/) | Organización de instrucciones en bundles, verificación y emisión de salidas. |
 | [`tools/`](tools/) | Herramientas auxiliares, incluido el generador de la tabla LL(1). |
-| [`tests/codeOPgen/`](tests/codeOPgen/) | Programas de regresión del emisor y comprobaciones C/Bash, con simulación opcional. |
+| [`tests/pruebas_defensa/`](tests/pruebas_defensa/) | Quince programas Piper, tres por familia de optimización del enunciado. |
+| [`tests/archivadas/codeOPgen/`](tests/archivadas/codeOPgen/) | Programas de regresión del emisor y comprobaciones C/Bash, con simulación opcional. |
 | [`docs/`](docs/) | PDF de [especificaciones](docs/specs.pdf), [sintaxis Piper](docs/piper_sintaxis.pdf) e imágenes. |
 | [`Makefile`](Makefile) | Reglas para compilar con `make all` y limpiar con `make clean`. |
 
@@ -131,7 +132,7 @@ En el IDE, Todo es la salida inicial y añade `<nombre>.results.zip` con todos
 los resultados. [Opciones y ejemplos de exportación](docs/IDE.md#exportar-desde-terminal).
 
 Para revisar las cinco pruebas de IR, generar sus archivos desde terminal.
-Fuentes, resultados esperados e instrucciones: [tests/ir/README.md](tests/ir/README.md).
+Fuentes, resultados esperados e instrucciones: [tests/archivadas/ir/README.md](tests/archivadas/ir/README.md).
 Guías: [IR](docs/IR/todoIR.md) y [CFG](docs/IR/todoCFG.md).
 
-Ejemplos, DOT de referencia y comandos para dibujarlos: [tests/cfg/README.md](tests/cfg/README.md).
+Ejemplos, DOT de referencia y comandos para dibujarlos: [tests/archivadas/cfg/README.md](tests/archivadas/cfg/README.md).

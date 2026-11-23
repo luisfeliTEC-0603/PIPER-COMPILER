@@ -331,5 +331,5 @@ Las respuestas están, respectivamente, en las secciones 5, 7, 6/9, 2, 8/9,
 9, 11 y 1. Para validar los ejemplos y el generador:
 
 ```sh
-python3 -m unittest discover -s tests/tools -p 'test_generate_ll1.py' -v
+python3 -m unittest discover -s tests/archivadas/tools -p 'test_generate_ll1.py' -v
 ```
