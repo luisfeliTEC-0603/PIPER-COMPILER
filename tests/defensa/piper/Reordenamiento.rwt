@@ -1,0 +1,30 @@
+~~ Traduccion de Reordenamiento.py: arreglo fijo de cuatro lecturas.
+~~ Se conserva log aunque no se use, como en el Python. Resultado: 900.
+routine B32 analizar_sensor_reordenado[B32|4| datos] {
+    create B32 i.
+    create B32 total.
+    create B32 lectura.
+    create B32 log.
+    create B32 promedio.
+    create B32 ajuste.
+    create B32 resultado.
+    i store 0.
+    total store 0.
+    alwhen [i < 4] {
+        lectura store datos|i|.
+        log store i * 100.
+        promedio store lectura * 2.
+        ajuste store promedio + 10.
+        resultado store ajuste * 3.
+        when [lectura > 50] {
+            total store total + resultado.
+        }
+        i store i + 1.
+    }
+    output total.
+}
+routine B32 main[] {
+    create B32|4| datos.
+    datos store [20,60,80,40].
+    output analizar_sensor_reordenado[datos].
+}

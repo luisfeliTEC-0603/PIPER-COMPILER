@@ -1,0 +1,51 @@
+~~ Traduccion de pruebaEliminacionCodigo.py para matrices 2x2.
+~~ Piper escribe C mediante un parametro de arreglo: no retorna arreglos.
+~~ La rutina devuelve 0 como estado; main consulta los elementos de C.
+~~ C = [[19,22],[43,50]]. main devuelve la suma de sus elementos: 134.
+routine B32 multiplicacion_matrices[B32|2&2| A, B32|2&2| B, B32|2&2| C] {
+    create B32 filas.
+    create B32 columnas.
+    create B32 comun.
+    create B32 total_operaciones.
+    create B32 i.
+    create B32 j.
+    create B32 k.
+    create B32 temporal_externo.
+    create B32 basura1.
+    create B32 basura2.
+    create B32 basura3.
+    create B32 suma.
+    create B32 estadistica.
+    create B32 desperdicio.
+    filas store 2.
+    columnas store 2.
+    comun store 2.
+    C store [[0,0],[0,0]].
+    total_operaciones store 0.
+    loop [i & 0 -> filas & 1] {
+        temporal_externo store i * 100.
+        loop [j & 0 -> columnas & 1] {
+            basura1 store i + j.
+            suma store 0.
+            loop [k & 0 -> comun & 1] {
+                basura2 store k * 50.
+                suma store suma + A|i&k| * B|k&j|.
+                total_operaciones store total_operaciones + 1.
+            }
+            C|i&j| store suma.
+            basura3 store suma * 999.
+        }
+    }
+    estadistica store total_operaciones.
+    desperdicio store estadistica * 2.
+    output 0.
+}
+routine B32 main[] {
+    create B32|2&2| A.
+    create B32|2&2| B.
+    create B32|2&2| C.
+    A store [[1,2],[3,4]].
+    B store [[5,6],[7,8]].
+    multiplicacion_matrices[A,B,C].
+    output C|0&0| + C|0&1| + C|1&0| + C|1&1|.
+}

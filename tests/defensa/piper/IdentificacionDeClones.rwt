@@ -1,0 +1,110 @@
+~~ Traduccion de IdentificacionDeClones.py: capacidad fija de cuatro elementos.
+~~ n indica cuantos elementos son validos [0..4]. Resultados en centesimas:
+~~ 25 se representa como 2500, 22.5 como 2250. No hay float en Piper.
+~~ Ventas y gastos usan el mismo nombre de parametro para conservar un cuerpo
+~~ exactamente igual [Tipo I]; temperaturas cambia nombres [Tipo II].
+routine B32 calcular_promedio_ventas[B32|4| valores, B32 n] {
+    create B32 total.
+    create B32 contador.
+    create B32 i.
+    create B32 v.
+    create B32 promedio.
+    create B32 total_escalado.
+    total store 0.
+    contador store 0.
+    loop [i & 0 -> n & 1] {
+        v store valores|i|.
+        total store total + v.
+        contador store contador + 1.
+    }
+    when [contador = 0] { output 0. }
+    total_escalado store total * 100.
+    promedio store total_escalado / contador.
+    output promedio.
+}
+routine B32 calcular_promedio_temperaturas[B32|4| temperaturas, B32 n] {
+    create B32 suma.
+    create B32 cantidad.
+    create B32 i.
+    create B32 t.
+    create B32 media.
+    create B32 suma_escalada.
+    suma store 0.
+    cantidad store 0.
+    loop [i & 0 -> n & 1] {
+        t store temperaturas|i|.
+        suma store suma + t.
+        cantidad store cantidad + 1.
+    }
+    when [cantidad = 0] { output 0. }
+    suma_escalada store suma * 100.
+    media store suma_escalada / cantidad.
+    output media.
+}
+routine B32 calcular_promedio_gastos[B32|4| valores, B32 n] {
+    create B32 total.
+    create B32 contador.
+    create B32 i.
+    create B32 v.
+    create B32 promedio.
+    create B32 total_escalado.
+    total store 0.
+    contador store 0.
+    loop [i & 0 -> n & 1] {
+        v store valores|i|.
+        total store total + v.
+        contador store contador + 1.
+    }
+    when [contador = 0] { output 0. }
+    total_escalado store total * 100.
+    promedio store total_escalado / contador.
+    output promedio.
+}
+routine B32 calcular_mediana_edades[B32|4| edades, B32 n] {
+    create B32|4| datos.
+    create B32 pasada.
+    create B32 j.
+    create B32 aux.
+    create B32 medio.
+    create B32 siguiente.
+    create B32 anterior.
+    datos store edades.
+    when [n = 0] { output 0. }
+    ~~ Bubble sort sobre la copia: sorted() no modifica el arreglo original.
+    loop [pasada & 0 -> n & 1] {
+        loop [j & 0 -> n - 1 & 1] {
+            siguiente store j + 1.
+            when [datos|j| > datos|siguiente|] {
+                aux store datos|j|.
+                datos|j| store datos|siguiente|.
+                datos|siguiente| store aux.
+            }
+        }
+    }
+    medio store n / 2.
+    when [n % 2 = 0] {
+        anterior store medio - 1.
+        aux store datos|anterior| + datos|medio|.
+        output aux * 100 / 2.
+    }
+    output datos|medio| * 100.
+}
+routine B32 main[] {
+    create B32|4| ventas.
+    create B32|4| temperaturas.
+    create B32|4| gastos.
+    create B32|4| edades.
+    create B32 promedio_ventas.
+    create B32 promedio_temperaturas.
+    create B32 promedio_gastos.
+    create B32 mediana.
+    ventas store [10,20,30,40].
+    temperaturas store [21,22,23,24].
+    gastos store [10,20,30,40].
+    edades store [19,31,20,26].
+    promedio_ventas store calcular_promedio_ventas[ventas,4].
+    promedio_temperaturas store calcular_promedio_temperaturas[temperaturas,4].
+    promedio_gastos store calcular_promedio_gastos[gastos,4].
+    mediana store calcular_mediana_edades[edades,4].
+    output promedio_ventas + promedio_temperaturas + promedio_gastos + mediana.
+}

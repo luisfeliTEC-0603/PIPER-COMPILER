@@ -1,0 +1,19 @@
+~~ Traduccion de LoopUnrolling.py: dos bloques de cuatro elementos.
+~~ procesar_bloques conserva el doble recorrido; main devuelve 72.
+routine B32 procesar_bloques[B32|2&4| bloques] {
+    create B32 total.
+    create B32 bloque.
+    create B32 i.
+    total store 0.
+    loop [bloque & 0 -> 2 & 1] {
+        loop [i & 0 -> 4 & 1] {
+            total store total + bloques|bloque&i| * 2.
+        }
+    }
+    output total.
+}
+routine B32 main[] {
+    create B32|2&4| bloques.
+    bloques store [[1,2,3,4],[5,6,7,8]].
+    output procesar_bloques[bloques].
+}

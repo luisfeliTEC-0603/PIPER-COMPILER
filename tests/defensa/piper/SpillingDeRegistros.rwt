@@ -1,0 +1,55 @@
+~~ Traduccion de SpillingDeRegistros.py. Ocho argumentos: permitir spilling.
+~~ Para s1..s8 = 1..8, el resultado es 774.
+routine B32 analizar_senales_multiples[B32 s1, B32 s2, B32 s3, B32 s4, B32 s5, B32 s6, B32 s7, B32 s8] {
+    create B32 a.
+    create B32 b.
+    create B32 c.
+    create B32 d.
+    create B32 e.
+    create B32 f.
+    create B32 g.
+    create B32 h.
+    create B32 i.
+    create B32 j.
+    create B32 k.
+    create B32 l.
+    create B32 m.
+    create B32 n.
+    create B32 o.
+    create B32 p.
+    create B32 q.
+    create B32 r.
+    create B32 t.
+    create B32 u.
+    create B32 w.
+    create B32 x.
+    create B32 resultado.
+    a store s1 + s2.
+    b store s3 + s4.
+    c store s5 + s6.
+    d store s7 + s8.
+    e store a * b.
+    f store c * d.
+    g store s1 - s3.
+    h store s2 - s4.
+    i store s5 - s7.
+    j store s6 - s8.
+    k store g + h.
+    l store i + j.
+    m store a * s5.
+    n store b * s6.
+    o store c * s7.
+    p store d * s8.
+    q store m + n.
+    r store o + p.
+    t store s1 * s8.
+    u store s2 * s7.
+    w store s3 * s6.
+    x store s4 * s5.
+    resultado store e + f + k + l + m + n + o + p + q + r + t + u + w + x +
+                     a + b + c + d + g + h + i + j.
+    output resultado.
+}
+routine B32 main[] {
+    output analizar_senales_multiples[1,2,3,4,5,6,7,8].
+}
