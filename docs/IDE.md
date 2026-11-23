@@ -17,6 +17,7 @@ Si falta el entorno: `python3 -m venv ide/.venv` y
 | --- | --- | --- |
 | Loop unrolling | El módulo valida cada loop y elige automáticamente su factor | Desmarcado |
 | DCE | Elimina código muerto después de unrolling | Desmarcado |
+| Rename | Renombra registros locales para reducir dependencias falsas | Desmarcado |
 | Permitir spilling | Autoriza cargas/stores cuando no alcanza la asignación de registros | Marcado |
 
 3. Mantener **Todo** (salida inicial) para revisar todas las salidas y presionar **F5**.
@@ -41,6 +42,21 @@ instrucciones lineales, sin calendarizar. No hay opción para apagar el schedule
 
 Si se requiere memoria con spilling desmarcado, la compilación falla y pide
 habilitar **Permitir spilling**. Se conservan las demás selecciones para reintentar.
+
+## Medir optimizaciones
+
+1. Abrí un archivo Piper y marcá las opciones que querés comparar. Para medir una sola optimización, cambiá solo esa casilla respecto de la base.
+2. Pulsá **Medir optimizaciones**. La IDE guarda el documento y abre **Métricas**. La base usa spilling permitido, scheduler activo y las demás casillas apagadas. Ambas variantes generan la misma clase de imagen para PORYGON.
+3. En **Rendimiento**, seleccioná una tarjeta con el mouse o con Tab para ver la diferencia (Selección menos Base). Cada par de barras comparte escala. *Instrucciones* cuenta operaciones estáticas, *Código en ROM* incluye ocho bytes por bundle, *Ciclos* mide la ejecución completa en el RTL y *Compilación* mide el proceso de pipoc en milisegundos. El tiempo de pared puede variar entre corridas.
+4. En **Transformaciones**, revisá cuántas instrucciones IR quitó DCE, cuántas operaciones adelantó el scheduler y en cuántas cambió registros Rename. La descripción debajo de la tarjeta indica la etapa y la fuente.
+5. **Abrir resultados** muestra la carpeta del archivo `metricas.json` para esa comparación. Si faltan ciclos, revisá el mensaje de la variante. **Elegir PORYGON…** permite seleccionar la carpeta que contiene `tools/sim.sh`. El simulador utiliza Bash, Make e Icarus Verilog (`iverilog` y `vvp`). Volvé a medir tras configurar la ruta.
+
+| Prueba | Selección | Qué buscar |
+|---|---|---|
+| `tests/dce/calls.rwt` | Solo DCE, con spilling permitido | 3 instrucciones IR eliminadas. Ambas variantes devuelven 16 en r1. |
+| `tests/rename/war.rwt` | Solo Rename, con spilling permitido | 4 operaciones renombradas. Ambas devuelven 5. Con el RTL local se midieron 161 y 156 ciclos. |
+
+Para consultar los mismos contadores estáticos desde la terminal, usá `bin/pipoc mem tests/rename/war.rwt --rename -o build/war.mem --emit-metrics build/war.json`.
 
 ## Archivos y reportes
 

@@ -179,6 +179,12 @@ static porygon_schedule_result_t schedule_block(scheduler_t *s,
             }
         }
     }
+    /* El empate representa emisión paralela dentro del mismo bundle. */
+    size_t latest_cycle = 0;
+    for (size_t index = block->first_instruction; index < end; index++) {
+        if (s->issued[index] < latest_cycle) s->output.reordered_instructions++;
+        else latest_cycle = s->issued[index];
+    }
     return schedule_result(PORYGON_SCHEDULE_OK, SIZE_MAX, SIZE_MAX, SIZE_MAX, "OK");
 }
 

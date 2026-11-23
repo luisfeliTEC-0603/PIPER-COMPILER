@@ -69,6 +69,7 @@ enum {
     OPT_EMIT_IR_UNROLL,
     OPT_EMIT_CFG_ORIGINAL,
     OPT_EMIT_REGALLOC,
+    OPT_EMIT_METRICS,
 };
 
 typedef enum {
@@ -101,6 +102,7 @@ typedef struct {
     const char *ir_unroll_output_path;
     const char *cfg_original_output_path;
     const char *regalloc_output_path;
+    const char *metrics_path;
     const char *requested_output_path;
     int keep_asm;
     int verbose;
@@ -166,6 +168,7 @@ static void print_usage(FILE *output, const char *program)
             "  --emit-ir <ruta>        Exporta IR original, antes de unroll/DCE\n"
             "  --emit-ir-unroll <ruta> Exporta IR despues de unrolling y antes de DCE\n"
             "  --emit-cfg-original <ruta> Exporta CFG de la IR original\n"
+            "  --emit-metrics <ruta>   Exporta métricas estáticas del ejecutable VLIW como JSON\n"
             "  --emit-regalloc <ruta>  Exporta operaciones, spills y cambios de registro con --rename\n"
             "  --unroll <N|auto|off>   Desenrolla loops constantes antes de asignar registros y emitir ASM\n"
             "  --dce                   Elimina instrucciones y rutinas innecesarias antes de generar ASM\n"
@@ -281,6 +284,7 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         {"emit-opt-report", required_argument, NULL, OPT_EMIT_OPT_REPORT},
         {"emit-ir-unroll", required_argument, NULL, OPT_EMIT_IR_UNROLL},
         {"emit-cfg-original", required_argument, NULL, OPT_EMIT_CFG_ORIGINAL},
+        {"emit-metrics", required_argument, NULL, OPT_EMIT_METRICS},
         {"emit-regalloc", required_argument, NULL, OPT_EMIT_REGALLOC},
         {"emit-symbols", required_argument, NULL, OPT_EMIT_SYMBOLS},
         {"ll1", no_argument, NULL, OPT_LL1},
@@ -361,6 +365,9 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
         case OPT_EMIT_CFG_ORIGINAL:
             if (!assign_once(&options->cfg_original_output_path, optarg, "--emit-cfg-original")) return -1;
             break;
+        case OPT_EMIT_METRICS:
+            if (!assign_once(&options->metrics_path, optarg, "--emit-metrics")) return -1;
+            break;
         case OPT_EMIT_REGALLOC:
             if (!assign_once(&options->regalloc_output_path, optarg, "--emit-regalloc")) return -1;
             break;
@@ -424,6 +431,13 @@ static int parse_cli(int argc, char **argv, cli_options_t *options)
     }
     options->requested_output_path = options->binary_output_path;
     options->binary_output_path = NULL;
+    if (options->metrics_path && (options->command == PIPOC_COMMAND_ASM ||
+        options->command == PIPOC_COMMAND_IR || options->command == PIPOC_COMMAND_INSPECT ||
+        options->check_only || options->clones_min_nodes || options->asm_input_path ||
+        options->binary_input_path || options->ll1 || options->ll1_expected)) {
+        fputs("error: --emit-metrics requiere generar binario, memoria o bundles desde Piper\n", stderr);
+        return -1;
+    }
     if (!options->dce && options->opt_report_path) {
         fputs("error: --emit-opt-report requiere --dce\n", stderr);
         return -1;
@@ -932,6 +946,7 @@ static void report_unroll_loop(const IrUnrollLoopReport *report, void *context)
 
 static int compile_piper(const cli_options_t *options)
 {
+    size_t removed = 0;
     clock_t compilation_start = clock();
     FILE *input = NULL;
     FILE *asm_stream = NULL;
@@ -1149,6 +1164,7 @@ static int compile_piper(const cli_options_t *options)
             clock_t end = clock();
             report.instructions_before += routines.removed_instructions;
             report.removed_instructions += routines.removed_instructions;
+            removed = report.removed_instructions;
             report.removed_routines = routines.removed_routines;
             report.optimization_seconds = optimization_start == (clock_t)-1 || end == (clock_t)-1
                 ? -1.0 : (double)(end - optimization_start) / CLOCKS_PER_SEC;
@@ -1283,6 +1299,22 @@ static int compile_piper(const cli_options_t *options)
         exit_status = PIPOC_EXIT_IO_ERROR;
         goto done;
     }
+    if (options->metrics_path) {
+        size_t renamed = 0;
+        for (size_t r = 0; r < active_ir->routine_count; r++)
+            renamed += regalloc_allocation_routine_report(allocation, r)->affected_operations;
+        char json[512];
+        int length = snprintf(json, sizeof(json),
+            "{\"instructions\":%zu,\"code_bytes\":%zu,\"removed\":%zu,"
+            "\"reordered\":%zu,\"renamed\":%zu}\n",
+            program.instruction_count, schedule.bundle_count * 8, removed,
+            schedule.reordered_instructions, renamed);
+        if (length < 0 || (size_t)length >= sizeof(json) ||
+            !write_bytes(options->metrics_path, json, (size_t)length)) {
+            exit_status = PIPOC_EXIT_IO_ERROR;
+            goto done;
+        }
+    }
     exit_status = PIPOC_EXIT_SUCCESS;
 
 done:
@@ -1340,7 +1372,7 @@ int main(int argc, char **argv)
 {
     cli_options_t options;
     char *owned_paths[16] = {0};
-    const char *outputs[15];
+    const char *outputs[16];
     const char *input_path;
     int parsed = parse_cli(argc, argv, &options);
     int exit_status;
@@ -1527,12 +1559,13 @@ int main(int argc, char **argv)
     outputs[12] = options.ir_unroll_output_path;
     outputs[13] = options.cfg_original_output_path;
     outputs[14] = options.regalloc_output_path;
+    outputs[15] = options.metrics_path;
     {
         const char *reserved[] = {".rwt", ".bin", ".asm", ".mem", ".bundles", ".ast.json", ".symbols.txt"};
         const char *analysis_outputs[] = {options.ir_output_path, options.cfg_output_path,
             options.ir_opt_output_path, options.cfg_opt_output_path, options.opt_report_path,
             options.regalloc_graph_output_path, options.ir_unroll_output_path,
-            options.cfg_original_output_path, options.regalloc_output_path};
+            options.cfg_original_output_path, options.regalloc_output_path, options.metrics_path};
         for (size_t path = 0; path < sizeof(analysis_outputs) / sizeof(*analysis_outputs); path++)
         for (size_t i = 0; i < sizeof(reserved) / sizeof(*reserved); i++)
             if (analysis_outputs[path] && ends_with(analysis_outputs[path], reserved[i])) {
