@@ -1,0 +1,8 @@
+~~ Comparar Rename apagado y encendido ante una dependencia WAR. Resultado esperado: 5.
+routine B32 main[] {
+    create B32 primero.
+    create B32 segundo.
+    primero store 5.
+    segundo store 9.
+    output primero.
+}

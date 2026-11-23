@@ -33,3 +33,11 @@ def save_optimizations(options: OptimizationOptions) -> None:
     for key, value in (("unroll", options.unroll), ("dce", options.dce),
                        ("rename", options.rename), ("spill", options.allow_spill)):
         settings.setValue("compilation/" + key, value)
+
+
+def simulator_folder() -> str:
+    return _settings().value("metrics/simulator", "", type=str)
+
+
+def save_simulator_folder(folder: str) -> None:
+    _settings().setValue("metrics/simulator", folder)

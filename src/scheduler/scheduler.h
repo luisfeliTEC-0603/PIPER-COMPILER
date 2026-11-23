@@ -48,6 +48,7 @@ typedef struct {
     size_t bundle_count;
     size_t *label_bundles;
     size_t label_count;
+    size_t reordered_instructions;
 } porygon_schedule_t;
 
 typedef enum {

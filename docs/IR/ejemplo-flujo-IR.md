@@ -419,7 +419,7 @@ Al entrar al ciclo se apila B3. El `when` no apila otra salida de ciclo: `break`
 
 En ciclos anidados, cada ciclo apila su propia salida. El `break` usa el último destino; al terminar de traducir ese ciclo, se retira su entrada y vuelve a quedar visible la salida del ciclo exterior.
 
-Estos ejemplos describen el TAC de I5, exportable con el comando ir desde I8. Las cinco pruebas permanentes están en tests/ir; el CFG se exporta con --emit-cfg.
+Estos ejemplos describen el TAC de I5, exportable con el comando ir desde I8. Las cinco pruebas permanentes están en tests/archivadas/ir; el CFG se exporta con --emit-cfg.
 
 
 ## 11. Accesos e intrínsecas de I7

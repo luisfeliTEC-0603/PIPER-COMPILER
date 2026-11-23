@@ -1,0 +1,7 @@
+~~ La presión ocurre antes de main, durante la inicialización global. Con spilling se espera 21.
+create B32 answer.
+routine B32 sum6[B32 a, B32 b, B32 c, B32 d, B32 e, B32 f] {
+    output a + b + c + d + e + f.
+}
+answer store sum6[1,2,3,4,5,6].
+routine B32 main[] { output answer. }

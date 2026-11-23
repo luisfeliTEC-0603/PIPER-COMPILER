@@ -12,8 +12,23 @@
 void yyrestart(FILE *input_file);
 int yylex_destroy(void);
 
+static void check_reordering(const char *assembly, size_t expected, size_t second_issued)
+{
+    porygon_machine_program_t program = {0};
+    porygon_schedule_t schedule = {0};
+    assert(porygon_parse_program(assembly, &program).status == PORYGON_PROGRAM_OK);
+    assert(porygon_schedule_program(&program, &schedule).status == PORYGON_SCHEDULE_OK);
+    assert(schedule.bundles[0].slots[1].kind == PORYGON_SLOT_INSTRUCTION);
+    assert(schedule.bundles[0].slots[1].instruction_index == second_issued);
+    assert(schedule.reordered_instructions == expected);
+    porygon_schedule_free(&schedule);
+    porygon_machine_program_free(&program);
+}
+
 int main(void)
 {
+    check_reordering("mov r1, r2\nmov r3, r4\n", 0, 1);
+    check_reordering("mov r1, r2\nsum r1, r3\nmov r4, r5\n", 1, 2);
     FILE *source = tmpfile();
     assert(source != NULL && fputs("routine B32 main[] { output 7. }", source) >= 0);
     rewind(source);

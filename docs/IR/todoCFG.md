@@ -1,6 +1,6 @@
 # Contrato y tareas del constructor de CFG
 
-Estado: C1–C5 implementados. Exportación disponible mediante --emit-cfg y ejemplos manuales en tests/cfg. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
+Estado: C1–C5 implementados. Exportación disponible mediante --emit-cfg y ejemplos manuales en tests/archivadas/cfg. El módulo IR ya genera bloques y terminadores y exporta `.ir`. El CFG conecta esos bloques; no vuelve a generarlos. Entradas y propiedad del IR: [contrato-IR.md](contrato-IR.md).
 
 ## 1. Flujo y alcance
 
@@ -218,12 +218,12 @@ Se comprobaron seis fuentes, igualdad del .ir previo al refactor, DOT determinis
 
 | Caso | Entrada pequeña | Qué comprobar |
 | --- | --- | --- |
-| CFG-T1 | `tests/ir/scalar.rwt` | ENTRY → B0 → EXIT. |
-| CFG-T2 | `tests/ir/branches.rwt` | TRUE/FALSE y unión de ambas ramas, sin plegar condición constante. |
-| CFG-T3 | `tests/ir/loop_break.rwt` | Vuelta a condición y salida correcta de break. |
+| CFG-T1 | `tests/archivadas/ir/scalar.rwt` | ENTRY → B0 → EXIT. |
+| CFG-T2 | `tests/archivadas/ir/branches.rwt` | TRUE/FALSE y unión de ambas ramas, sin plegar condición constante. |
+| CFG-T3 | `tests/archivadas/ir/loop_break.rwt` | Vuelta a condición y salida correcta de break. |
 | CFG-T4 | Fuente con dos rutinas y una llamada, más un caso interno preparado con bloque inalcanzable. | Grafos separados; ninguna arista de llamada; marcas de alcance correctas. Variante con destino inexistente debe fallar. |
 | CFG-T5 | IR interna preparada: BRANCH con ambos destinos al mismo bloque. | Dos aristas etiquetadas, un vecino y DOT estable al exportar dos veces. |
 
 Dejar fuentes y archivos esperados para ejecutar desde terminal y comparar aristas/DOT como texto. No añadir runner Python ni pruebas de imágenes. Los casos internos T4/T5 requieren entradas preparadas porque el generador actual evita parte del código inalcanzable y no suele emitir una rama con destinos iguales; una fuente Piper normal no garantiza esas formas de IR.
 
-Los casos internos se verificaron de forma temporal durante el desarrollo. Las fuentes y seis DOT esperados están en tests/cfg y tests/ir; matrices/Feistel comprueban etiquetas, sin nuevas reglas de conexiones. Comandos de exportación, comparación y visualización: [tests/cfg/README.md](../../tests/cfg/README.md). Sin runner permanente.
+Los casos internos se verificaron de forma temporal durante el desarrollo. Las fuentes y seis DOT esperados están en tests/archivadas/cfg y tests/archivadas/ir; matrices/Feistel comprueban etiquetas, sin nuevas reglas de conexiones. Comandos de exportación, comparación y visualización: [tests/archivadas/cfg/README.md](../../tests/archivadas/cfg/README.md). Sin runner permanente.

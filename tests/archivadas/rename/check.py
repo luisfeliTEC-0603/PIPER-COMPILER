@@ -123,7 +123,7 @@ def simulator_script(enabled):
 def compile_case(name, mode, flags, expected, simulator):
     prefix = OUT / name / mode
     prefix.parent.mkdir(parents=True, exist_ok=True)
-    log = run(["bin/pipoc", "all", f"tests/rename/{name}.rwt", "-v",
+    log = run(["bin/pipoc", "all", f"tests/archivadas/rename/{name}.rwt", "-v",
                "-o", prefix.with_suffix(".bin"), "--emit-regalloc", prefix.with_suffix(".regalloc.txt"),
                *flags, *(["--rename"] if mode == "rename" else [])], prefix.with_suffix(".compile.log"))
     report = prefix.with_suffix(".regalloc.txt").read_text()
@@ -173,7 +173,7 @@ def check_cases(simulator):
         for mode, counts in (("base", (0, 0, *before)), ("rename", (changes, affected, *after))):
             rows.append("\t".join(str(x) if x is not None else "-" for x in (name, mode, *counts)))
     # La misma llamada con spilling prohibido debe fallar antes del recoloreo.
-    rejected = subprocess.run(["bin/pipoc", "mem", "tests/rename/llamada.rwt", "--rename", "--dce",
+    rejected = subprocess.run(["bin/pipoc", "mem", "tests/archivadas/rename/llamada.rwt", "--rename", "--dce",
                                "--unroll", "2", "--spill", "off", "-o", OUT / "rechazado.mem"],
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (OUT / "spill-off.log").write_text(rejected.stdout)

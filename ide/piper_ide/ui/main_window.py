@@ -18,7 +18,9 @@ from ..editor.code_editor import CodeEditor
 from ..editor.completion import CompletionController
 from ..models.project import Project
 from ..models.compilation import OptimizationOptions
-from ..infrastructure.settings import load_optimizations, save_optimizations
+from ..infrastructure.settings import load_optimizations, save_optimizations, simulator_folder, save_simulator_folder
+from ..services.metrics import Measurement
+from .metrics_panel import MetricsPanel
 from ..services.compiler import CompilerConfigurationError, CompilerService
 from .appearance_panel import AppearancePanel
 from .clone_controller import CloneController
@@ -108,6 +110,11 @@ class MainWindow(QMainWindow):
         self.output_panel.addTab(self.clone_panel, "Clones")
         self.compilation_panel = CompilationPanel(self)
         self.compilation_page = self.output_panel.addTab(self.compilation_panel, "Compilación")
+        self.metrics_panel = MetricsPanel(self)
+        self.metrics_page = self.output_panel.addTab(self.metrics_panel, "Métricas")
+        self.measurement = None
+        self.metrics_panel.choose_simulator.connect(self._choose_simulator)
+        self.measure_button.clicked.connect(self.measure_active)
         self.clones = CloneController(self.documents, self.editor, self.clone_panel, self)
         self._menus()
         self._connect_components()
@@ -199,6 +206,8 @@ class MainWindow(QMainWindow):
         self.appearance_button.setAccessibleName("Apariencia")
         self.appearance_button.setToolTip("Apariencia")
         row.addWidget(self.appearance_button)
+        self.measure_button = QPushButton("Medir optimizaciones")
+        row.addWidget(self.measure_button)
         self.save_button = QPushButton("Guardar  Ctrl+S")
         self.save_button.setToolTip("Guardar el archivo activo")
         row.addWidget(self.save_button)
@@ -356,7 +365,7 @@ class MainWindow(QMainWindow):
             action.toggled.connect(widget.setVisible)
             view_menu.addAction(action)
         view_menu.addSeparator()
-        for index, title in enumerate(("Problemas", "Consola", "Clones")):
+        for index, title in enumerate(("Problemas", "Consola", "Clones", "Compilación", "Métricas")):
             self._action(view_menu, title, title, None, lambda value=index: self.show_output_page(value))
         view_menu.addSeparator()
         self._action(view_menu, "next_document", "Documento siguiente", "Ctrl+PageDown", lambda: self.documents.cycle(1))
@@ -464,8 +473,9 @@ class MainWindow(QMainWindow):
             self.actions[name].setEnabled(writable)
         compilable = bool(
             active and active.info.language == "piper"
-            and not active.info.read_only and not self.compiler.running
+            and not active.info.read_only and not self.compiler.running and self.measurement is None
         )
+        self.measure_button.setEnabled(compilable)
         self.compile_button.setEnabled(compilable)
         self.compile_target.setEnabled(not self.compiler.running)
         self._update_optimization_controls()
@@ -512,22 +522,13 @@ class MainWindow(QMainWindow):
 
     def compile_active(self):
         """Guarda el buffer Piper y lanza pipoc con la salida seleccionada."""
-        if self.compiler.running:
+        if self.compiler.running or self.measurement is not None:
             self._message("Pipoc ya está ejecutando una compilación.")
             return False
-        session = self.documents.active
-        if not session or session.info.language != "piper":
-            self._show_error("Abrí un archivo .rwt para compilar con pipoc.")
-            return False
-        if session.info.path is None or session.buffer.isModified():
-            if not self.documents.save(session):
-                return False
-        source = session.info.path
+        source = self._saved_piper_source()
         if source is None:
             return False
         project_root = self.project.root if self.project else source.parent
-        if self.project is None:
-            self.open_folder(project_root)
         try:
             started = self.compiler.compile(
                 source, project_root, self.compile_target.currentData(), self._selected_optimizations()
@@ -538,6 +539,58 @@ class MainWindow(QMainWindow):
         if not started:
             self._message("No se pudo iniciar pipoc.")
         return started
+
+    def _saved_piper_source(self):
+        session = self.documents.active
+        if not session or session.info.language != "piper":
+            self._show_error("Abrí un archivo .rwt para compilar con pipoc.")
+            return None
+        if session.info.path is None or session.buffer.isModified():
+            if not self.documents.save(session):
+                return None
+        source = session.info.path
+        if source is None:
+            return None
+        project_root = self.project.root if self.project else source.parent
+        if self.project is None:
+            self.open_folder(project_root)
+        return source
+
+    def _choose_simulator(self):
+        folder = QFileDialog.getExistingDirectory(self, "Carpeta de PORYGON", simulator_folder())
+        if folder:
+            if not (Path(folder) / "tools/sim.sh").is_file():
+                self._show_error("La carpeta debe contener tools/sim.sh.")
+                return
+            save_simulator_folder(folder)
+            self._message("Simulador configurado. Pulsá Medir optimizaciones para usarlo.")
+
+    def measure_active(self):
+        if self.compiler.running or self.measurement is not None:
+            return
+        source = self._saved_piper_source()
+        if source is None:
+            return
+        options = self._selected_optimizations()
+        self.metrics_panel.begin(source, options)
+        self.show_output_page(self.metrics_page)
+        height = self.editor_splitter.height()
+        self.editor_splitter.setSizes([height // 2, height // 2])
+        job = Measurement(source, self.project.root if self.project else source.parent,
+                          options, simulator_folder(), self)
+        self.measurement = job
+        job.progress.connect(self.metrics_panel.status.setText)
+        job.ready.connect(self.metrics_panel.finish)
+        job.failed.connect(self.metrics_panel.status.setText)
+        job.finished.connect(self._measurement_finished)
+        self._update_actions()
+        job.start()
+
+    def _measurement_finished(self):
+        self.measurement.deleteLater()
+        self.measurement = None
+        self.metrics_panel.simulator.setEnabled(True)
+        self._update_actions()
 
     def _compilation_started(self, invocation):
         """Bloquea una segunda ejecución y muestra el comando reproducible."""
@@ -671,6 +724,7 @@ class MainWindow(QMainWindow):
         self.editor.apply_theme(colors)
         self.explorer.apply_theme(colors)
         self.output_panel.apply_theme(colors)
+        self.metrics_panel.apply_theme(colors)
         self.appearance.apply_theme(colors)
         for button, icon, role in ((self.appearance_button, "settings", "muted"),
                                    (self.save_button, "save", "muted"), (self.compile_button, "play", "accent")):
@@ -691,6 +745,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Permite cancelar el cierre si queda algún documento con cambios pendientes."""
         if self.documents.can_close_window():
+            if self.measurement:
+                self.measurement.requestInterruption()
+                self.measurement.wait()
             self.compiler.stop()
             self.completion.stop()
             self.diagnostics.stop()

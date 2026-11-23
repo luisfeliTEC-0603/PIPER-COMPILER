@@ -1,0 +1,20 @@
+~~ Se ejecutan ambas ramas en llamadas sucesivas. El scheduler debe conservar el orden de los efectos. Resultado esperado: 23.
+create B32 total.
+
+routine B32 actualizar[B32 valor] {
+    when [valor > 3] {
+        total store total + valor.
+    } fallback {
+        total store total * 2.
+    }
+    output total.
+}
+
+routine B32 main[] {
+    create B32 primero.
+    create B32 segundo.
+    total store 3.
+    primero store actualizar[2].
+    segundo store actualizar[11].
+    output primero + segundo.
+}
